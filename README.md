@@ -31,6 +31,18 @@ Settings: `%APPDATA%\TaskbarBatteryWidget\config.json` (settings from the previo
 .\.venv\Scripts\python -m pytest -q
 ```
 
+## Build / Install
+Users only need to run `TaskbarBatteryWidget-Setup-<version>.exe` (per-user install, no admin rights) or the
+single-file `TaskbarBatteryWidget-portable-<version>.exe`. The builds are unsigned, so Windows SmartScreen
+may warn ("More info" -> "Run anyway").
+
+To build both (requires PyInstaller in the venv and Inno Setup 6):
+```powershell
+.\packaging\build.ps1
+```
+It runs the tests, generates the icon, builds the onedir and onefile apps and the installer, and writes
+`dist\TaskbarBatteryWidget-Setup-<version>.exe` and `dist\TaskbarBatteryWidget-portable-<version>.exe`.
+
 ## Limitations
 - Windows 11 only; primary taskbar only (bottom edge verified on screen, others by unit tests).
 - Devices must expose their battery level through one of the supported methods above.

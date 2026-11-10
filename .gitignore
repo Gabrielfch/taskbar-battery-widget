@@ -6,6 +6,8 @@
 !/pytest.ini
 !/taskbar_battery_widget/
 !/tests/
+!/packaging/
+/packaging/build/
 !/docs/
 /docs/*
 !/docs/spec.md
