@@ -1,0 +1,8 @@
+PySide6>=6.12
+winrt-runtime>=2.0
+winrt-Windows.Devices.Enumeration
+winrt-Windows.Devices.Bluetooth
+winrt-Windows.Devices.Radios
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections
+pytest

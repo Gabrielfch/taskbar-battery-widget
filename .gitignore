@@ -1,0 +1,17 @@
+# This folder also holds unrelated projects: track only Taskbar Battery Widget files.
+/*
+!/.gitignore
+!/README.md
+!/requirements.txt
+!/pytest.ini
+!/taskbar_battery_widget/
+!/tests/
+!/docs/
+/docs/*
+!/docs/spec.md
+!/docs/screenshot-colors-demo.png
+!/docs/screenshot-ui-v4.png
+
+__pycache__/
+*.pyc
+.pytest_cache/
