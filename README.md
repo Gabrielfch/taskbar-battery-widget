@@ -9,6 +9,12 @@ notification area. Spec in `docs/spec.md`.
 - Estimated "charging" state, hides over fullscreen apps, tray menu (refresh, show disconnected,
   notifications, low threshold, start with Windows, quit).
 - Spanish / English UI depending on the system locale.
+- Logs in `%LOCALAPPDATA%\TaskbarBatteryWidget\logs` (`app.log` for the app, `TBW_DEBUG=1` for debug level;
+  `devices.log` with connect/disconnect/battery/charging/low events per device; both rotate at 1 MB x 3 and
+  never contain MAC addresses or serial numbers). Tray menu: *Open device log* / *Open logs folder*.
+- Last known value: a disconnected device (or one that reports no level) keeps its last battery reading,
+  dimmed, with "Disconnected · last value 56% 2 h ago" on the hover card; it never triggers low-battery alerts.
+  Stored in `%LOCALAPPDATA%\TaskbarBatteryWidget\last_known.json` (max. 200 devices, purged after 90 days).
 
 ## Compatibility
 

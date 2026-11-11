@@ -19,7 +19,7 @@ from .i18n import kind_name as _kind_name, tr
 from .icons import draw_bolt, draw_kind_icon
 from .models import Device, visibility_key
 from .naming import sanitize_name
-from .popup import HOVER_DELAY_MS, HoverPopup, PopupContent, build_popup_content, place_popup
+from .popup import HOVER_DELAY_MS, HoverPopup, PopupContent, build_popup_content, place_popup, stale_text
 
 MARGIN = 2           # outer margin around the pills (logical px)
 SPACING = 4          # gap between pills
@@ -379,7 +379,11 @@ class TaskbarWidget(QWidget):
             link = getattr(d, "link", "bluetooth")
             link_key = {"2.4ghz": "link_24ghz", "usb": "link_usb"}.get(link, "link_bluetooth")
             kind_name = f"{kind_name} - {tr(link_key)}" if kind_name else tr(link_key)
-            if not d.connected:
+            if getattr(d, "stale", False) and d.battery is not None:
+                last = stale_text(d)
+                pills.append(_Pill(d.kind, f"{d.battery}%", f"{name}\n{last}\n{kind_name}", dim=True,
+                                   device=d, a11y=f"{name} {last}"))
+            elif not d.connected:
                 text, tip = tr("pill_none"), f"{name}\n{tr('disconnected')}\n{kind_name}"
                 pills.append(_Pill(d.kind, text, tip, dim=True, device=d,
                                    a11y=f"{name} {tr('disconnected')}"))

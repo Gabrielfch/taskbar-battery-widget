@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QAction, QActionGroup
@@ -84,6 +85,9 @@ class TrayController(QObject):
             a.triggered.connect(lambda _c=False, val=v: self._set_threshold(val))
             self._thr_actions.append((v, a))
         m.addSeparator()
+        m.addAction(tr("open_device_log")).triggered.connect(self.open_device_log)
+        m.addAction(tr("open_logs_folder")).triggered.connect(self.open_logs_folder)
+        m.addSeparator()
         self._act_start = m.addAction(tr("start_with_windows"))
         self._act_start.setCheckable(True)
         try:
@@ -93,6 +97,35 @@ class TrayController(QObject):
         self._act_start.toggled.connect(self._set_startup)
         m.addAction(tr("quit")).triggered.connect(self.quit_requested.emit)
         m.aboutToShow.connect(self._sync_menu)
+
+    # ---- logs
+    def _open_path(self, path) -> None:
+        try:
+            os.startfile(str(path))
+        except (OSError, AttributeError):
+            log.exception("could not open %s", path.name)
+            self.notify(tr("app_name"), str(path))
+
+    def open_device_log(self) -> None:
+        from . import device_history
+        path = device_history.device_log_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch(exist_ok=True)       # so the default program has something to open
+        except OSError:
+            log.exception("could not create the device log")
+            return
+        self._open_path(path)
+
+    def open_logs_folder(self) -> None:
+        from . import device_history
+        path = device_history.logs_dir()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            log.exception("could not create the logs folder")
+            return
+        self._open_path(path)
 
     def _toggle(self, label: str, key: str, getter=None, setter=None, menu=None) -> QAction:
         a = (menu or self._menu).addAction(label)
@@ -228,14 +261,18 @@ class TrayController(QObject):
 
     def _device_color(self, d):
         """Colour of the level dot in the menu (None when colours are off or no reading)."""
-        if self._cfg.get("color_mode") == "mono" or not d.connected or d.battery is None:
+        if (self._cfg.get("color_mode") == "mono" or not d.connected or d.battery is None
+                or getattr(d, "stale", False)):
             return None
         return battery_color(d.battery, bool(d.charging), int(self._cfg.get("low_threshold")), self._dark)
 
     @staticmethod
     def _device_line(d) -> str:
         """'Name: 97 % · Charging' - parts joined with a middle dot."""
-        if not d.connected:
+        if getattr(d, "stale", False) and d.battery is not None:
+            parts = [tr("disconnected") if not d.connected else tr("battery_unknown"),
+                     f"{d.battery} %"]
+        elif not d.connected:
             parts = [tr("disconnected")]
         elif d.battery is None:
             parts = [tr("battery_unknown")]
@@ -264,11 +301,13 @@ class TrayController(QObject):
     def _update_icon(self) -> None:
         hidden = set(self.hidden_ids())
         vis = [d for d in self._devices if visibility_key(d.id) not in hidden]
-        levels = [d.battery for d in vis if d.connected and d.battery is not None]
+        levels = [d.battery for d in vis
+                  if d.connected and d.battery is not None and not getattr(d, "stale", False)]
         lowest = min(levels) if levels else None
         color = None
         if lowest is not None and self._cfg.get("color_mode") != "mono":
-            low_dev = next(d for d in vis if d.connected and d.battery == lowest)
+            low_dev = next(d for d in vis if d.connected and d.battery == lowest
+                           and not getattr(d, "stale", False))
             color = battery_color(lowest, bool(low_dev.charging), int(self._cfg.get("low_threshold")),
                                   self._dark)
         self._tray.setIcon(make_tray_icon(lowest, self._dark, color))

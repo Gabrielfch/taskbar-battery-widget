@@ -24,16 +24,22 @@ class Device:
     updated: float | None = None    # epoch seconds of the reading, when known
     idle: bool = False              # asleep 2.4 GHz device shown with its last known value
     source: str = ""                # "hid" when read directly from a dongle, else ""
+    last_seen: float | None = None  # epoch seconds of the last real reading (historical values only)
+    stale: bool = False             # battery is the last known value, not a live reading
 
 
 _KEY_RE = re.compile(r"^h:[0-9a-f]{16}$")
 
 
 def visibility_key(dev_id: str) -> str:
-    """Stable, non-reversible key for a device id ("h:" + 16 hex of sha256).
+    """Stable pseudonym for a device id ("h:" + 16 hex of an unsalted, truncated sha256).
 
     Device ids may embed Bluetooth MAC addresses; the settings file only stores these keys.
+    Idempotent: a value that already is a key is returned unchanged (devices rebuilt from the
+    last-known store use their key as id).
     """
+    if is_visibility_key(dev_id):
+        return dev_id
     return "h:" + hashlib.sha256(str(dev_id).encode("utf-8", "replace")).hexdigest()[:16]
 
 

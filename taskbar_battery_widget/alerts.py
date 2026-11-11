@@ -19,6 +19,7 @@ class AlertManager:
         threshold = self._config.get("low_threshold")
         cooldown = self._config.get("notification_cooldown_min") * 60
         out: list[tuple[str, str]] = []
+        devices = [d for d in devices if not getattr(d, "stale", False)]   # last known != reading
         for d in devices:
             self._last_seen[d.id] = now
         for stale in [k for k in self._last_notified

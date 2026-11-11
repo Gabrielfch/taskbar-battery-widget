@@ -80,6 +80,16 @@ def idle_text(device: Device, now: float | None = None) -> str:
     return tr("idle_since", min=minutes)
 
 
+def stale_text(device: Device, now: float | None = None) -> str:
+    """'Disconnected - last value 56% 2 h ago' for a device shown with its last known level."""
+    from .device_history import format_ago
+    last = getattr(device, "last_seen", None)
+    now = time.time() if now is None else now
+    ago = format_ago(now - last) if last is not None else ""
+    key = "last_value_disc" if not device.connected else "last_value_unknown"
+    return tr(key, level=device.battery, ago=ago).rstrip()
+
+
 def wrap_title(text: str, fm: QFontMetrics, width: int, max_lines: int = 2) -> list[str]:
     """Greedy wrap into at most `max_lines` lines; the last one is elided instead of truncated."""
     lines: list[str] = []
@@ -111,17 +121,20 @@ def build_popup_content(device: Device, low_threshold: int = 20, now: float | No
     kind = _kind_name(device.kind) if device.kind else ""
     link = link_label(device)
     lines = [f"{kind} - {link}" if kind else link]
-    if device.connected and device.battery is not None:
+    stale = bool(getattr(device, "stale", False)) and device.battery is not None
+    if stale:
+        lines.append(stale_text(device, now))
+    elif device.connected and device.battery is not None:
         idle = getattr(device, "idle", False)
         state = idle_text(device, now) if idle else status_text(device, low_threshold)
         lines.append(f"{device.battery}% - {state}")
     else:
         lines.append(status_text(device, low_threshold))
-    upd = "" if getattr(device, "idle", False) else format_updated(getattr(device, "updated", None), now)
+    upd = "" if stale or getattr(device, "idle", False) else format_updated(getattr(device, "updated", None), now)
     if upd:
         lines.append(upd)
     band = (level_band(device.battery, bool(device.charging), low_threshold)
-            if device.connected and device.battery is not None else None)
+            if device.connected and device.battery is not None and not stale else None)
     return PopupContent(name, lines, dot_band=band)
 
 
