@@ -50,6 +50,8 @@ SIG_NAME = "SHA256SUMS.txt.sig"
 # Left empty until the maintainer generates the keys: updates are then refused (manual download only).
 PUBLIC_KEYS: tuple[str, ...] = (
     # filled by tools/signing/gen_keys.py output
+    "3a19dbb213885211c87bada3f95d562199a5087d2a42b46891f37fa7dd3f50dd",  # primary release key
+    "8706ea9a037f5002b639d38dbce83d4bb1ffce1ad145d56dddb0fe446d909f81",  # backup key (kept offline)
 )
 
 TIMEOUT_S = 10
