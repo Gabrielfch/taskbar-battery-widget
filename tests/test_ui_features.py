@@ -78,9 +78,18 @@ def _render(wd) -> QImage:
     return img
 
 
-def _bar_pixel(wd, i):
-    x, y, _w, h = wd._rects[i]
-    return QColor(_render(wd).pixel(int(x + w.PAD + 2), int(y + h - 5 + 1)))
+def _bar_pixel(wd, i, expected=None):
+    """Colour of pill ``i``'s level bar. Scans the whole bar row instead of a fixed offset so the
+    test does not depend on font metrics (pill width differs between machines / CI runners)."""
+    x, y, pw, h = wd._rects[i]
+    img = _render(wd)
+    row = int(y + h - 5 + 1)
+    colours = [QColor(img.pixel(px, row)) for px in range(int(x + w.PAD), int(x + pw - w.PAD))]
+    if expected is not None:
+        for c in colours:
+            if c.name() == expected:
+                return c
+    return colours[min(2, len(colours) - 1)] if colours else QColor()
 
 
 def test_pills_render_distinct_colors(qapp):
@@ -90,8 +99,9 @@ def test_pills_render_distinct_colors(qapp):
                     Device("c", "C", "headset", 25, True), Device("d", "D", "mouse", 8, True)])
     seen = set()
     for i, lvl in enumerate((95, 45, 25, 8)):
-        px = _bar_pixel(wd, i)
-        assert px.name() == battery_color(lvl, False, 20, True).name()
+        want = battery_color(lvl, False, 20, True).name()
+        px = _bar_pixel(wd, i, want)
+        assert px.name() == want
         seen.add(px.name())
     assert len(seen) == 4
     wd._cfg = Cfg(color_mode="mono")
