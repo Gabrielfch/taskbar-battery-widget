@@ -16,6 +16,8 @@ def _project_root() -> str:
 
 def build_command() -> str:
     if getattr(sys, "frozen", False):
+        # Installer (onedir) and portable (onefile) builds: in PyInstaller onefile, sys.executable is the real
+        # path of the launched .exe (not the temp extraction dir), so it is stable across logons.
         return subprocess.list2cmdline([sys.executable])
     exe = Path(sys.executable)
     pyw = exe.with_name("pythonw.exe")
@@ -29,14 +31,45 @@ def build_command() -> str:
     return subprocess.list2cmdline([str(interp), "-c", code, _project_root()])
 
 
-def is_enabled() -> bool:
+def registered_command() -> str | None:
+    """Raw command stored in the Run value, or None when absent/unreadable."""
     try:
         import winreg
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-            winreg.QueryValueEx(k, VALUE_NAME)
-        return True
+            value, _ = winreg.QueryValueEx(k, VALUE_NAME)
+        return value if isinstance(value, str) else None
     except OSError:
+        return None
+
+
+def _normalize(cmd: str) -> str:
+    return cmd.strip().strip('"').strip().casefold()
+
+
+def _points_here(cur: str | None) -> bool:
+    return cur is not None and _normalize(cur) == _normalize(build_command())
+
+
+def is_enabled() -> bool:
+    """True only if the Run value exists AND launches this very copy of the app."""
+    return _points_here(registered_command())
+
+
+def sync(want: bool) -> bool:
+    """Make the Run entry match the desired state for this copy. Never raises; returns is_enabled()."""
+    try:
+        mine = _points_here(registered_command())
+        if want and not mine:
+            set_enabled(True)
+        elif not want and mine:
+            set_enabled(False)
+        # not want and pointing to another copy: leave it alone
+    except Exception:
+        pass
+    try:
+        return is_enabled()
+    except Exception:
         return False
 
 

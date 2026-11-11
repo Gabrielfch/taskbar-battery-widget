@@ -97,3 +97,115 @@ def test_migrate_legacy_noop_without_old_value(monkeypatch):
     monkeypatch.setitem(sys.modules, "winreg", fake)
     startup.migrate_legacy()
     assert fake.values == {}
+
+
+# ------------------------------------------------------------ copy-awareness / sync
+def _fake(monkeypatch, stored=None):
+    fake = FakeReg()
+    if stored is not None:
+        fake.values[startup.VALUE_NAME] = stored
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    monkeypatch.setattr(startup, "build_command", lambda: '"C:\\Inst\\app.exe"')
+    return fake
+
+
+def test_value_pointing_elsewhere_is_not_enabled_and_sync_rewrites(monkeypatch):
+    fake = _fake(monkeypatch, "pythonw.exe -c dev")
+    assert startup.registered_command() == "pythonw.exe -c dev"
+    assert startup.is_enabled() is False
+    assert startup.sync(True) is True
+    assert fake.values[startup.VALUE_NAME] == '"C:\\Inst\\app.exe"'
+
+
+def test_sync_true_adds_missing_value(monkeypatch):
+    fake = _fake(monkeypatch)
+    assert startup.registered_command() is None
+    assert startup.sync(True) is True
+    assert fake.values[startup.VALUE_NAME] == '"C:\\Inst\\app.exe"'
+
+
+def test_sync_false_removes_only_own_value(monkeypatch):
+    fake = _fake(monkeypatch, '"C:\\Inst\\app.exe"')
+    assert startup.sync(False) is False
+    assert startup.VALUE_NAME not in fake.values
+    fake = _fake(monkeypatch, "other copy")
+    assert startup.sync(False) is False
+    assert fake.values[startup.VALUE_NAME] == "other copy"
+
+
+def test_quote_case_whitespace_normalization(monkeypatch):
+    fake = _fake(monkeypatch, '  c:\\inst\\APP.exe ')
+    assert startup.is_enabled() is True
+    startup.sync(True)
+    assert fake.values[startup.VALUE_NAME] == '  c:\\inst\\APP.exe '   # untouched
+
+
+def test_sync_never_raises(monkeypatch):
+    _fake(monkeypatch)
+
+    def fail(enabled):
+        raise PermissionError()
+
+    monkeypatch.setattr(startup, "set_enabled", fail)
+    assert startup.sync(True) is False
+
+
+def test_app_start_calls_sync(monkeypatch, tmp_path, qapp):
+    import tempfile
+    from taskbar_battery_widget import alerts, app as app_mod, config
+
+    class Stop(Exception):
+        pass
+
+    calls = []
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(startup, "migrate_legacy", lambda: None)
+    monkeypatch.setattr(startup, "is_enabled", lambda: False)
+    monkeypatch.setattr(startup, "sync", lambda want: calls.append(want) or want)
+
+    class Cfg:
+        def get(self, k):
+            return True
+
+    monkeypatch.setattr(config, "Config", Cfg)
+
+    def boom(cfg):
+        raise Stop
+
+    monkeypatch.setattr(alerts, "AlertManager", boom)
+    import sys
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    try:
+        app_mod.main()
+    except Stop:
+        pass
+    assert calls == [True]
+
+
+def test_app_start_from_source_does_not_sync(monkeypatch, tmp_path, qapp):
+    """A source checkout must not re-point the Run value of the installed app."""
+    import sys
+    import tempfile
+    from taskbar_battery_widget import alerts, app as app_mod, config
+
+    class Stop(Exception):
+        pass
+
+    calls = []
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(startup, "migrate_legacy", lambda: None)
+    monkeypatch.setattr(startup, "is_enabled", lambda: False)
+    monkeypatch.setattr(startup, "sync", lambda want: calls.append(want) or want)
+
+    class Cfg:
+        def get(self, k):
+            return True
+
+    monkeypatch.setattr(config, "Config", Cfg)
+    monkeypatch.setattr(alerts, "AlertManager", lambda cfg: (_ for _ in ()).throw(Stop()))
+    try:
+        app_mod.main()
+    except Stop:
+        pass
+    assert calls == []

@@ -36,6 +36,17 @@ def main() -> int:
     from . import startup
     startup.migrate_legacy()
     cfg = Config()
+    try:
+        # An entry that already launches this copy (e.g. just migrated from the legacy name) wins over a
+        # stale config value, so sync() never removes it.
+        if startup.is_enabled() and not cfg.get("start_with_windows"):
+            cfg.set("start_with_windows", True)
+        # Only packaged builds (installer/portable) re-point the Run value automatically; a source
+        # checkout must not steal the startup entry from the installed app just by being launched.
+        if getattr(sys, "frozen", False):
+            startup.sync(bool(cfg.get("start_with_windows")))
+    except Exception:
+        log.exception("start-with-Windows sync failed")
     alerts = AlertManager(cfg)
     monitor = DeviceMonitor(cfg=cfg)
     widget = TaskbarWidget(cfg)
