@@ -1,6 +1,6 @@
-; Inno Setup script. Compile with: ISCC.exe /DAppVersion=1.2.0 packaging\installer.iss
+; Inno Setup script. Compile with: ISCC.exe /DAppVersion=1.3.0 packaging\installer.iss
 #ifndef AppVersion
-  #define AppVersion "1.2.0"
+  #define AppVersion "1.3.0"
 #endif
 #define AppName "Taskbar Battery Widget"
 #define AppExe "TaskbarBatteryWidget.exe"

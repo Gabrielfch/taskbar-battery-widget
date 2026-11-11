@@ -1,6 +1,15 @@
 import os
+import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Never let unit tests write into the user's real profile (config.json, app.log, devices.log,
+# last_known.json): point %APPDATA% / %LOCALAPPDATA% at a throwaway folder for the whole session.
+_TEST_PROFILE = tempfile.mkdtemp(prefix="tbw-tests-")
+os.environ["APPDATA"] = os.path.join(_TEST_PROFILE, "Roaming")
+os.environ["LOCALAPPDATA"] = os.path.join(_TEST_PROFILE, "Local")
+os.makedirs(os.environ["APPDATA"], exist_ok=True)
+os.makedirs(os.environ["LOCALAPPDATA"], exist_ok=True)
 
 import pytest
 from PySide6.QtWidgets import QApplication
