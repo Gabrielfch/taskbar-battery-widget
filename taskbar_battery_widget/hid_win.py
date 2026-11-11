@@ -140,6 +140,16 @@ def _interface_paths() -> list[str]:
     return [p for p in ctypes.wstring_at(buf, size.value).split("\0") if p]
 
 
+def _path_matches_vendor(path: str, vendor_ids) -> bool:
+    """Cheap pre-filter on the interface path. USB paths carry ``vid_XXXX``; Bluetooth HID paths
+    carry ``vid&000SXXXX`` (S = vendor-id source). The real vendor is confirmed by HidD_GetAttributes."""
+    p = path.lower()
+    for v in vendor_ids:
+        if f"vid_{v:04x}" in p or f"vid&0001{v:04x}" in p or f"vid&0002{v:04x}" in p:
+            return True
+    return False
+
+
 def enumerate_hid(vendor_ids: tuple[int, ...] | None = None) -> list[HidInfo]:
     """List HID interfaces (optionally only given vendor ids). Never raises."""
     if not _WIN:
@@ -151,7 +161,7 @@ def enumerate_hid(vendor_ids: tuple[int, ...] | None = None) -> list[HidInfo]:
         log.exception("HID interface enumeration failed")
         return []
     for path in paths:
-        if vendor_ids is not None and not any(f"vid_{v:04x}" in path.lower() for v in vendor_ids):
+        if vendor_ids is not None and not _path_matches_vendor(path, vendor_ids):
             continue
         h = _open_raw(path, 0, False)           # query-only access: works even for keyboards/mice
         if h is None:

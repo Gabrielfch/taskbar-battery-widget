@@ -16,6 +16,8 @@ notification area. Spec in `docs/spec.md`.
 - Razer devices using the classic protocol.
 - Razer BlackShark V2 HyperSpeed, read directly from its USB dongle.
 - HyperX Cloud Flight Wireless, read directly from its USB dongle.
+- Sony DualSense / DualSense Edge over USB and Bluetooth (over Bluetooth the controller is switched
+  to extended reports once per connection; can be turned off in the tray menu, Sources).
 
 ## Run
 ```powershell

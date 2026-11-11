@@ -207,6 +207,8 @@ class DeviceMonitor(QObject):
             return self._filter_sources(self._last_wireless)    # still hung: do not stack threads
         try:
             wireless.set_hid_enabled(hid_on)
+            wireless.set_dualsense_bt_extended(
+                True if self._cfg is None else bool(self._cfg.get("dualsense_bt_extended")))
             if self._cfg is not None:
                 wireless.set_idle_grace_min(self._cfg.get("idle_grace_min"))
             else:

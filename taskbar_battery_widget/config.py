@@ -17,6 +17,7 @@ DEFAULTS = {
     "show_when_empty": False,
     "start_with_windows": False,
     "wireless_enabled": True,
+    "dualsense_bt_extended": True,  # allow the one-off feature read that enables DualSense BT battery
     "idle_grace_min": 30,           # minutes a silent (asleep) 2.4 GHz device stays listed
     "color_mode": "levels",         # "levels" | "mono"
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI

@@ -12,7 +12,7 @@ from .models import Device
 log = logging.getLogger(__name__)
 
 CACHE_TTL_S = 120.0
-VENDOR_IDS = (0x046D, 0x1532, 0x0951)
+VENDOR_IDS = (0x046D, 0x1532, 0x0951, 0x054C)
 ENUM_BUDGET_S = 1.2         # HID enumeration (synchronous HidD_* calls) must finish within this
 VENDOR_BUDGET_S = 2.6       # Logitech / Razer scans run in parallel under this budget
 
@@ -22,6 +22,7 @@ _scan_gate = threading.Lock()           # serialises scans; a busy gate means "u
 _last_present: set[str] = set()         # dongles seen by the last conclusive enumeration
 _last_present_ts = 0.0
 _inflight: dict[str, GuardedCall] = {}  # name -> possibly hung call; never start a second one
+_dualsense_bt_extended = True           # allow the one-off feature read enabling BT battery reports
 _hid_enabled = True                     # False: 2.4 GHz HID reads are off
 IDLE_GRACE_DEFAULT_S = 30 * 60.0
 _idle_grace_s = IDLE_GRACE_DEFAULT_S    # how long a silent device stays listed as idle
@@ -30,6 +31,11 @@ _idle_grace_s = IDLE_GRACE_DEFAULT_S    # how long a silent device stays listed 
 def set_hid_enabled(enabled: bool) -> None:
     global _hid_enabled
     _hid_enabled = bool(enabled)
+
+
+def set_dualsense_bt_extended(enabled: bool) -> None:
+    global _dualsense_bt_extended
+    _dualsense_bt_extended = bool(enabled)
 
 
 def set_idle_grace_min(minutes: float) -> None:
@@ -51,6 +57,8 @@ def dongle_key(device_id: str) -> str:
                 return f"1532:{pid:04x}"
     if len(parts) >= 2 and parts[0] == "razer":
         return f"1532:{parts[1]}"
+    if len(parts) == 2 and parts[0] == "sony":          # 'sony:0ce6' -> '054c:0ce6'
+        return f"054c:{parts[1]}"
     return device_id
 
 
@@ -222,6 +230,16 @@ def _scan_locked() -> list[Device]:
             calls.append(c)
     except Exception:
         log.exception("HyperX scan failed")
+
+    try:
+        from .dualsense import read_dualsense
+        bt_ext = _dualsense_bt_extended
+        c = _guarded("dualsense", lambda: read_dualsense(
+            infos, time.monotonic() + VENDOR_BUDGET_S, cancel, enable_bt_extended=bt_ext), cancel)
+        if c:
+            calls.append(c)
+    except Exception:
+        log.exception("DualSense scan failed")
 
     fresh: list[Device] = []
     t_end = time.monotonic() + VENDOR_BUDGET_S
