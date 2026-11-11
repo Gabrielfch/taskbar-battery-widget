@@ -42,7 +42,7 @@ EXCLUDES = [
 DROP = (
     "opengl32sw", "qt6quick", "qt6qml", "qt6pdf", "qt6network", "qt6opengl", "qt6svg",
     "qt6virtualkeyboard", "qt6webengine", "qt6multimedia", "qt6charts", "qt6datavis",
-    "d3dcompiler", "translations", "qtquick", "qml", "imageformats\qpdf",
+    "d3dcompiler", "translations", "qtquick", "qml", r"imageformats\qpdf",
     "ffmpeg", "avcodec", "avformat", "avutil", "swresample", "swscale",
 )
 

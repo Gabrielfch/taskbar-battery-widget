@@ -312,12 +312,20 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
         mine = [i for i in infos if i.vid == VENDOR_IDS[0] and _select(i) is not None]
         _triggered.intersection_update({i.path for i in mine})
         out: list[Device] = []
-        done: set[int] = set()
+        from .hid_win import path_hash
+        rank: dict[int, int] = {}               # pid -> devices of that pid seen so far
+        nth_of: dict[str, int] = {}
+        done: set[str] = set()                  # physical devices (path minus &colNN) already read
         for i in sorted(mine, key=lambda x: x.path):
             if _stop(cancel, deadline):
                 break
-            if i.pid in done:
+            phash = path_hash(i.path)
+            if phash in done:                   # another collection of a device already read
                 continue
+            if phash not in nth_of:             # rank among physical devices of this pid
+                nth_of[phash] = rank.get(i.pid, 0)
+                rank[i.pid] = nth_of[phash] + 1
+            nth = nth_of[phash]
             try:
                 d = _select(i)(i, min(deadline, time.monotonic() + DEVICE_BUDGET_S), cancel,
                                enable_bt_extended, handle_factory)
@@ -325,7 +333,9 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
                 log.debug("sony read failed for %04x", i.pid, exc_info=True)
                 continue
             if d is not None:
-                done.add(i.pid)
+                done.add(phash)
+                if nth:                         # second identical device: tell it apart by path
+                    d.id = f"{d.id}:{phash}"
                 out.append(d)
         return out
     except Exception:

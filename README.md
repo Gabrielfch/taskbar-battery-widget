@@ -124,7 +124,9 @@ Settings: `%APPDATA%\TaskbarBatteryWidget\config.json` (settings from the previo
 `%APPDATA%\BtBatteryBar` folder are copied over on first run).
 
 ## Tests
+Dependencies are pinned; tests and the installer build need the dev set (`pytest`, `pyinstaller`):
 ```powershell
+.\.venv\Scripts\python -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python -m pytest -q
 ```
 

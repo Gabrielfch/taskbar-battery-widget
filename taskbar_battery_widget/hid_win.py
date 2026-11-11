@@ -6,11 +6,13 @@ Handles are always opened with FILE_SHARE_READ | FILE_SHARE_WRITE so vendor soft
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import logging
 import re
 import sys
 import threading
 from ctypes import wintypes
+import dataclasses
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -82,6 +84,24 @@ def redact_path(path: str) -> str:
     return f"{m.group(1).lower()}:{m.group(2).lower()}" + (f" col{col.group(1)}" if col else "")
 
 
+def _ok(ret) -> bool:
+    """Win32 BOOLEAN success: only the low byte of the return register is meaningful (the upper
+    bytes of EAX are garbage for HidD_* functions, which return a one-byte BOOLEAN)."""
+    return (int(ret) & 0xFF) != 0
+
+
+def path_hash(path: str) -> str:
+    """Short stable id of a HID interface path (collection suffix stripped), for telling apart
+    several identical devices (same vid:pid)."""
+    stable = re.sub(r"&col\d+", "", (path or "").lower())
+    return hashlib.sha1(stable.encode("utf-8", "replace")).hexdigest()[:6]
+
+
+def _is_bluetooth_path(path: str) -> bool:
+    p = (path or "").lower()
+    return "bth" in p or "{00001124-0000-1000-8000-00805f9b34fb}" in p     # BT HID profile
+
+
 @dataclass
 class HidInfo:
     path: str
@@ -116,15 +136,20 @@ if _WIN:
     _k32.ResetEvent.argtypes = [wintypes.HANDLE]
 
     _hid.HidD_GetHidGuid.argtypes = [ctypes.POINTER(_GUID)]
+    _hid.HidD_GetHidGuid.restype = None
     _hid.HidD_GetAttributes.argtypes = [wintypes.HANDLE, ctypes.POINTER(_HIDD_ATTRIBUTES)]
     _hid.HidD_GetPreparsedData.argtypes = [wintypes.HANDLE, ctypes.POINTER(ctypes.c_void_p)]
     _hid.HidD_FreePreparsedData.argtypes = [ctypes.c_void_p]
     _hid.HidP_GetCaps.argtypes = [ctypes.c_void_p, ctypes.POINTER(_HIDP_CAPS)]
-    _hid.HidP_GetCaps.restype = ctypes.c_long
+    _hid.HidP_GetCaps.restype = ctypes.c_long               # NTSTATUS
     _hid.HidD_GetProductString.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
     _hid.HidD_SetFeature.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
     _hid.HidD_GetFeature.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
     _hid.HidD_GetInputReport.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.ULONG]
+    for _fn in ("HidD_GetAttributes", "HidD_GetPreparsedData", "HidD_FreePreparsedData",
+                "HidD_GetProductString", "HidD_SetFeature", "HidD_GetFeature",
+                "HidD_GetInputReport"):
+        getattr(_hid, _fn).restype = wintypes.BOOLEAN       # one-byte BOOLEAN, not BOOL
 
     _cfg.CM_Get_Device_Interface_List_SizeW.argtypes = [
         ctypes.POINTER(wintypes.ULONG), ctypes.POINTER(_GUID), wintypes.LPCWSTR, wintypes.ULONG]
@@ -166,6 +191,12 @@ def _path_matches_vendor(path: str, vendor_ids) -> bool:
     return False
 
 
+# path -> HidInfo of interfaces probed before. Descriptors never change for a given path, and the
+# probe (open + several HidD_* calls) can be slow; entries vanish with their path.
+_info_cache: dict[str, HidInfo] = {}
+_info_cache_lock = threading.Lock()
+
+
 def enumerate_hid(vendor_ids: tuple[int, ...] | None = None) -> list[HidInfo]:
     """List HID interfaces (optionally only given vendor ids). Never raises."""
     if not _WIN:
@@ -176,8 +207,17 @@ def enumerate_hid(vendor_ids: tuple[int, ...] | None = None) -> list[HidInfo]:
     except Exception:
         log.exception("HID interface enumeration failed")
         return []
+    with _info_cache_lock:
+        live = set(paths)
+        for gone in [p for p in _info_cache if p not in live]:
+            del _info_cache[gone]
     for path in paths:
         if vendor_ids is not None and not _path_matches_vendor(path, vendor_ids):
+            continue
+        with _info_cache_lock:
+            cached = _info_cache.get(path)
+        if cached is not None:
+            out.append(dataclasses.replace(cached))
             continue
         h = _open_raw(path, 0, False)           # query-only access: works even for keyboards/mice
         if h is None:
@@ -185,11 +225,11 @@ def enumerate_hid(vendor_ids: tuple[int, ...] | None = None) -> list[HidInfo]:
         try:
             attr = _HIDD_ATTRIBUTES()
             attr.Size = ctypes.sizeof(attr)
-            if not _hid.HidD_GetAttributes(h, ctypes.byref(attr)):
+            if not _ok(_hid.HidD_GetAttributes(h, ctypes.byref(attr))):
                 continue
             info = HidInfo(path=path, vid=attr.VendorID, pid=attr.ProductID)
             pp = ctypes.c_void_p()
-            if _hid.HidD_GetPreparsedData(h, ctypes.byref(pp)):
+            if _ok(_hid.HidD_GetPreparsedData(h, ctypes.byref(pp))):
                 try:
                     caps = _HIDP_CAPS()
                     if _hid.HidP_GetCaps(pp, ctypes.byref(caps)) == HIDP_STATUS_SUCCESS:
@@ -199,9 +239,12 @@ def enumerate_hid(vendor_ids: tuple[int, ...] | None = None) -> list[HidInfo]:
                         info.feat_len = caps.FeatureReportByteLength
                 finally:
                     _hid.HidD_FreePreparsedData(pp)
-            sbuf = ctypes.create_unicode_buffer(128)
-            if _hid.HidD_GetProductString(h, sbuf, ctypes.sizeof(sbuf)):
-                info.product = sbuf.value
+            if not _is_bluetooth_path(path):        # the call can block for seconds on Bluetooth
+                sbuf = ctypes.create_unicode_buffer(128)
+                if _ok(_hid.HidD_GetProductString(h, sbuf, ctypes.sizeof(sbuf))):
+                    info.product = sbuf.value
+            with _info_cache_lock:
+                _info_cache[path] = dataclasses.replace(info)
             out.append(info)
         except Exception:
             log.debug("HID probe failed for %s", redact_path(path), exc_info=True)
@@ -364,14 +407,14 @@ class HidHandle:
         with self._lock:
             h = self._live()
             buf = ctypes.create_string_buffer(bytes(data), len(data))
-            return bool(_hid.HidD_SetFeature(h, buf, len(data)))
+            return _ok(_hid.HidD_SetFeature(h, buf, len(data)))
 
     def get_feature(self, report_id: int, length: int) -> bytes | None:
         with self._lock:
             h = self._live()
             buf = ctypes.create_string_buffer(length)
             buf[0] = report_id
-            if not _hid.HidD_GetFeature(h, buf, length):
+            if not _ok(_hid.HidD_GetFeature(h, buf, length)):
                 return None
             return bytes(buf.raw)
 
@@ -381,6 +424,6 @@ class HidHandle:
             h = self._live()
             buf = ctypes.create_string_buffer(length)
             buf[0] = report_id
-            if not _hid.HidD_GetInputReport(h, buf, length):
+            if not _ok(_hid.HidD_GetInputReport(h, buf, length)):
                 return None
             return bytes(buf.raw)

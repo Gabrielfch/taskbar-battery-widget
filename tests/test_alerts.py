@@ -69,3 +69,18 @@ def test_per_device_state(tmp_path):
     am = AlertManager(make(tmp_path))
     assert len(am.check([dev(10, id="a"), dev(10, id="b")], 0)) == 2
     assert am.check([dev(10, id="a"), dev(10, id="b")], 5) == []
+
+
+def test_cooldown_survives_device_missing_from_a_publication(tmp_path):
+    am = AlertManager(make(tmp_path, notification_cooldown_min=60))
+    assert len(am.check([dev(10)], 0)) == 1
+    assert am.check([], 100) == []                  # device vanished
+    assert am.check([dev(10)], 200) == []           # back, still in cooldown: no repeat
+
+
+def test_state_dropped_after_24h_unseen(tmp_path):
+    am = AlertManager(make(tmp_path, notification_cooldown_min=60))
+    assert len(am.check([dev(10)], 0)) == 1
+    assert am.check([], 10) == []
+    assert am.check([], 25 * 3600) == []
+    assert len(am.check([dev(10)], 25 * 3600 + 1)) == 1

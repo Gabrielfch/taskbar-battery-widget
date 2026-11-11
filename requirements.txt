@@ -1,8 +1,9 @@
-PySide6>=6.12
-winrt-runtime>=2.0
-winrt-Windows.Devices.Enumeration
-winrt-Windows.Devices.Bluetooth
-winrt-Windows.Devices.Radios
-winrt-Windows.Foundation
-winrt-Windows.Foundation.Collections
-pytest
+PySide6==6.12.0
+PySide6_Essentials==6.12.0
+shiboken6==6.12.0
+winrt-runtime==4.1.0
+winrt-Windows.Devices.Enumeration==4!10.0.28000.2957
+winrt-Windows.Devices.Bluetooth==4!10.0.28000.2957
+winrt-Windows.Devices.Radios==4!10.0.28000.2957
+winrt-Windows.Foundation==4!10.0.28000.2957
+winrt-Windows.Foundation.Collections==4!10.0.28000.2957

@@ -1,4 +1,5 @@
 """Safety / robustness tests for the 2.4 GHz HID code (whitelist, sw_id, deadlines, escaping...)."""
+import logging
 import threading
 import time
 from types import SimpleNamespace
@@ -263,6 +264,15 @@ def test_monitor_emits_bluetooth_first_and_stops_fast_when_wireless_hangs(qapp, 
     monkeypatch.setattr(monitor_mod.scanner, "is_radio_on", radio_on)
     monkeypatch.setattr(monitor_mod, "WIRELESS_TIMEOUT_S", 0.5)
     release = threading.Event()
+    timed_out = threading.Event()
+
+    class _Spy(logging.Handler):
+        def emit(self, record):
+            if "wireless scan exceeded" in record.getMessage():
+                timed_out.set()
+
+    spy = _Spy()
+    monitor_mod.log.addHandler(spy)
     got = []
     mon = DeviceMonitor(use_watchers=False, wireless_scan=lambda: release.wait(30) or [])
     mon.devices_changed.connect(got.append)
@@ -274,9 +284,14 @@ def test_monitor_emits_bluetooth_first_and_stops_fast_when_wireless_hangs(qapp, 
             QCoreApplication.processEvents()
             time.sleep(0.02)
         assert got and [d.id for d in got[0]] == ["bt1"]
-        time.sleep(0.8)                                               # the 0.5 s timeout fires
+        end = time.monotonic() + 10                                   # wait for the timeout to fire (event)
+        while not timed_out.is_set() and time.monotonic() < end:
+            QCoreApplication.processEvents()
+            timed_out.wait(0.02)
+        assert timed_out.is_set()
         t = time.monotonic()
     finally:
+        monitor_mod.log.removeHandler(spy)
         mon.stop()
         stop_s = time.monotonic() - t
         release.set()

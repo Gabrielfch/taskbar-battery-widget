@@ -126,12 +126,14 @@ def read_dualsense(infos, deadline: float, cancel: threading.Event | None = None
         live = {i.path for i in sony}
         _triggered.intersection_update(live)    # a vanished device starts over when it returns
         out: list[Device] = []
-        done: set[int] = set()
+        rank: dict[int, int] = {}               # pid -> controllers of that pid seen so far
         for i in sorted(sony, key=lambda x: x.path):
             if cancel is not None and cancel.is_set() or time.monotonic() >= deadline:
                 break
-            if i.pid in done or i.usage_page != GAMEPAD_PAGE or i.usage != GAMEPAD_USAGE:
+            if i.usage_page != GAMEPAD_PAGE or i.usage != GAMEPAD_USAGE:
                 continue
+            nth = rank.get(i.pid, 0)
+            rank[i.pid] = nth + 1
             tr = _transport(i)
             if tr is None:
                 continue
@@ -144,8 +146,10 @@ def read_dualsense(infos, deadline: float, cancel: threading.Event | None = None
             if status is None:
                 continue
             level, charging, _full = decode_status(status)
-            done.add(i.pid)
-            out.append(Device(id=f"sony:{i.pid:04x}",
+            from .hid_win import path_hash
+            # first controller of a pid keeps 'sony:<pid>'; further identical ones get a path hash
+            dev_id = f"sony:{i.pid:04x}" + (f":{path_hash(i.path)}" if nth else "")
+            out.append(Device(id=dev_id,
                               name=sanitize_name(getattr(i, "product", "") or "") or DEFAULT_NAME,
                               kind="gamepad", battery=level, connected=True, charging=charging,
                               link=tr, source="hid"))

@@ -110,3 +110,17 @@ def test_is_radio_on_without_radios_is_true(monkeypatch):
     monkeypatch.setitem(sys.modules, "winrt.windows.devices.radios", mod)
     from taskbar_battery_widget import scanner
     assert asyncio.run(scanner.is_radio_on()) is True
+
+
+def test_dual_mode_id_is_stable_regardless_of_connection():
+    classic = paired(id="classic", connected=False)
+    le = paired(id="le", connected=True, is_le=True, major=None, minor=None, appearance=964)
+    only_le = merge([le, classic], [])[0]
+    both_off = merge([dict(le, connected=False), classic], [])[0]
+    assert only_le.id == both_off.id == "classic"
+    assert only_le.connected and not both_off.connected
+
+
+def test_le_only_device_keeps_le_id():
+    le = paired(id="le", is_le=True)
+    assert merge([le], [])[0].id == "le"

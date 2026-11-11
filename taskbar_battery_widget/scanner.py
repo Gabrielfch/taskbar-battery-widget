@@ -63,6 +63,8 @@ def merge(paired: list[dict], battery_nodes: list[dict]) -> list[Device]:
     for key, members in groups.items():
         # primary: connected first, then classic before LE, keep input order otherwise
         primary = sorted(members, key=lambda p: (not p.get("connected"), bool(p.get("is_le"))))[0]
+        # stable id: Classic endpoint when present, else LE (independent of who is connected)
+        id_src = sorted(members, key=lambda p: bool(p.get("is_le")))[0]
         cid = key if not key.startswith("id:") else ""
         addresses = {_norm_mac(m.get("address")) for m in members} - {""}
 
@@ -89,7 +91,7 @@ def merge(paired: list[dict], battery_nodes: list[dict]) -> list[Device]:
             kind = kind_from_name(name)
 
         result.append(Device(
-            id=str(primary.get("id", "")),
+            id=str(id_src.get("id", "")),
             name=name,
             kind=kind,
             battery=battery,

@@ -510,7 +510,15 @@ class Channel:
         if cached is not None:
             cfid, cidx = cached
             if cfid in _BATTERY_READERS and 1 <= cidx <= MAX_FEATURE_INDEX:
-                order = (cfid,)
+                # indexes can change (firmware update, device swapped in the slot): one cheap
+                # Root.getFeature confirms the cached one before it is used
+                now_idx = self.get_feature_index(device_index, cfid, timeout)
+                if now_idx is None:
+                    known.pop("battery", None)
+                    cached = None
+                else:
+                    cached = (cfid, now_idx)
+                    order = (cfid,)
             else:                               # corrupt cache entry: ignore it
                 known.pop("battery", None)
                 cached = None
@@ -538,6 +546,10 @@ _info_cache: dict[tuple, dict] = {}
 _info_lock = threading.Lock()
 GROUP_BUDGET_S = 2.5
 INFO_RETRY_TTL_S = 600.0        # do not re-probe a name/type that failed for this long
+
+
+_group_inflight: dict[tuple, GuardedCall] = {}     # group key -> possibly hung scan thread
+_group_lock = threading.Lock()
 
 
 def _path_hash(group: dict) -> str:
@@ -629,9 +641,17 @@ def scan_logitech(infos, handle_factory=None, cancel: threading.Event | None = N
             except Exception:
                 log.debug("HID++ scan failed for %04x:%04x", g["vid"], g["pid"], exc_info=True)
                 return []
-        return GuardedCall(one, "hidpp-group")
+        gkey = (g["vid"], g["pid"], repr(g["key"]))
+        with _group_lock:
+            prev = _group_inflight.get(gkey)
+            if prev is not None and not prev.done.is_set():
+                log.warning("HID++ group scan still hung from a previous cycle; skipping")
+                return None
+            call = GuardedCall(one, "hidpp-group")
+            _group_inflight[gkey] = call
+            return call
 
-    calls = [make(g) for g in groups]
+    calls = [c for c in (make(g) for g in groups) if c is not None]
     t_end = time.monotonic() + GROUP_BUDGET_S + 0.5
     out: list[Device] = []
     for call in calls:

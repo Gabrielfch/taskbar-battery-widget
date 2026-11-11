@@ -19,12 +19,14 @@ POLL_S = 30.0
 RESTART_BACKOFF_S = 5.0
 START_TIMEOUT_S = 5.0
 DEBOUNCE_S = 1.0
-WIRELESS_TIMEOUT_S = 4.0
+WIRELESS_TIMEOUT_S = getattr(wireless, "TOTAL_BUDGET_S", 3.6) + 0.4
+BT_TIMEOUT_S = 10.0
 
 
 class DeviceMonitor(QObject):
     devices_changed = Signal(list)   # list[Device]
     radio_changed = Signal(bool)
+    ready = Signal()                 # worker initialised (watchers set up); emitted from the worker
 
     # Internal cross-thread hops: emitted from the worker thread, handled on this object's thread.
     _devices_ready = Signal(list)
@@ -36,6 +38,7 @@ class DeviceMonitor(QObject):
         self._wireless_scan = wireless_scan or wireless.scan_wireless
         self._wireless_call = None          # daemon scan thread still running (maybe hung)
         self._last_wireless: list = []
+        self._last_bt: list = []
         self._last_sig = None
         self._use_watchers = use_watchers
         self._devices_ready.connect(self._on_devices)
@@ -61,8 +64,11 @@ class DeviceMonitor(QObject):
         self._stop_evt.clear()
         self._ready.clear()
         self._thread = threading.Thread(target=self._thread_main, name="DeviceMonitor", daemon=True)
-        self._thread.start()
-        self._ready.wait(START_TIMEOUT_S)
+        self._thread.start()            # non-blocking: the `ready` signal / wait_ready() report init
+
+    def wait_ready(self, timeout: float = START_TIMEOUT_S) -> bool:
+        """Block until the worker finished initialising (never call from the Qt thread)."""
+        return self._ready.wait(timeout)
 
     def stop(self):
         self._stopping = True
@@ -165,7 +171,9 @@ class DeviceMonitor(QObject):
         try:
             if self._use_watchers:
                 await self._setup_watchers()
-            self._ready.set()               # init done
+            if not self._ready.is_set():
+                self._ready.set()           # init done
+                self.ready.emit()
             while not self._stopping:
                 await self._cycle()
                 try:
@@ -254,24 +262,40 @@ class DeviceMonitor(QObject):
         self._last_sig = self._signature(devices)
         self._devices_ready.emit(devices)
 
-    async def _cycle(self):
-        bt: list = []
-        try:
+    async def _scan_bluetooth(self) -> tuple[list, bool]:
+        """Radio check + BT scan bounded by BT_TIMEOUT_S. Returns (devices, fresh).
+
+        On timeout or error the last known list is reused (fresh=False) so the wireless scan and the
+        poll loop carry on.
+        """
+        async def _go():
             on = await scanner.is_radio_on()
             if on != self._radio_on:
                 self._radio_on = on
                 self._radio_ready.emit(on)
-            bt = await scanner.scan() if on else []
+            return await scanner.scan() if on else []
+
+        try:
+            return list(await asyncio.wait_for(_go(), BT_TIMEOUT_S)), True
+        except asyncio.TimeoutError:
+            log.error("device scan exceeded %.1f s; using last known Bluetooth list", BT_TIMEOUT_S)
         except Exception:
             log.exception("device scan failed")
-            return
-        now = time.monotonic()
-        for d in bt:
-            if getattr(d, "link", "bluetooth") == "bluetooth":
-                d.charging = self._estimator.update(d.id, d.battery if d.connected else None, now)
-        self._estimator.retain(d.id for d in bt)
+        return list(self._last_bt), False
+
+    async def _cycle(self):
+        bt, fresh = await self._scan_bluetooth()
+        if fresh:
+            self._last_bt = bt
+            now = time.monotonic()
+            for d in bt:
+                if getattr(d, "link", "bluetooth") == "bluetooth":
+                    d.charging = self._estimator.update(d.id, d.battery if d.connected else None, now)
+            self._estimator.retain(d.id for d in bt)
         cached = self._filter_sources(self._last_wireless)
-        self._publish(wireless.merge_devices(bt, cached))       # Bluetooth first, never wait on HID
+        first = wireless.merge_devices(bt, cached)              # Bluetooth first, never wait on HID
+        if self._signature(first) != self._last_sig:
+            self._publish(first)
         if not self._wireless_enabled():
             return
         extra = await self._scan_wireless()

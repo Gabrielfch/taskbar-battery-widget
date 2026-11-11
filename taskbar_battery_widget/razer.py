@@ -199,6 +199,18 @@ def _path_hash(path: str) -> str:
     return hashlib.sha1(stable.encode("utf-8", "replace")).hexdigest()[:6]
 
 
+_last: dict[str, int] = {}      # device id -> last non-zero reading
+
+
+def _plausible(dev_id: str, pct: int) -> int | None:
+    """Razer firmwares sometimes answer 0 % transiently: a 0 right after a non-zero reading is
+    treated as "no reading" (None). A 0 is believed when nothing >0 was seen before."""
+    if pct == 0 and _last.get(dev_id, 0) > 0:
+        return None
+    _last[dev_id] = pct
+    return pct
+
+
 def scan_razer(infos, handle_factory=None, cancel: threading.Event | None = None) -> list[Device]:
     """Query vendor-page Razer collections that expose the 90-byte feature report. Never raises."""
     if handle_factory is None:
@@ -232,6 +244,7 @@ def scan_razer(infos, handle_factory=None, cancel: threading.Event | None = None
         else:
             name = product_name or "Razer device"
             kind = kind_for(name)
-        out.append(Device(id=f"razer:{i.pid:04x}:{_path_hash(i.path)}", name=name, kind=kind,
-                          battery=res[0], connected=True, charging=res[1], link=link_for(name)))
+        dev_id = f"razer:{i.pid:04x}:{_path_hash(i.path)}"
+        out.append(Device(id=dev_id, name=name, kind=kind,
+                          battery=_plausible(dev_id, res[0]), connected=True, charging=res[1], link=link_for(name)))
     return out

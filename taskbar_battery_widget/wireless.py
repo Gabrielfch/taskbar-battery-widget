@@ -26,7 +26,12 @@ FLIGHT_VID, FLIGHT_PID = 0x0951, 0x16C4     # the only HyperX model kept when ex
 # Sony PULSE 3D / INZONE Buds push reports only on change: their last value must outlive the grace
 PUSH_ONLY_IDS = frozenset({"sony:0d5e", "sony:0ec2"})
 ENUM_BUDGET_S = 1.2         # HID enumeration (synchronous HidD_* calls) must finish within this
+ENUM_RETRY_BUDGET_S = 0.5   # the "dongles vanished?" re-enumeration is capped lower than the first
 VENDOR_BUDGET_S = 2.6       # Logitech / Razer scans run in parallel under this budget
+# Hard ceiling for one whole scan_wireless() call (enumeration + retry + readers). The readers get
+# whatever is left of it, so a slow enumeration shortens them instead of extending the scan.
+# Callers that wait for the scan (monitor) add their own margin on top of this value.
+TOTAL_BUDGET_S = 3.5
 
 _cache: dict[str, tuple[Device, float]] = {}
 _lock = threading.Lock()                # guards _cache / _last_present (short critical sections)
@@ -60,6 +65,8 @@ def is_experimental_id(device_id: str) -> bool:
     prefix = parts[0]
     if prefix in ("steelseries", "corsair", "audeze", "jabra", "lenovo", "mchose", "xinput"):
         return True
+    if prefix == "sony" and len(parts) == 3:        # 'sony:<pid>:<hash>': second identical pad
+        parts = parts[:2]
     if len(parts) != 2:
         return False
     if prefix == "logi":                    # 'logi:<pid>' = headset base; the generic scanner adds ':<idx>'
@@ -128,7 +135,7 @@ def dongle_key(device_id: str) -> str | None:
         return f"1532:{parts[1]}"
     fixed = {"sony": 0x054C, "steelseries": 0x1038, "corsair": 0x1B1C, "audeze": 0x3329,
              "jabra": 0x0B0E}
-    if prefix in fixed and len(parts) == 2:
+    if prefix in fixed and (len(parts) == 2 or (prefix == "sony" and len(parts) == 3)):
         return f"{fixed[prefix]:04x}:{parts[1]}"
     if prefix in ("lenovo", "mchose") and len(parts) == 2:
         try:
@@ -159,7 +166,7 @@ def apply_cache(cache: dict, fresh: list[Device], present: set[str], now: float,
         carried_age = None
         if d.battery is None and old is not None and old[0].battery is not None \
                 and now - old[1] <= keep:
-            d.battery, d.charging = old[0].battery, old[0].charging
+            d.battery = old[0].battery          # charging / connected stay as freshly read
             d.updated = old[0].updated
             stamp = old[1]                  # the carried value keeps its original age
             carried_age = now - old[1]
@@ -194,15 +201,20 @@ def _same_device(a: Device, b: Device) -> bool:
     if a.kind != b.kind:
         return False
     na, nb = _norm(a.name), _norm(b.name)
-    return bool(na) and bool(nb) and (na == nb or na in nb or nb in na)
+    if not (na and nb):
+        return False
+    if na == nb:
+        return True
+    return (na in nb or nb in na) and (a.battery is None or b.battery is None)
 
 
 def merge_devices(primary: list[Device], extra: list[Device]) -> list[Device]:
     """Combine Bluetooth (primary) and wireless (extra) lists.
 
-    A wireless device is the same as a Bluetooth one when the kinds match and one normalised name
-    contains the other; then the one with a battery reading wins (ties keep the primary one, in
-    its position). Wireless devices are never merged with each other (two identical mice stay).
+    A wireless device is the same as a Bluetooth one when the kinds match and the normalised names
+    are equal, or one contains the other while at least one of them has no battery reading (two
+    readings mean two real devices: "MX Master 3" vs "MX Master 3S"). The one with a battery
+    reading wins (ties keep the primary one, in its position). Wireless devices are never merged with each other (two identical mice stay).
     """
     xin = [d for d in extra if d.id.startswith("xinput:")]
     if xin:
@@ -293,10 +305,10 @@ def _enum_result(call, name: str, until: float):
     return call.value or []
 
 
-def _enumerate(cancel: threading.Event, vids=None, name: str = "enum"):
-    """Enumerate HID interfaces of `vids` (default: the core vendors) within ENUM_BUDGET_S."""
+def _enumerate(cancel: threading.Event, vids=None, name: str = "enum", budget: float | None = None):
+    """Enumerate HID interfaces of `vids` (default: the core vendors) within `budget` seconds."""
     call = _start_enum(name, CORE_VENDOR_IDS if vids is None else vids, cancel)
-    return _enum_result(call, name, time.monotonic() + ENUM_BUDGET_S)
+    return _enum_result(call, name, time.monotonic() + (ENUM_BUDGET_S if budget is None else budget))
 
 
 def _vendor_of(key: str) -> int:
@@ -331,7 +343,9 @@ def _scan_locked() -> list[Device]:
     if not experimental:
         with _lock:
             _purge_experimental()
-    t_enum = time.monotonic() + ENUM_BUDGET_S
+    t_start = time.monotonic()
+    t_hard = t_start + TOTAL_BUDGET_S
+    t_enum = t_start + ENUM_BUDGET_S
     # core and experimental vendors are enumerated by separate guarded calls with their own budget
     core_call = _start_enum("enum", CORE_VENDOR_IDS, cancel)
     exp_call = _start_enum("enum-exp", EXPERIMENTAL_VENDOR_IDS, cancel) if experimental else None
@@ -343,7 +357,7 @@ def _scan_locked() -> list[Device]:
         prev_present, prev_ts = set(_last_present), _last_present_ts
     prev_core = {k for k in prev_present if _vendor_of(k) in CORE_VENDOR_IDS}
     if not infos and prev_core:             # dongles vanished? retry once before believing it
-        infos = _enumerate(cancel)
+        infos = _enumerate(cancel, budget=min(ENUM_RETRY_BUDGET_S, max(0.0, t_hard - now)))
         now = time.monotonic()
         if infos is None:
             return _snapshot(now)
@@ -355,7 +369,8 @@ def _scan_locked() -> list[Device]:
         return []
 
     bt_ext = _dualsense_bt_extended
-    t_end = now + VENDOR_BUDGET_S           # one absolute deadline for every reader of this cycle
+    # one absolute deadline for every reader of this cycle, never past the scan's hard ceiling
+    t_end = min(now + VENDOR_BUDGET_S, t_hard)
     calls: list[tuple[GuardedCall, threading.Event]] = []
     named: dict[str, GuardedCall] = {}
 
@@ -420,7 +435,8 @@ def _scan_locked() -> list[Device]:
         prev_exp = prev_present - prev_core
         exp_infos = _enum_result(exp_call, "enum-exp", t_enum)
         if exp_infos is not None and not exp_infos and prev_exp:
-            exp_infos = _enumerate(cancel, EXPERIMENTAL_VENDOR_IDS, "enum-exp")
+            exp_infos = _enumerate(cancel, EXPERIMENTAL_VENDOR_IDS, "enum-exp",
+                                   budget=min(ENUM_RETRY_BUDGET_S, max(0.0, t_end - time.monotonic())))
         if exp_infos is None:
             exp_present = prev_exp          # inconclusive: keep what was cached
         else:
@@ -449,7 +465,8 @@ def _scan_locked() -> list[Device]:
     for c, ev in calls:
         if not c.wait(t_end - time.monotonic()):
             ev.set()                        # drop the late result and stop its requests
-            log.warning("wireless vendor scan overran %.1f s; result dropped", VENDOR_BUDGET_S)
+            log.warning("wireless vendor scan %s overran its %.1f s budget; result dropped",
+                        getattr(getattr(c, "_thread", None), "name", "?"), t_end - now)
         elif c.error is not None:
             log.error("wireless vendor scan failed: %r", c.error)
         else:

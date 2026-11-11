@@ -24,6 +24,9 @@ WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
 RestartApplications=no
+; Never restore the tasks ticked in a previous run: the startup task default is derived from the
+; real current state in InitializeWizard (below), so updating cannot silently re-enable a disabled entry.
+UsePreviousTasks=no
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -47,6 +50,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 [Registry]
 ; Same value name and format as startup.py (VALUE_NAME, quoted frozen exe path).
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "TaskbarBatteryWidget"; ValueData: """{app}\{#AppExe}"""; Tasks: startup; Flags: uninsdeletevalue
+; Ticking the task is an explicit opt-in: also clear a "disabled" flag left by Task Manager / Settings.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"; ValueType: binary; ValueName: "TaskbarBatteryWidget"; ValueData: "02 00 00 00 00 00 00 00 00 00 00 00"; Tasks: startup; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
@@ -59,6 +64,34 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+const
+  RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  ApprovedKey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run';
+
+{ True when the Run value points into this install dir and Task Manager has not disabled it }
+function StartupCurrentlyEnabled: Boolean;
+var
+  V: String;
+  B: AnsiString;
+begin
+  Result := False;
+  if RegQueryStringValue(HKEY_CURRENT_USER, RunKey, 'TaskbarBatteryWidget', V) then
+    if Pos(Lowercase(WizardDirValue), Lowercase(V)) > 0 then
+    begin
+      Result := True;
+      if RegQueryBinaryValue(HKEY_CURRENT_USER, ApprovedKey, 'TaskbarBatteryWidget', B) then
+        if (Length(B) > 0) and ((Ord(B[1]) and 1) <> 0) then
+          Result := False;
+    end;
+end;
+
+procedure InitializeWizard;
+begin
+  { tick "Start with Windows" only if it is genuinely on right now (update keeps it; a disabled one stays off) }
+  if StartupCurrentlyEnabled then
+    WizardSelectTasks('startup');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   V: String;

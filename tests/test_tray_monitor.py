@@ -182,3 +182,75 @@ def test_monitor_restarts_after_crash(qapp, fake_scan, monkeypatch):
         assert calls["n"] >= 2
     finally:
         m.stop()
+
+
+def test_monitor_bt_scan_hang_still_publishes_wireless(qapp, fake_scan, monkeypatch):
+    import asyncio
+
+    async def hang():
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(scanner, "scan", hang)
+    monkeypatch.setattr(mon, "BT_TIMEOUT_S", 0.2)
+    w = Device("w1", "Wireless", "mouse", 70, True, link="wireless")
+    m = mon.DeviceMonitor(use_watchers=False, wireless_scan=lambda: [w])
+    got = []
+    m.devices_changed.connect(got.append)
+    m.start()
+    try:
+        assert pump(qapp, lambda: any(d.id == "w1" for batch in got for d in batch), 5)
+    finally:
+        m.stop()
+
+
+def test_monitor_bt_scan_error_reuses_last_and_publishes_wireless(qapp, fake_scan, monkeypatch):
+    calls = {"n": 0}
+    good = scanner.scan
+
+    async def flaky():
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("boom")
+        return await good()
+
+    monkeypatch.setattr(scanner, "scan", flaky)
+    state = {"w": []}
+    m = mon.DeviceMonitor(use_watchers=False, wireless_scan=lambda: list(state["w"]))
+    got = []
+    m.devices_changed.connect(got.append)
+    m.start()
+    try:
+        assert pump(qapp, lambda: len(got) >= 1)
+        state["w"] = [Device("w1", "Wireless", "mouse", 70, True, link="wireless")]
+        m.refresh()
+        assert pump(qapp, lambda: {"a", "w1"} <= {d.id for d in got[-1]}, 5)
+    finally:
+        m.stop()
+
+
+def test_monitor_skips_first_publish_when_unchanged(qapp, fake_scan):
+    m = mon.DeviceMonitor(use_watchers=False, wireless_scan=lambda: [])
+    got = []
+    m.devices_changed.connect(got.append)
+    m.start()
+    try:
+        assert pump(qapp, lambda: len(got) >= 1)
+        n = len(got)
+        m.refresh()
+        time.sleep(0.5)
+        qapp.processEvents()
+        assert len(got) == n
+    finally:
+        m.stop()
+
+
+def test_monitor_start_does_not_block_and_signals_ready(qapp, fake_scan):
+    m = mon.DeviceMonitor(use_watchers=False)
+    ready = []
+    m.ready.connect(lambda: ready.append(1))
+    m.start()
+    try:
+        assert m.wait_ready(5)
+        assert pump(qapp, lambda: ready)
+    finally:
+        m.stop()

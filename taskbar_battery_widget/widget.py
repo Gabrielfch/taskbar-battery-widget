@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from ctypes import wintypes as wt
 
 from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter,
+from PySide6.QtGui import (QAccessible, QAccessibleEvent, QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter,
                            QPainterPath, QPen)
 from PySide6.QtWidgets import QMenu, QWidget
 
@@ -115,6 +115,10 @@ if sys.platform == "win32":
     _u32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                                   ctypes.c_int, wt.UINT]
     _u32.SetWindowPos.restype = wt.BOOL
+    _u32.SetForegroundWindow.argtypes = [wt.HWND]
+    _u32.SetForegroundWindow.restype = wt.BOOL
+    _u32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+    _u32.PostMessageW.restype = wt.BOOL
 
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x80, 0x08000000
@@ -128,6 +132,46 @@ def _apply_ex_styles(hwnd: int) -> None:
     h = wt.HWND(hwnd)
     cur = _u32.GetWindowLongPtrW(h, GWL_EXSTYLE)
     _u32.SetWindowLongPtrW(h, GWL_EXSTYLE, cur | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
+
+
+WM_NULL = 0x0000
+
+
+def _foreground(hwnd: int) -> None:
+    """SetForegroundWindow on one of our own windows (needed so a popup menu closes on outside clicks)."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    _u32.SetForegroundWindow(wt.HWND(hwnd))
+
+
+def _post_null(hwnd: int) -> None:
+    """Classic tray-menu companion: WM_NULL after the menu ends so the menu loop does not linger."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    _u32.PostMessageW(wt.HWND(hwnd), WM_NULL, 0, 0)
+
+
+def popup_menu_foreground(menu, pos, owner_hwnd: int = 0) -> None:
+    """Show `menu` at `pos` from a non-activating window so it dismisses on any outside click.
+
+    The menu's window is made foreground right after it appears; when it hides, WM_NULL is posted to the
+    owner window (or the menu's own window when no owner is given).
+    """
+    menu.popup(pos)
+    try:
+        mh = int(menu.winId())
+        _foreground(mh)
+        target = owner_hwnd or mh
+
+        def _closed() -> None:
+            try:
+                menu.aboutToHide.disconnect(_closed)
+            except (RuntimeError, TypeError):
+                pass
+            _post_null(target)
+        menu.aboutToHide.connect(_closed)
+    except Exception:
+        pass
 
 
 def _assert_topmost(hwnd: int) -> None:
@@ -229,6 +273,9 @@ class TaskbarWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setMouseTracking(True)
+        # keyboard access: the pills are reachable once the widget has focus (it never takes it on click)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._kfocus = -1               # pill with the keyboard focus ring, -1 = none
         self._cfg = cfg
         self._devices: list[Device] = []
         self._radio_on = True
@@ -368,6 +415,7 @@ class TaskbarWidget(QWidget):
         self.setAccessibleName(tr("app_name"))
         self.setAccessibleDescription(", ".join(p.a11y for p in pills) or tr("no_devices"))
         self._relayout()
+        self._set_kfocus(self._kfocus)      # keep the accessible name in step with the rebuilt pills
         self._rearm_hover()
 
     def _cursor_pos(self) -> QPoint:
@@ -463,6 +511,8 @@ class TaskbarWidget(QWidget):
                                a11y=f"+{len(rest)}", members=rest))
             widths.append(2 * PAD + fm.horizontalAdvance(f"+{len(rest)}"))
         self._pills = pills
+        if self._kfocus >= len(pills):
+            self._set_kfocus(len(pills) - 1)
         self._rects, (tw, th) = layout_pills(widths, self._pill_h, self._vertical)
         self.setFixedSize(QSize(max(tw, 1), max(th, 1)))
         self.update()
@@ -605,6 +655,12 @@ class TaskbarWidget(QWidget):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(fill)
             p.drawRoundedRect(r, h / 2.5, h / 2.5)
+            if i == self._kfocus and self.hasFocus():     # keyboard focus ring
+                pen = QPen(fg)
+                pen.setWidthF(2.0)
+                p.setPen(pen)
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(r.adjusted(1, 1, -1, -1), h / 2.5, h / 2.5)
             if pill.alert:      # non-colour cue for "very low": 1 px outline
                 pen = QPen(color)
                 pen.setWidthF(1.0)
@@ -680,10 +736,75 @@ class TaskbarWidget(QWidget):
                 self._show_popup()
                 self.update()
         if e.button() == Qt.MouseButton.RightButton:
-            gp = e.globalPosition().toPoint()
-            self.context_menu_requested.emit(gp)
-            if self._menu is not None:
-                self._menu.popup(gp)
+            self._open_menu(e.globalPosition().toPoint())
+
+    def _open_menu(self, gp: QPoint) -> None:
+        self.context_menu_requested.emit(gp)
+        if self._menu is not None:
+            popup_menu_foreground(self._menu, gp, int(self.winId()))
+
+    # ---- keyboard / accessibility
+    def _set_kfocus(self, idx: int) -> None:
+        idx = idx if 0 <= idx < len(self._pills) else -1
+        changed = idx != self._kfocus
+        self._kfocus = idx
+        self.setAccessibleName(self._pills[idx].a11y if idx >= 0 else tr("app_name"))
+        self.update()
+        if changed or idx >= 0:
+            try:
+                QAccessible.updateAccessibility(QAccessibleEvent(self, QAccessible.Event.NameChanged))
+            except Exception:
+                pass
+
+    def focusInEvent(self, e) -> None:
+        super().focusInEvent(e)
+        if self._kfocus < 0 and self._pills:
+            back = e.reason() == Qt.FocusReason.BacktabFocusReason
+            self._set_kfocus(len(self._pills) - 1 if back else 0)
+
+    def focusOutEvent(self, e) -> None:
+        super().focusOutEvent(e)
+        self._hide_popup()
+        self._set_kfocus(-1)
+
+    def focusNextPrevChild(self, nxt: bool) -> bool:
+        if self._kfocus >= 0:
+            new = self._kfocus + (1 if nxt else -1)
+            if 0 <= new < len(self._pills):
+                self._set_kfocus(new)
+                return True
+        return super().focusNextPrevChild(nxt)
+
+    def _kfocus_rect_center(self) -> QPoint:
+        x, y, w, h = self._rects[self._kfocus]
+        return self.mapToGlobal(QPoint(int(x + w / 2), int(y + h / 2)))
+
+    def keyPressEvent(self, e) -> None:
+        key, mods = e.key(), e.modifiers()
+        n = len(self._pills)
+        if n and key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
+            self._hide_popup()
+            self._set_kfocus(max(0, self._kfocus - 1) if self._kfocus >= 0 else 0)
+        elif n and key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
+            self._hide_popup()
+            self._set_kfocus(min(n - 1, self._kfocus + 1))
+        elif n and key == Qt.Key.Key_Home:
+            self._set_kfocus(0)
+        elif n and key == Qt.Key.Key_End:
+            self._set_kfocus(n - 1)
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space) and 0 <= self._kfocus < n:
+            self._hover = self._kfocus
+            self._show_popup()
+        elif key == Qt.Key.Key_Escape:
+            self._hide_popup()
+        elif key == Qt.Key.Key_Menu or (key == Qt.Key.Key_F10
+                                        and mods & Qt.KeyboardModifier.ShiftModifier):
+            gp = self._kfocus_rect_center() if 0 <= self._kfocus < n else self.mapToGlobal(self.rect().center())
+            self._open_menu(gp)
+        else:
+            super().keyPressEvent(e)
+            return
+        e.accept()
 
     def event(self, e) -> bool:
         if e.type() == QEvent.Type.ToolTip:
