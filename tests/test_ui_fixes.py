@@ -256,7 +256,8 @@ def test_tray_menu_structure(qapp, tmp_path):
     top = _texts(tray.menu)
     assert top[0] == "Raton: 97 % · Cargando"
     assert top[1:] == ["Actualizar", "Mostrar", "Fuentes", "Alertas",
-                    "Abrir registro de dispositivos", "Abrir carpeta de registros", "Iniciar con Windows", "Salir"]
+                    "Abrir registro de dispositivos", "Abrir carpeta de registros", "Iniciar con Windows",
+                       "Acerca de Taskbar Battery Widget…", "Salir"]
     sub = {a.text(): a.menu() for a in tray.menu.actions() if a.menu()}
     assert _texts(sub["Mostrar"]) == ["Desconectados", "Dispositivos visibles", "Color según el nivel"]
     assert len(_texts(sub["Fuentes"])) == 3

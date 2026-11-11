@@ -64,6 +64,9 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupA
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; In-app updates run the installer with /SILENT /LAUNCHAPP=1: relaunch the app afterwards (a Qt app does not
+; register with Restart Manager, so /RESTARTAPPLICATIONS would not bring it back). Never fires in interactive runs.
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser skipifnotsilent; Check: LaunchAppRequested
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "KillApp"
@@ -92,6 +95,12 @@ begin
         if (Length(B) > 0) and ((Ord(B[1]) and 1) <> 0) then
           Result := False;
     end;
+end;
+
+{ True when started with /LAUNCHAPP=1 (the in-app updater) }
+function LaunchAppRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:LAUNCHAPP|0}') = '1';
 end;
 
 procedure InitializeWizard;

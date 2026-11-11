@@ -21,5 +21,9 @@ Follow `docs/reader-contract.md`. In short:
 Open a "Device report" issue and fill in the form (model, connection, VID:PID, result). Do not paste
 personal data; the app logs contain no MAC addresses or serial numbers, but check any snippet first.
 
+## Releases (maintainer)
+Releases are created by CI as drafts and signed offline with `tools/signing/sign_release.py`; never commit or
+share the signing key. See `docs/release-notes/README.md` for the full flow.
+
 ## Pull requests
 Keep changes focused, make sure the tests pass and fill in the PR template.

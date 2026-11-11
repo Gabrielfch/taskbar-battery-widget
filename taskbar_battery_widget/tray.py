@@ -36,6 +36,8 @@ class TrayController(QObject):
         self._menu = QMenu()
         self._dev_actions: list[QAction] = []
         self._visible_actions: list[QAction] = []
+        self._about = None
+        self._release = None            # newer release found by the automatic check, if any
         self._build_menu()
         self._tray.setContextMenu(self._menu)
         self._tray.setToolTip(tr("app_name"))
@@ -49,7 +51,24 @@ class TrayController(QObject):
         self._tray.show()
 
     def hide(self) -> None:
+        if self._about is not None:
+            self._about.shutdown()
         self._tray.hide()
+
+    # ---- about / updates
+    def show_about(self) -> None:
+        from .about import AboutDialog
+        if self._about is None:
+            self._about = AboutDialog(self._cfg, release=self._release)
+            self._about.quit_requested.connect(self.quit_requested.emit)
+        self._about.show()
+        self._about.raise_()
+        self._about.activateWindow()
+
+    def set_available_release(self, rel) -> None:
+        self._release = rel
+        if self._about is not None:
+            self._about.set_release(rel)
 
     # ------------------------------------------------------------------ menu
     def _build_menu(self) -> None:
@@ -95,6 +114,9 @@ class TrayController(QObject):
         except Exception:
             self._act_start.setChecked(bool(self._cfg.get("start_with_windows")))
         self._act_start.toggled.connect(self._set_startup)
+        m.addSeparator()
+        self._act_about = m.addAction(tr("menu_about"))
+        self._act_about.triggered.connect(self.show_about)
         m.addAction(tr("quit")).triggered.connect(self.quit_requested.emit)
         m.aboutToShow.connect(self._sync_menu)
 
@@ -316,5 +338,6 @@ class TrayController(QObject):
             tip += f" - {lowest}%"
         self._tray.setToolTip(tip)
 
-    def notify(self, title: str, body: str) -> None:
-        self._tray.showMessage(title, body, QSystemTrayIcon.MessageIcon.Warning, 8000)
+    def notify(self, title: str, body: str, info: bool = False) -> None:
+        icon = QSystemTrayIcon.MessageIcon.Information if info else QSystemTrayIcon.MessageIcon.Warning
+        self._tray.showMessage(title, body, icon, 8000)

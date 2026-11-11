@@ -21,7 +21,12 @@ Get-FileHash .\TaskbarBatteryWidget-Setup-x.y.z.exe -Algorithm SHA256
 The hash printed must match the line for that file in `SHA256SUMS.txt`.
 
 ## Privacy
-The app does not use the network; everything runs locally. It stores only:
+The app only connects to the internet when you look for updates: manually from *About* or through the
+optional automatic check (off by default, at most once a day). The only hosts contacted are `api.github.com`
+and `github.com` (the project's releases). What is sent is a plain HTTPS request with the User-Agent
+`TaskbarBatteryWidget/<version>`; no device data, identifiers or personal data. Updates are downloaded only
+after you confirm; `SHA256SUMS.txt` must carry a valid Ed25519 signature from the project's embedded key and the installer must match its hash before it runs (you confirm a second time before installing). Everything else runs
+locally. It stores only:
 - Settings: `%APPDATA%\TaskbarBatteryWidget\config.json`
 - Logs: `%LOCALAPPDATA%\TaskbarBatteryWidget\logs` (`app.log`, `devices.log`), rotated at 1 MB x 3
 - Last known battery values: `%LOCALAPPDATA%\TaskbarBatteryWidget\last_known.json`
@@ -39,6 +44,9 @@ default**.
 - Estimated "charging" state, hides over fullscreen apps, tray menu (refresh, show disconnected,
   notifications, low threshold, start with Windows, quit).
 - Spanish / English UI depending on the system locale.
+- *About* window (tray menu): version, license, third-party notices, links, logs folder, copyable technical
+  info, and *Check for updates* (manual, or optional once-a-day automatic check). Installed copies can
+  download and install a new release after signature and SHA-256 verification; portable/source copies only open the release page.
 - Logs in `%LOCALAPPDATA%\TaskbarBatteryWidget\logs` (`app.log` for the app, `TBW_DEBUG=1` for debug level;
   `devices.log` with connect/disconnect/battery/charging/low events per device; both rotate at 1 MB x 3 and
   never contain MAC addresses or serial numbers). Tray menu: *Open device log* / *Open logs folder*.

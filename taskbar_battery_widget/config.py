@@ -22,9 +22,12 @@ DEFAULTS = {
     "idle_grace_min": 30,           # minutes a silent (asleep) 2.4 GHz device stays listed
     "color_mode": "levels",         # "levels" | "mono"
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
+    "update_check_auto": False,     # opt-in: look for a new release at most once a day
+    "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)
 }
 
 MAX_HIDDEN = 200
+MAX_TIMESTAMP = 4_102_444_800       # year 2100
 COLOR_MODES = ("levels", "mono")
 
 
@@ -69,6 +72,8 @@ def _valid(key, value) -> bool:
         return 1 <= value <= 100
     if key == "idle_grace_min":
         return 1 <= value <= 1440
+    if key == "update_last_check":
+        return 0 <= value <= MAX_TIMESTAMP
     if key == "notification_cooldown_min":
         return value >= 1
     return value >= 0

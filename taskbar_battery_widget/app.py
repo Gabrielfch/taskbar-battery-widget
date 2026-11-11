@@ -188,11 +188,15 @@ def main() -> int:
 
     app.aboutToQuit.connect(shutdown)
 
+    from .about import AutoUpdateChecker
+    auto_updates = AutoUpdateChecker(cfg, tray)
+
     refresh_theme()
     tray.show()
     widget.start()
     theme_timer.start()
     monitor.start()
+    auto_updates.start()
     return app.exec()
 
 

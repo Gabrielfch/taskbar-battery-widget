@@ -1,6 +1,8 @@
 name: Release
 
-# Actions are pinned by major version (official actions only); the rest is plain shell + gh CLI.
+# Official actions are pinned by full commit SHA (version in the trailing comment); the rest is plain shell + gh CLI.
+# The release is created as a DRAFT without SHA256SUMS.txt.sig: the maintainer signs it offline with
+# tools/signing/sign_release.py <tag> --publish (see docs/release-notes/README.md).
 on:
   push:
     tags: ["v*.*.*"]
@@ -21,9 +23,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
           cache: pip
@@ -57,7 +59,8 @@ jobs:
           $found = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
             Where-Object { Test-Path -LiteralPath $_ }
           if (-not $found) {
-            choco install innosetup -y --no-progress
+            # pinned: 6.7.1 is the newest 6.x on Chocolatey (6.22.3 does not exist there)
+            choco install innosetup --version 6.7.1 -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw 'choco install innosetup failed' }
           }
 
@@ -66,7 +69,7 @@ jobs:
         run: ./packaging/build.ps1 -SkipTests
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/TaskbarBatteryWidget-Setup-${{ steps.ver.outputs.version }}.exe
@@ -84,7 +87,7 @@ jobs:
             "dist/SHA256SUMS.txt"
           )
           $notes = "docs/release-notes/$env:TAG.md"
-          $ghArgs = @('release', 'create', $env:TAG, '--title', $env:TAG, '--verify-tag') + $assets
+          $ghArgs = @('release', 'create', $env:TAG, '--title', $env:TAG, '--verify-tag', '--draft') + $assets
           if (Test-Path -LiteralPath $notes) { $ghArgs += @('--notes-file', $notes) } else { $ghArgs += '--generate-notes' }
           gh @ghArgs
           if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
