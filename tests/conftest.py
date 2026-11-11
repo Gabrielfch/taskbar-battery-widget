@@ -40,6 +40,17 @@ def _isolate_module_state():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_taskbar(request, monkeypatch):
+    """Widgets must not size themselves against the machine's real taskbar (it differs between
+    developer PCs and CI runners and can collapse pills into a '+N' overflow pill). Tests that
+    exercise the live Win32 calls opt out with @pytest.mark.live_taskbar."""
+    if request.node.get_closest_marker("live_taskbar"):
+        return
+    from taskbar_battery_widget import taskbar
+    monkeypatch.setattr(taskbar, "get_taskbar_info", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_wireless_scan(monkeypatch):
     """Never touch real HID dongles from unit tests."""
     from taskbar_battery_widget import wireless

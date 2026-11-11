@@ -98,8 +98,13 @@ def _bar_pixel(wd, i, expected=None):
     return colours[min(2, len(colours) - 1)] if colours else QColor()
 
 
-def test_pills_render_distinct_colors(qapp):
+def test_pills_render_distinct_colors(qapp, monkeypatch):
+    # Without this the widget measures the machine's real taskbar (CI runners have one) and may
+    # collapse pills into a "+N" overflow pill, so pill i would no longer be device i.
+    from taskbar_battery_widget import taskbar
+    monkeypatch.setattr(taskbar, "get_taskbar_info", lambda: None)
     wd = w.TaskbarWidget(Cfg())
+    wd._max_extent = None
     wd._light = False
     wd.set_devices([Device("a", "A", "keyboard", 95, True), Device("b", "B", "mouse", 45, True),
                     Device("c", "C", "headset", 25, True), Device("d", "D", "mouse", 8, True)])

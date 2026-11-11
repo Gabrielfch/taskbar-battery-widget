@@ -1,3 +1,5 @@
+import pytest
+
 from taskbar_battery_widget import taskbar as tb
 
 
@@ -54,6 +56,7 @@ def test_covers_monitor():
     assert not tb.covers_monitor((0, 0, 1920, 1032), mon)
 
 
+@pytest.mark.live_taskbar
 def test_live_calls_do_not_crash():
     assert isinstance(tb.taskbar_uses_light_theme(), bool)
     i = tb.get_taskbar_info()
