@@ -202,3 +202,115 @@ def test_scan_logitech_open_failure_returns_empty():
         raise OSError("nope")
     assert hidpp.scan_logitech(receiver_infos(), boom) == []
     assert hidpp.scan_logitech([], boom) == []
+
+
+# ---- HID++ 1.0 battery registers (GET_REGISTER only) ------------------------------------------
+def test_hidpp1_request_bytes_and_whitelist():
+    assert hidpp.build_hidpp1_get_register(1, 0x0D) == bytes([0x10, 1, 0x81, 0x0D, 0, 0, 0])
+    assert hidpp.build_hidpp1_get_register(0xFF, 0x07) == bytes([0x10, 0xFF, 0x81, 0x07, 0, 0, 0])
+    for reg in (0x00, 0x01, 0x06, 0x08, 0x0F, 0xF1, 0x80):
+        with pytest.raises(hidpp.HidppSafetyError):
+            hidpp.build_hidpp1_get_register(1, reg)
+    for sub in (0x80, 0x82, 0x83, 0x84, 0x92, 0x00):     # SET_REGISTER and friends are never allowed
+        with pytest.raises(hidpp.HidppSafetyError):
+            hidpp.build_hidpp1_get_register(1, 0x0D, sub_id=sub)
+    with pytest.raises(hidpp.HidppSafetyError):
+        hidpp.build_hidpp1_get_register(9, 0x0D)
+    # the HID++ 2.0 guarded builder still refuses the register sub-ids
+    for sub in (0x80, 0x81, 0x82):
+        with pytest.raises(hidpp.HidppSafetyError):
+            hidpp.build_guarded_request(1, sub, hidpp.F_ROOT, 0)
+
+
+def test_hidpp1_decoders():
+    assert hidpp.decode_hidpp1_charge(bytes([85, 0, 0x30])) == (85, False)
+    assert hidpp.decode_hidpp1_charge(bytes([40, 0, 0x50])) == (40, True)
+    assert hidpp.decode_hidpp1_charge(bytes([101, 0, 0x30])) is None
+    assert hidpp.decode_hidpp1_charge(b"\x50\x00") is None
+    assert hidpp.decode_hidpp1_status(bytes([7, 0])) == (90, False)
+    assert hidpp.decode_hidpp1_status(bytes([3, 0x22])) == (20, True)
+    assert hidpp.decode_hidpp1_status(bytes([5, 0x25])) == (100, False)
+    assert hidpp.decode_hidpp1_status(bytes([4, 0])) is None and hidpp.decode_hidpp1_status(b"\x07") is None
+
+
+class Hidpp1Dongle:
+    """Receiver slot 1 holds a HID++ 1.0 device: HID++ 2.0 ping -> error 0x01, registers answer."""
+
+    def __init__(self, regs, err_pings=0x01):
+        self.regs, self.err, self.writes, self.q = regs, err_pings, [], []
+
+    def handle(self, path, in_len=64):
+        return Hidpp1Handle(self)
+
+
+class Hidpp1Handle:
+    def __init__(self, d):
+        self.d = d
+
+    def write(self, pkt, timeout_ms=1000):
+        d = self.d
+        d.writes.append(bytes(pkt))
+        dev, sub, a = pkt[1], pkt[2], pkt[3]
+        if dev != 1:
+            d.q.append(bytes([0x10, dev, 0x8F, sub, a, 0x09, 0]))
+        elif sub == 0x00:                                   # HID++ 2.0 root ping
+            d.q.append(bytes([0x10, dev, 0x8F, sub, a, d.err, 0]))
+        elif sub == 0x81 and a in d.regs:
+            d.q.append(bytes([0x10, dev, 0x81, a]) + bytes(d.regs[a]))
+        elif sub == 0x81:
+            d.q.append(bytes([0x10, dev, 0x8F, sub, a, 0x03, 0]))
+        return True
+
+    def read(self, timeout_ms=0):
+        return self.d.q.pop(0) if self.d.q else None
+
+    def drain(self):
+        self.d.q.clear()
+
+    def close(self):
+        pass
+
+
+def _short_only_infos():
+    return [info(1, r"\?\HID#VID_046D&PID_C52B&MI_02&Col01#9&aa&0&0000#short")]
+
+
+def test_scan_reads_hidpp1_device_via_charge_register():
+    hidpp._info_cache.clear()
+    d = Hidpp1Dongle({0x0D: bytes([64, 0, 0x30])})
+    devs = hidpp.scan_logitech(_short_only_infos(), d.handle)
+    assert len(devs) == 1
+    assert devs[0].battery == 64 and devs[0].connected and devs[0].charging is False
+    assert devs[0].id == "logi:c539:01" and devs[0].link == "2.4ghz"
+    regs = [w for w in d.writes if w[2] == 0x81]
+    assert regs and all(w[3] in (0x07, 0x0D) and w[0] == 0x10 for w in regs)
+    assert all(w[2] in (0x00, 0x81) for w in d.writes)      # only ping + GET_REGISTER ever sent
+
+
+def test_scan_hidpp1_falls_back_to_status_register_and_skips_dead_slot():
+    hidpp._info_cache.clear()
+    devs = hidpp.scan_logitech(_short_only_infos(), Hidpp1Dongle({0x07: bytes([5, 0x22, 0])}).handle)
+    assert len(devs) == 1 and devs[0].battery == 50 and devs[0].charging is True
+    hidpp._info_cache.clear()
+    assert hidpp.scan_logitech(_short_only_infos(), Hidpp1Dongle({}).handle) == []
+
+
+def test_scan_hidpp1_only_when_ping_error_is_invalid_subid():
+    hidpp._info_cache.clear()
+    d = Hidpp1Dongle({0x0D: bytes([64, 0, 0x30])}, err_pings=0x03)
+    assert hidpp.scan_logitech(_short_only_infos(), d.handle) == []
+    assert not [w for w in d.writes if w[2] == 0x81]
+
+
+def test_hidpp1_register_fallback_requires_hidpp1_error_kind(monkeypatch):
+    hidpp._info_cache.clear()
+    d = Hidpp1Dongle({0x0D: bytes([64, 0, 0x30])})
+    orig = hidpp.Channel.ping
+
+    def ping_as_hidpp2(self, idx, timeout=0.8):
+        res = orig(self, idx, timeout)
+        self.last_error_kind = "hidpp2"                 # same code 0x01, but a HID++ 2.0 error
+        return res
+    monkeypatch.setattr(hidpp.Channel, "ping", ping_as_hidpp2)
+    assert hidpp.scan_logitech(_short_only_infos(), d.handle) == []
+    assert not [w for w in d.writes if w[2] == 0x81]

@@ -347,3 +347,12 @@ def test_merge_dedupes_bluetooth_vs_wireless_by_containment():
     assert [d.id for d in wireless.merge_devices(bt, wl)] == ["logi:c52b:01"]
     other_kind = [_dev("logi:c52b:01", "MX Master 3", "keyboard", 55)]
     assert len(wireless.merge_devices(bt, other_kind)) == 2
+
+
+def test_hid_paths_are_redacted_in_logs():
+    from taskbar_battery_widget.hid_win import redact_path
+    bt = r"\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_dev_vid&0002054c_pid&0ce6_rev&0100_a1b2c3d4e5f6&col02#8&1f&0&0002#{x}"
+    usb = r"\?\hid#vid_046d&pid_c539&mi_02&col01#7&1&0&0000#{x}"
+    assert redact_path(bt) == "054c:0ce6 col02" and "a1b2c3d4e5f6" not in redact_path(bt)
+    assert redact_path(usb) == "046d:c539 col01"
+    assert redact_path("garbage") == "<hid>"

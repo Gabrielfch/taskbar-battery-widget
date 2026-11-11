@@ -1,7 +1,9 @@
 """Logitech HID++ (receiver / direct) battery reader.
 
 Pure encode/decode helpers (unit tested with byte fixtures) plus `scan_logitech`, which only
-sends read/query requests (ping, getFeature, device name/type, battery status).
+sends read/query requests (ping, getFeature, device name/type, battery status). Devices that
+answer the HID++ 2.0 ping with a HID++ 1.0 "invalid sub-id" error are read with the HID++ 1.0
+GET_REGISTER request for the two battery registers (0x07 status, 0x0D charge) and nothing else.
 """
 from __future__ import annotations
 
@@ -42,7 +44,14 @@ ALLOWED_FUNCTIONS: dict[int, frozenset[int]] = {
     F_BATTERY_VOLTAGE: frozenset({0}),
     F_ADC: frozenset({0}),
 }
-MAX_FEATURE_INDEX = 0x7F                    # indexes >= 0x80 collide with the error markers
+# HID++ 1.0: the only request this app ever sends is GET_REGISTER (short, sub-id 0x81) for the two
+# battery registers. SET_REGISTER (0x80/0x82) and the long-register variants are never built.
+HIDPP1_GET_REGISTER = 0x81
+HIDPP1_REG_BATTERY_STATUS = 0x07
+HIDPP1_REG_BATTERY_CHARGE = 0x0D
+ALLOWED_HIDPP1_REGISTERS = frozenset({HIDPP1_REG_BATTERY_STATUS, HIDPP1_REG_BATTERY_CHARGE})
+HIDPP1_ERR_INVALID_SUBID = 0x01             # what a HID++ 1.0 device answers to a HID++ 2.0 ping
+MAX_FEATURE_INDEX = 0x7F                   # indexes >= 0x80 collide with the error markers
 VALID_DEVICE_INDEXES = frozenset(range(0, 7)) | {0xFF}
 
 
@@ -114,6 +123,47 @@ def build_guarded_request(device_index: int, feature_index: int, feature_id: int
     if not 1 <= sw_id <= 15:
         raise HidppSafetyError("bad sw_id")
     return encode_request(device_index, feature_index, function, params, sw_id, long)
+
+
+def build_hidpp1_get_register(device_index: int, register: int, sub_id: int = HIDPP1_GET_REGISTER) -> bytes:
+    """HID++ 1.0 short GET_REGISTER for a whitelisted battery register. Raises HidppSafetyError."""
+    if sub_id != HIDPP1_GET_REGISTER:
+        raise HidppSafetyError(f"HID++ 1.0 sub-id 0x{sub_id:02X} is not whitelisted (GET_REGISTER only)")
+    if register not in ALLOWED_HIDPP1_REGISTERS:
+        raise HidppSafetyError(f"HID++ 1.0 register 0x{register:02X} is not whitelisted")
+    if device_index not in VALID_DEVICE_INDEXES:
+        raise HidppSafetyError(f"bad HID++ device index {device_index}")
+    return bytes([SHORT_ID, device_index, HIDPP1_GET_REGISTER, register, 0, 0, 0])
+
+
+def hidpp1_reply_matches(rep: Reply, device_index: int, register: int) -> bool:
+    """A GET_REGISTER answer (or its HID++ 1.0 error) echoes the sub-id and register address."""
+    return (rep.report_id == SHORT_ID and rep.device_index == device_index
+            and rep.feature_index == HIDPP1_GET_REGISTER
+            and ((rep.function << 4) | rep.sw_id) == register)
+
+
+_HIDPP1_LEVEL_PCT = {1: 5, 3: 20, 5: 50, 7: 90}     # register 0x07 reports a coarse level only
+
+
+def decode_hidpp1_charge(params: bytes) -> tuple[int, bool] | None:
+    """Register 0x0D: [charge %, ?, status]; status high nibble 0x30 discharging, 0x50 charging, 0x90 full."""
+    if len(params) < 3 or params[0] > 100:
+        return None
+    return params[0], (params[2] & 0xF0) == 0x50
+
+
+def decode_hidpp1_status(params: bytes) -> tuple[int, bool] | None:
+    """Register 0x07: [level code 1/3/5/7, charge state]. Coarse: 5/20/50/90 %, state 0x25 = full."""
+    if len(params) < 2:
+        return None
+    pct = _HIDPP1_LEVEL_PCT.get(params[0])
+    if pct is None:
+        return None
+    state = params[1]
+    if state == 0x25:
+        return 100, False
+    return pct, (state & 0xF0) == 0x20 and (state & 0x0F) in (1, 2, 3, 4)
 
 
 def reply_matches(rep: Reply, device_index: int, feature_index: int, function: int,
@@ -283,6 +333,8 @@ class Channel:
         self.cancel = cancel
         self.broken = False
         self._sw = 0
+        self.last_error: int | None = None      # HID++ error code of the last ping, if any
+        self.last_error_kind: str | None = None  # "hidpp1" | "hidpp2" for that error
         self._short = self._long = None
         try:
             if group.get("short"):
@@ -373,6 +425,7 @@ class Channel:
                            feature_id=F_ROOT)
         if rep is None:
             return "timeout", None
+        self.last_error, self.last_error_kind = rep.error, rep.error_kind
         if rep.error is not None:
             return ("absent" if is_not_connected(rep) else "hidpp1"), None
         return "ok", decode_ping(rep.params)
@@ -406,6 +459,49 @@ class Channel:
         if rep is None or rep.error is not None or not rep.params:
             return None
         return rep.params[0]
+
+    def _request_register(self, device_index: int, register: int, timeout: float) -> Reply | None:
+        """Send one whitelisted HID++ 1.0 GET_REGISTER (short report) and wait for its answer."""
+        pkt = build_hidpp1_get_register(device_index, register)      # raises before anything is sent
+        if self._short is None or self.broken or self._expired():
+            return None
+        t_end = time.monotonic() + timeout
+        if self.deadline is not None:
+            t_end = min(t_end, self.deadline)
+        try:
+            for h in (self._short, self._long):
+                if h is not None:
+                    h.drain()
+            left = t_end - time.monotonic()
+            if left <= 0 or not self._short.write(pkt, int(min(left, 1.0) * 1000)):
+                return None
+            while True:
+                left = t_end - time.monotonic()
+                if left <= 0 or (self.cancel is not None and self.cancel.is_set()):
+                    return None
+                for h in (self._short, self._long):
+                    if h is None:
+                        continue
+                    slice_s = min(left, 0.02 if self._long else 0.1)
+                    rep = parse_report(h.read(int(slice_s * 1000)))
+                    if rep and hidpp1_reply_matches(rep, device_index, register):
+                        return rep
+                time.sleep(0.001)
+        except OSError:
+            self.broken = True
+            return None
+
+    def read_battery_hidpp1(self, device_index: int, timeout: float = 0.8):
+        """HID++ 1.0 battery: register 0x0D (charge %), else 0x07 (coarse). -> (percent, charging) | None."""
+        for register, decoder in ((HIDPP1_REG_BATTERY_CHARGE, decode_hidpp1_charge),
+                                  (HIDPP1_REG_BATTERY_STATUS, decode_hidpp1_status)):
+            rep = self._request_register(device_index, register, timeout)
+            if rep is None or rep.error is not None:
+                continue
+            res = decoder(rep.params)
+            if res is not None:
+                return res
+        return None
 
     def read_battery(self, device_index: int, known: dict | None = None, timeout: float = 0.8):
         """-> (percent, charging) | None. `known` caches the working battery feature index."""
@@ -466,6 +562,18 @@ def _scan_group(group: dict, handle_factory=None, cancel: threading.Event | None
                 misses += 1
                 if receiver and misses >= 2:
                     break
+                continue
+            if state == "hidpp1" and ch.last_error_kind == "hidpp1" \
+                    and ch.last_error == HIDPP1_ERR_INVALID_SUBID:
+                legacy = ch.read_battery_hidpp1(idx)    # HID++ 1.0 device: battery registers only
+                if legacy is not None:
+                    name = sanitize_name(group.get("product") or "")
+                    if not name or "receiver" in name.lower():
+                        name = "Logitech wireless device"
+                    devices.append(Device(
+                        id=f"logi:{group['pid']:04x}:{idx:02x}{id_suffix}", name=name,
+                        kind=kind_from_name(name), battery=legacy[0], connected=True,
+                        charging=bool(legacy[1]), link="2.4ghz" if receiver else "usb"))
                 continue
             if state != "ok":
                 if state == "absent":

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import re
 import sys
 import threading
 from ctypes import wintypes
@@ -64,6 +65,21 @@ class _HIDP_CAPS(ctypes.Structure):
                 ("NumberFeatureButtonCaps", wintypes.USHORT),
                 ("NumberFeatureValueCaps", wintypes.USHORT),
                 ("NumberFeatureDataIndices", wintypes.USHORT)]
+
+
+_VIDPID_RE = re.compile(r"vid(?:_|&000[12])([0-9a-f]{4})[&_]pid(?:_|&)?([0-9a-f]{4})", re.I)
+_COL_RE = re.compile(r"&col(\d+)", re.I)
+
+
+def redact_path(path: str) -> str:
+    """Log-safe form of a HID interface path: 'vid:pid[ colNN]' only. The instance part of
+    Bluetooth paths carries the device MAC address and must never be logged."""
+    p = path or ""
+    m = _VIDPID_RE.search(p)
+    if not m:
+        return "<hid>"
+    col = _COL_RE.search(p)
+    return f"{m.group(1).lower()}:{m.group(2).lower()}" + (f" col{col.group(1)}" if col else "")
 
 
 @dataclass
@@ -188,7 +204,7 @@ def enumerate_hid(vendor_ids: tuple[int, ...] | None = None) -> list[HidInfo]:
                 info.product = sbuf.value
             out.append(info)
         except Exception:
-            log.debug("HID probe failed for %s", path, exc_info=True)
+            log.debug("HID probe failed for %s", redact_path(path), exc_info=True)
         finally:
             _k32.CloseHandle(h)
     return out
@@ -238,7 +254,7 @@ class HidHandle:
         self._rbuf = None
         self._h = _open_raw(path, GENERIC_READ | GENERIC_WRITE, True)
         if self._h is None:
-            raise OSError(f"cannot open HID path {path}")
+            raise OSError(f"cannot open HID path {redact_path(path)}")
         self._ev = _k32.CreateEventW(None, True, False, None)       # read completion
         self._wev = _k32.CreateEventW(None, True, False, None)      # write completion
         if not self._ev or not self._wev:
@@ -259,7 +275,7 @@ class HidHandle:
         except Exception:
             pass
         if not self._lock.acquire(timeout=2.0):
-            log.warning("HID handle busy in a hung call; leaking %s", self.path)
+            log.warning("HID handle busy in a hung call; leaking %s", redact_path(self.path))
             return
         try:
             if self._h is None:

@@ -258,7 +258,7 @@ def test_tray_menu_structure(qapp, tmp_path):
     assert top[1:] == ["Actualizar", "Mostrar", "Fuentes", "Alertas", "Iniciar con Windows", "Salir"]
     sub = {a.text(): a.menu() for a in tray.menu.actions() if a.menu()}
     assert _texts(sub["Mostrar"]) == ["Desconectados", "Dispositivos visibles", "Color según el nivel"]
-    assert len(_texts(sub["Fuentes"])) == 2
+    assert len(_texts(sub["Fuentes"])) == 3
     alerts = sub["Alertas"]
     assert _texts(alerts)[0].startswith("Avisar") and alerts.actions()[1].menu() is not None
 

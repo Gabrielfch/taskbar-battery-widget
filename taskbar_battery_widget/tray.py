@@ -65,6 +65,8 @@ class TrayController(QObject):
                                         setter=self._set_color_mode, menu=show)
         sources = m.addMenu(tr("menu_sources"))
         self._act_wireless = self._toggle(tr("wireless_devices"), "wireless_enabled", menu=sources)
+        self._act_exp = self._toggle(tr("experimental_readers"), "experimental_readers",
+                                     menu=sources)
         self._act_ds_bt = self._toggle(tr("dualsense_bt_extended"), "dualsense_bt_extended",
                                        menu=sources)
         alerts = m.addMenu(tr("menu_alerts"))
@@ -210,6 +212,7 @@ class TrayController(QObject):
         for key, act in (("show_disconnected", self._act_disc), ("notifications_enabled", self._act_notif),
                          ("wireless_enabled", self._act_wireless),
                          ("dualsense_bt_extended", self._act_ds_bt),
+                         ("experimental_readers", self._act_exp),
                          ("color_mode", self._act_colors)):
             act.blockSignals(True)
             act.setChecked(bool(self._getters[key]()))

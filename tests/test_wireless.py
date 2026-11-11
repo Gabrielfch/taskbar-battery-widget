@@ -167,3 +167,9 @@ def test_set_idle_grace_min(monkeypatch):
     monkeypatch.setattr(wireless, "_idle_grace_s", wireless._idle_grace_s)
     wireless.set_idle_grace_min(5)
     assert wireless._idle_grace_s == 300.0
+
+
+@pytest.fixture(autouse=True)
+def _no_real_xinput(monkeypatch):
+    from taskbar_battery_widget import xinput
+    monkeypatch.setattr(xinput, "_query", lambda i: None)

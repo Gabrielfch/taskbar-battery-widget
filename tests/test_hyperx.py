@@ -139,3 +139,229 @@ def test_never_raises():
 def test_dongle_key():
     assert wireless.dongle_key("hyperx:16c4") == "0951:16c4"
     assert 0x0951 in wireless.VENDOR_IDS
+
+
+# ---------------------------------------------------------------------------------------------
+# Other models (Cloud II, Cloud Alpha, Cloud Alpha 2)
+# ---------------------------------------------------------------------------------------------
+
+class ScriptHandle(FakeHandle):
+    """Answers each written request through `responder(request) -> reply bytes | None`."""
+
+    def __init__(self, responder):
+        super().__init__([])
+        self.responder = responder
+        self.feature_calls = []
+
+    def write(self, pkt, timeout_ms=1000):
+        self.sent.append(bytes(pkt))
+        r = self.responder(bytes(pkt))
+        if r is not None:
+            self.replies.append(r)
+        return True
+
+    def get_input_report(self, rid, n):
+        self.feature_calls.append((rid, n))
+        return None
+
+
+def minfo(vid, pid, page, usage, in_len, out_len, path="p", product=""):
+    return SimpleNamespace(vid=vid, pid=pid, path=path, usage_page=page, usage=usage,
+                           in_len=in_len, out_len=out_len, product=product)
+
+
+def mrun(responder, infos, budget=1.0, cancel=None):
+    h = ScriptHandle(responder)
+    out = hx.read_hyperx(infos, time.monotonic() + budget, cancel,
+                         handle_factory=lambda path, in_len=0: h)
+    return out, h
+
+
+def pad(b, n):
+    return bytes(b).ljust(n, b"\0")
+
+
+HP2 = minfo(0x03F0, 0x0696, 0xFF90, 0x0303, 20, 52)
+KS2 = minfo(0x0951, 0x1718, 0xFF00, 1, 64, 62)
+ALPHA = minfo(0x03F0, 0x098D, 0xFF00, 1, 31, 31)
+ALPHA2 = minfo(0x03F0, 0x08BE, 0xFF13, 0xFF00, 64, 64)
+
+
+def cloud2_reply(req, level=73, charging=0):
+    cmd = req[3]
+    if cmd == 2:
+        return pad([6, 0xFF, 0xBB, 2, 0, 0x0F, 0xA0, level], 20)
+    return pad([6, 0xFF, 0xBB, 3, charging], 20)
+
+
+def test_vendor_ids_include_hp():
+    assert hx.VENDOR_IDS == (0x0951, 0x03F0)
+
+
+def test_cloud2_hp_requests_and_parse():
+    out, h = mrun(cloud2_reply, [HP2])
+    assert h.sent == [pad([6, 0xFF, 0xBB, 2], 52), pad([6, 0xFF, 0xBB, 3], 52)]
+    d, = out
+    assert d.id == "hyperx:0696" and d.battery == 73 and d.connected and not d.charging
+    assert d.kind == "headset" and d.link == "2.4ghz" and d.source == "hid"
+    assert d.name == "HyperX Cloud II Wireless"
+
+
+def test_cloud2_hp_charging_and_second_pid():
+    out, _ = mrun(lambda r: cloud2_reply(r, 40, 1),
+                  [minfo(0x03F0, 0x018B, 0xFF90, 0x0303, 20, 52)])
+    assert out[0].id == "hyperx:018b" and out[0].charging and out[0].battery == 40
+
+
+def test_cloud2_hp_bad_replies():
+    out, _ = mrun(lambda r: bytes([6, 0xFF, 0xBB, 2]), [HP2], budget=0.4)       # too short
+    assert out == []                                                            # silence is not "off"
+    out, _ = mrun(lambda r: pad([9, 9, 9, 9], 20), [HP2], budget=0.4)           # unrelated
+    assert out == []
+    out, _ = mrun(lambda r: cloud2_reply(r, 250), [HP2])                        # out of range
+    assert out == []
+
+
+def test_cloud2_hp_unrelated_report_skipped():
+    h = ScriptHandle(cloud2_reply)
+    h.replies.append(pad([1, 2, 3], 20))              # stale/unrelated first
+    out = hx.read_hyperx([HP2], time.monotonic() + 1, None, handle_factory=lambda p, in_len=0: h)
+    assert out[0].battery == 73
+
+
+KS_HEAD = bytes.fromhex("06000200" "9a000068" "4a8e0a" "000000" "bb")
+
+
+def ks_reply(req, level=55, charging=0):
+    cmd = req[15]
+    if cmd == 2:
+        return pad([0x0B, 0, 0xBB, 2, 0, 0, 0, level], 64)
+    return pad([0x0B, 0, 0xBB, 3, charging], 64)
+
+
+def test_cloud2_kingston():
+    out, h = mrun(ks_reply, [KS2])
+    assert all(len(s) == 62 and s[:15] == KS_HEAD and s[16:] == bytes(46) for s in h.sent)
+    assert [s[15] for s in h.sent] == [2, 3]
+    assert h.feature_calls == [(6, 64)]
+    d, = out
+    assert d.id == "hyperx:1718" and d.battery == 55 and d.connected and not d.charging
+    out, _ = mrun(lambda r: ks_reply(r, 90, 1), [KS2])
+    assert out[0].charging and out[0].battery == 90
+    out, _ = mrun(lambda r: pad([6, 0, 0xBB, 2, 0, 0, 0, 50], 64), [KS2], budget=0.4)
+    assert out == []
+
+
+def alpha_reply(req, connected=0, charging=0, level=64):
+    cmd = req[2]
+    return pad([0x21, 0xBB, cmd, {3: connected, 0x0C: charging, 0x0B: level}[cmd]], 31)
+
+
+def test_alpha_wireless():
+    out, h = mrun(alpha_reply, [ALPHA])
+    assert [s[:3] for s in h.sent] == [b"\x21\xbb\x03", b"\x21\xbb\x0c", b"\x21\xbb\x0b"]
+    assert all(len(s) == 31 and s[3:] == bytes(28) for s in h.sent)
+    d, = out
+    assert d.id == "hyperx:098d" and d.battery == 64 and d.connected and not d.charging
+
+
+def test_alpha_wireless_off_and_charging():
+    out, h = mrun(lambda r: alpha_reply(r, connected=1), [ALPHA])
+    assert out[0].connected is False and out[0].battery is None and len(h.sent) == 1
+    hx._last_battery.clear()
+    out, h = mrun(lambda r: alpha_reply(r, charging=1), [ALPHA])
+    assert out[0].charging and out[0].connected and out[0].battery is None and len(h.sent) == 2
+    mrun(alpha_reply, [ALPHA])
+    out, _ = mrun(lambda r: alpha_reply(r, charging=1), [ALPHA])
+    assert out[0].battery == 64
+    out, _ = mrun(lambda r: alpha_reply(r, level=200), [ALPHA])
+    assert out == []
+    out, _ = mrun(lambda r: None, [ALPHA], budget=0.4)
+    assert out == []
+
+
+def alpha2_reply(req, connected=1, level=88, charge=0):
+    if req[0] == 0x52:
+        return pad([0x53, 0x01, connected], 64)
+    return pad([0x51, 0x02, level, charge, 0x10, 0x00, 0x68, 0x10], 64)
+
+
+def test_alpha2_wireless():
+    out, h = mrun(alpha2_reply, [ALPHA2])
+    assert h.sent == [pad([0x52, 0x01], 64), pad([0x50, 0x02], 64)]
+    d, = out
+    assert d.id == "hyperx:08be" and d.battery == 88 and d.connected and not d.charging
+    assert d.name == "HyperX Cloud Alpha 2 Wireless"
+    out, _ = mrun(lambda r: alpha2_reply(r, charge=1), [ALPHA2])
+    assert out[0].charging
+
+
+def test_alpha2_off_and_errors():
+    out, h = mrun(lambda r: alpha2_reply(r, connected=0), [ALPHA2])
+    assert out[0].connected is False and out[0].battery is None and len(h.sent) == 1
+    out, _ = mrun(lambda r: alpha2_reply(r, level=101), [ALPHA2])
+    assert out == []
+    out, _ = mrun(lambda r: pad([0xFF, 0x02], 64), [ALPHA2], budget=0.4)    # NACK / unrelated
+    assert out == []
+
+
+def test_model_whitelist():
+    for key, cmd in [("cloud2", 0x22), ("cloud2", 0x07), ("cloud2k", 0x18), ("cloud2k", 0x19),
+                     ("alpha", 0x10), ("alpha", 0x12), ("alpha", 0x13),
+                     ("alpha2", (0x60, 0x01)), ("alpha2", (0x60, 0x02)), ("nope", 2)]:
+        with pytest.raises(ValueError):
+            hx.build_model_request(key, cmd)
+    h = FakeHandle([])
+    with pytest.raises(ValueError):
+        hx._send_model(h, pad([0x06, 0xFF, 0xBB, 0x22], 52), 52, 100)
+    assert h.sent == []
+    assert hx.build_model_request("alpha2", (0x50, 0x02)) == pad([0x50, 0x02], 64)
+
+
+def test_models_deadline_and_cancel():
+    for i in (HP2, KS2, ALPHA, ALPHA2):
+        out, h = mrun(cloud2_reply, [i], budget=-1)
+        assert out == [] and h.sent == []
+        c = threading.Event()
+        c.set()
+        out, h = mrun(cloud2_reply, [i], cancel=c)
+        assert out == [] and h.sent == []
+    h = ScriptHandle(cloud2_reply)
+    assert hx._ask(h, "cloud2", 2, 52, time.monotonic() - 1, None) is None and h.sent == []
+
+
+def test_models_collection_selection():
+    wrong = [minfo(0x03F0, 0x0696, 0xFF00, 0x0303, 20, 52, "a"),     # wrong page
+             minfo(0x03F0, 0x0696, 0xFF90, 0x0001, 20, 52, "b"),     # wrong usage
+             minfo(0x03F0, 0x0696, 0xFF90, 0x0303, 64, 64, "c"),     # wrong lengths
+             minfo(0x0951, 0x0696, 0xFF90, 0x0303, 20, 52, "d"),     # wrong vid
+             minfo(0x03F0, 0x08BE, 0x000C, 1, 64, 64, "e"),
+             minfo(0x0951, 0x1718, 0x0001, 1, 64, 62, "f"),          # not a vendor page
+             minfo(0x03F0, 0x089D, 0xFF13, 1, 64, 64, "g")]          # Cloud 3: no battery query
+    out, h = mrun(cloud2_reply, wrong)
+    assert out == [] and h.sent == []
+    out, h = mrun(cloud2_reply, wrong + [minfo(0x03F0, 0x0696, 0xFF90, 0x0303, 20, 52, "z1"),
+                                        minfo(0x03F0, 0x0696, 0xFF90, 0x0303, 20, 52, "z2")])
+    assert len(out) == 1 and len(h.sent) == 2
+
+
+def test_models_never_raise():
+    def boom(path, in_len=0):
+        raise OSError("x")
+    assert hx.read_hyperx([HP2, ALPHA2, KS2, ALPHA], time.monotonic() + 1, None,
+                          handle_factory=boom) == []
+    assert hx.read is hx.read_hyperx
+
+
+def test_flight_and_models_together():
+    def resp(r):
+        return cloud2_reply(r) if r[0] == 6 else LIVE
+    out, h = mrun(resp, [info(), HP2])
+    assert {d.id for d in out} == {"hyperx:16c4", "hyperx:0696"}
+
+
+def test_kingston_and_alpha_pin_exact_usage():
+    for inf in (minfo(0x0951, 0x1718, 0xFF01, 1, 64, 62), minfo(0x0951, 0x1718, 0xFF00, 2, 64, 62),
+                minfo(0x03F0, 0x098D, 0xFFA0, 1, 31, 31), minfo(0x03F0, 0x098D, 0xFF00, 5, 31, 31)):
+        out, h = mrun(cloud2_reply, [inf])
+        assert out == [] and h.sent == []
