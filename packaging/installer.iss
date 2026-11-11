@@ -1,6 +1,6 @@
 ; Inno Setup script. Compile with: ISCC.exe /DAppVersion=1.3.0 packaging\installer.iss
 #ifndef AppVersion
-  #define AppVersion "1.3.0"
+  #error AppVersion is required: run packaging/build.ps1 (it passes /DAppVersion from __version__)
 #endif
 #define AppName "Taskbar Battery Widget"
 #define AppExe "TaskbarBatteryWidget.exe"
@@ -15,6 +15,9 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=build\installer
+#if FileExists("..\LICENSE")
+LicenseFile=..\LICENSE
+#endif
 OutputBaseFilename=TaskbarBatteryWidget-Setup-{#AppVersion}
 SetupIconFile=app.ico
 UninstallDisplayIcon={app}\{#AppExe}
@@ -42,6 +45,12 @@ Name: "startup"; Description: "{cm:StartWithWindows}"; GroupDescription: "{cm:Ad
 
 [Files]
 Source: "build\dist\TaskbarBatteryWidget\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#if FileExists("..\LICENSE")
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+#endif
+#if FileExists("..\THIRD_PARTY_NOTICES.md")
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

@@ -3,6 +3,36 @@
 A Windows 11 taskbar widget that shows the battery level of your wireless devices, right next to the
 notification area. Spec in `docs/spec.md`.
 
+![Taskbar Battery Widget](docs/screenshot-ui-v4.png)
+
+**[Download the latest release](https://github.com/Gabrielfch/taskbar-battery-widget/releases/latest)**
+
+## Download & install
+Get one of these from the [Releases page](https://github.com/Gabrielfch/taskbar-battery-widget/releases/latest):
+- `TaskbarBatteryWidget-Setup-x.y.z.exe`: per-user installer (no admin rights), optional start with Windows.
+- `TaskbarBatteryWidget-portable-x.y.z.exe`: single file, no installation; just run it.
+
+The builds are unsigned, so Windows SmartScreen may warn. Choose **More info -> Run anyway**.
+
+Verify the download against `SHA256SUMS.txt` from the same release:
+```powershell
+Get-FileHash .\TaskbarBatteryWidget-Setup-x.y.z.exe -Algorithm SHA256
+```
+The hash printed must match the line for that file in `SHA256SUMS.txt`.
+
+## Privacy
+The app does not use the network; everything runs locally. It stores only:
+- Settings: `%APPDATA%\TaskbarBatteryWidget\config.json`
+- Logs: `%LOCALAPPDATA%\TaskbarBatteryWidget\logs` (`app.log`, `devices.log`), rotated at 1 MB x 3
+- Last known battery values: `%LOCALAPPDATA%\TaskbarBatteryWidget\last_known.json`
+
+Logs never contain MAC addresses, serial numbers or your user name.
+
+## Safety
+Device readers send only read/query commands from a fixed whitelist; they never change device settings or
+touch firmware. Readers that are not yet confirmed on real hardware are experimental and **disabled by
+default**.
+
 ## Features
 - One pill per device (kind icon + `NN%`), live updates, follows the light/dark taskbar theme.
 - Turns red at or below a configurable low threshold; low-battery notifications with cooldown.
@@ -154,3 +184,20 @@ It runs the tests, generates the icon, builds the onedir and onefile apps and th
   requires UIAccess (signed exe installed under Program Files).
 - Windows 11 only; primary taskbar only (bottom edge verified on screen, others by unit tests).
 - Devices must expose their battery level through one of the supported methods above.
+
+## Acknowledgements
+Protocol facts come from public documentation; this is an independent implementation and no code was copied.
+- [HeadsetControl](https://github.com/Sapd/HeadsetControl) (GPL-3.0): used only as a reference for protocol notes.
+- [Solaar](https://github.com/pwr-Solaar/Solaar) and the Logitech HID++ documentation.
+- Linux kernel drivers `hid-playstation`, `hid-sony` and `hid-logitech-hidpp`.
+- [OpenRazer](https://github.com/openrazer/openrazer).
+- [Tekk-Know/RazerBatteryTaskbar](https://github.com/Tekk-Know/RazerBatteryTaskbar).
+
+## Disclaimer
+Not affiliated with, endorsed or sponsored by Logitech, Razer, Sony, Microsoft, HyperX/HP, SteelSeries,
+Corsair, Audeze, Jabra, Lenovo or MCHOSE. Brand and product names are used only to indicate compatibility
+and belong to their respective owners.
+
+## License
+[MIT](LICENSE). Bundled third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+See also [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

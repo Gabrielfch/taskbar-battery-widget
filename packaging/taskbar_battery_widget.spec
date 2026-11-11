@@ -52,9 +52,15 @@ def keep(entry):
     return not any(d in name for d in DROP)
 
 
+# Portable build only: bundle license files (the installer copies them to {app} itself).
+LEGAL = [
+    (str(ROOT / n), ".") for n in ("LICENSE", "THIRD_PARTY_NOTICES.md") if ONEFILE and (ROOT / n).is_file()
+]
+
 a = Analysis(
     [str(SPEC_DIR / "app_entry.py")],
     pathex=[str(ROOT)],
+    datas=LEGAL,
     hiddenimports=hiddenimports,
     excludes=EXCLUDES,
     noarchive=False,

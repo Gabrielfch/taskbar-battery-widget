@@ -1,8 +1,8 @@
 """Direct battery reader for Logitech / Astro gaming headsets that the generic HID++ 2.0 scanner
 (`hidpp.py`, usage page 0xFF00 collections) cannot read.
 
-Three read-only protocols, all taken from public protocol notes (HeadsetControl, Solaar); no code or
-calibration table is copied:
+Three read-only protocols, protocol facts from public notes (HeadsetControl, Solaar), independent
+implementation; no code or calibration table is copied:
 
 * "legacy HID++": G533, G535, G633/G635/G733/G933/G935, G PRO / PRO X. A 20-byte HID++ 2.0 report to
   device index 0xFF on the 0xFF43/0x0202 collection asks for the cell voltage. The battery feature

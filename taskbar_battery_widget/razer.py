@@ -45,7 +45,7 @@ class KnownDevice:
     txn: int           # transaction id that this device answers to, tried first
 
 
-# Public device facts (openrazer). PID -> name and exact transaction id.
+# Protocol facts from public documentation (openrazer); independent implementation. PID -> name and exact transaction id.
 KNOWN_DEVICES: dict[int, KnownDevice] = {
     0x00A4: KnownDevice("Razer Mouse Dock Pro", 0x1F),
     0x00AA: KnownDevice("Razer Basilisk V3 Pro Wired", 0x1F),

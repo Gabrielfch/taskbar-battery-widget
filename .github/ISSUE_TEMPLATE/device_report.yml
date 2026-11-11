@@ -1,0 +1,69 @@
+name: Device report
+description: Tell us whether your device works (or not)
+labels: ["device"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste personal data (MAC addresses, serial numbers, user names).
+  - type: input
+    id: brand
+    attributes:
+      label: Brand
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      options:
+        - USB cable
+        - 2.4 GHz dongle
+        - Bluetooth
+    validations:
+      required: true
+  - type: input
+    id: vidpid
+    attributes:
+      label: VID:PID
+      description: "Device Manager -> your device -> Properties -> Details -> Hardware Ids (for example USB\\VID_046D&PID_C539 means 046D:C539)."
+      placeholder: "046D:C539"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+    validations:
+      required: true
+  - type: dropdown
+    id: experimental
+    attributes:
+      label: Experimental readers enabled?
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Wrong value
+        - Does not appear
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: devices.log excerpt (optional)
+      description: "From %LOCALAPPDATA%\\TaskbarBatteryWidget\\logs\\devices.log. Check it for personal data first."
+      render: text
