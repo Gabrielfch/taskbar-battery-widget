@@ -46,5 +46,8 @@ It runs the tests, generates the icon, builds the onedir and onefile apps and th
 `dist\TaskbarBatteryWidget-Setup-<version>.exe` and `dist\TaskbarBatteryWidget-portable-<version>.exe`.
 
 ## Limitations
+- While a Windows 11 shell flyout is open (Quick Settings, Start, notifications), the taskbar is drawn in a
+  system layer above all normal windows, so the widget is hidden until the flyout closes. Avoiding this
+  requires UIAccess (signed exe installed under Program Files).
 - Windows 11 only; primary taskbar only (bottom edge verified on screen, others by unit tests).
 - Devices must expose their battery level through one of the supported methods above.
