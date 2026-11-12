@@ -85,6 +85,22 @@ def install_excepthooks() -> None:
     threading.excepthook = thread_hook
 
 
+def run_shutdown(theme_timer, widget, tray, monitor, history, lock) -> None:
+    """Stop everything; the single-instance lock is released whatever fails along the way."""
+    try:
+        theme_timer.stop()
+        widget.stop()
+        tray.hide()
+        try:
+            monitor.stop()
+        except Exception:
+            log.exception("monitor.stop failed")
+        finally:
+            history.close()
+    finally:
+        lock.unlock()
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -175,16 +191,7 @@ def main() -> int:
     theme_timer.timeout.connect(refresh_theme)
 
     def shutdown() -> None:
-        theme_timer.stop()
-        widget.stop()
-        tray.hide()
-        try:
-            monitor.stop()
-        except Exception:
-            log.exception("monitor.stop failed")
-        finally:
-            history.close()
-            lock.unlock()
+        run_shutdown(theme_timer, widget, tray, monitor, history, lock)
 
     app.aboutToQuit.connect(shutdown)
 

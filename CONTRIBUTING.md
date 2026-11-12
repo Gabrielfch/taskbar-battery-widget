@@ -23,7 +23,9 @@ personal data; the app logs contain no MAC addresses or serial numbers, but chec
 
 ## Releases (maintainer)
 Releases are created by CI as drafts and signed offline with `tools/signing/sign_release.py`; never commit or
-share the signing key. See `docs/release-notes/README.md` for the full flow.
+share the signing key. `sign_release.py` needs GitHub CLI >= 2.49 and verifies build provenance
+(`gh attestation verify`) before signing. Hash-pinned requirements (`--require-hashes`) are deferred; see
+the release notes README. See `docs/release-notes/README.md` for the full flow.
 
 ## Pull requests
 Keep changes focused, make sure the tests pass and fill in the PR template.

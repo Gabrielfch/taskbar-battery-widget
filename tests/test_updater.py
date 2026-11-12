@@ -525,3 +525,69 @@ def test_cleanup_unlinks_inner_reparse_entry_not_its_target(tmp_path, monkeypatc
 
 def test_cleanup_missing_root_is_harmless(tmp_path):
     assert updater.cleanup_old_updates(tmp_path / "nope") == 0
+
+
+def test_popen_failure_deletes_folder_and_forgets_verification(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("cannot start")
+    monkeypatch.setattr(updater.subprocess, "Popen", boom)
+    p = _prepared(tmp_path)
+    assert str(p) in updater._verified
+    with pytest.raises(OSError):
+        updater.launch_installer(p)
+    assert not p.parent.exists() and str(p) not in updater._verified
+
+
+def test_launch_without_rehash_uses_quick_check(tmp_path, monkeypatch):
+    spy = PopenSpy()
+    monkeypatch.setattr(updater.subprocess, "Popen", spy)
+    p = _prepared(tmp_path)
+    monkeypatch.setattr(updater, "sha256_file", lambda *a: pytest.fail("must not hash on this path"))
+    updater.launch_installer(p, rehash=False)
+    assert len(spy.calls) == 1
+
+
+def test_launch_without_rehash_detects_size_or_mtime_change(tmp_path, monkeypatch):
+    spy = PopenSpy()
+    monkeypatch.setattr(updater.subprocess, "Popen", spy)
+    p = _prepared(tmp_path)
+    p.write_bytes(p.read_bytes() + b"!")
+    with pytest.raises(updater.UpdateError):
+        updater.launch_installer(p, rehash=False)
+    assert spy.calls == []
+
+
+def test_reverify_detects_same_size_swap(tmp_path):
+    p = _prepared(tmp_path)
+    data = p.read_bytes()
+    st = p.stat()
+    p.write_bytes(bytes(b ^ 1 for b in data))
+    import os
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))     # same size and mtime: only a real hash notices
+    with pytest.raises(updater.UpdateError) as e:
+        updater.reverify_installer(p)
+    assert e.value.key == "upd_err_hash"
+
+
+def test_reverify_unknown_file_refused(tmp_path):
+    f = tmp_path / "x.exe"
+    f.write_bytes(b"x")
+    with pytest.raises(updater.UpdateError):
+        updater.reverify_installer(f)
+
+
+def test_final_url_ok_false_when_geturl_fails_or_bad_host():
+    class Broken:
+        def geturl(self):
+            raise RuntimeError("no url")
+
+    class Resp:
+        def __init__(self, url):
+            self._u = url
+
+        def geturl(self):
+            return self._u
+    assert updater._final_url_ok(Broken()) is False
+    assert updater._final_url_ok(Resp("https://evil.example/x")) is False
+    assert updater._final_url_ok(Resp("http://github.com/x")) is False
+    assert updater._final_url_ok(Resp("https://github.com/x")) is True

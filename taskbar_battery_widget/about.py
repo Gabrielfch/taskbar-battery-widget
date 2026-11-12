@@ -69,6 +69,8 @@ class _Bridge(QObject):
     progress = Signal(int, int)
     prepared = Signal(object)         # Path of the verified installer
     prepare_failed = Signal(str)
+    launch_ready = Signal(object)     # Path re-hashed (off the UI thread) and ready to start
+    launch_failed = Signal(str)
 
 
 def _spawn(fn) -> threading.Thread:
@@ -97,6 +99,7 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self._cfg = cfg
         self._release = None
+        self._pending_release: updater.Release | None = None   # set_release() received while busy
         self._cancel = threading.Event()
         self._busy = False
         self._bridge = _Bridge(self)
@@ -105,6 +108,8 @@ class AboutDialog(QDialog):
         self._bridge.progress.connect(self._on_progress)
         self._bridge.prepared.connect(self._on_prepared)
         self._bridge.prepare_failed.connect(self._on_prepare_failed)
+        self._bridge.launch_ready.connect(self._on_launch_ready)
+        self._bridge.launch_failed.connect(self._on_launch_failed)
         self.links: dict[str, str] = {}
         self.setWindowTitle(tr("about_title"))
         self.setModal(False)
@@ -279,7 +284,15 @@ class AboutDialog(QDialog):
         self.status_label.setAccessibleDescription(text)
 
     def set_release(self, rel: updater.Release | None) -> None:
-        """Show (or clear) a known newer release."""
+        """Show (or clear) a known newer release.
+
+        While a check/download is running the UI state belongs to that operation: the new value is only
+        remembered and applied when it ends (see ``_apply_pending``).
+        """
+        if self._busy:
+            self._pending_release = rel
+            return
+        self._pending_release = None
         self._release = rel
         show = rel is not None
         self.notes_button.setVisible(show)
@@ -301,6 +314,11 @@ class AboutDialog(QDialog):
         else:
             self.install_button.setVisible(True)
 
+    def _apply_pending(self) -> None:
+        if self._pending_release is not None and not self._busy:
+            rel, self._pending_release = self._pending_release, None
+            self.set_release(rel)
+
     def check_now(self) -> None:
         if self._busy:
             return
@@ -312,16 +330,20 @@ class AboutDialog(QDialog):
     def _on_checked(self, rel) -> None:
         self._busy = False
         self.check_button.setEnabled(True)
-        if rel is None:
+        if rel is None and self._pending_release is not None:
+            self._apply_pending()
+        elif rel is None:
             self.set_release(None)
             self._set_status(tr("upd_uptodate"))
         else:
+            self._pending_release = None
             self.set_release(rel)
 
     def _on_check_failed(self, key: str) -> None:
         self._busy = False
         self.check_button.setEnabled(True)
         self._set_status(tr(key))
+        self._apply_pending()
 
     def open_release_page(self) -> None:
         if self._release is not None:
@@ -387,6 +409,7 @@ class AboutDialog(QDialog):
         self.cancel_button.hide()
         for b in (self.check_button, self.install_button, self.notes_button):
             b.setEnabled(True)
+        self._apply_pending()
 
     def _on_prepare_failed(self, key: str) -> None:
         self._end_install_ui()
@@ -395,21 +418,42 @@ class AboutDialog(QDialog):
             self.install_button.setVisible(False)
             self.notes_button.setVisible(self._release is not None)
 
+    def _discard(self, path) -> None:
+        updater.discard_update(Path(path))
+
     def _on_prepared(self, path) -> None:
         if self._cancel.is_set():                       # cancelled just as the download finished
-            shutil.rmtree(Path(path).parent, ignore_errors=True)
+            self._discard(path)
             self._on_prepare_failed("upd_err_cancelled")
             return
         if not self._confirm_launch():                  # second, explicit consent after verification
-            shutil.rmtree(Path(path).parent, ignore_errors=True)
+            self._discard(path)
             self._on_prepare_failed("upd_err_cancelled")
             return
         self._set_status(tr("upd_launching"))
+        bridge, p = self._bridge, Path(path)
+
+        def work() -> None:                             # full re-hash of the installer off the UI thread
+            try:
+                updater.reverify_installer(p)
+                bridge.launch_ready.emit(p)
+            except updater.UpdateError as exc:
+                bridge.launch_failed.emit(exc.key)
+            except Exception:
+                log.info("installer re-verification failed (unexpected)")
+                bridge.launch_failed.emit("upd_err_hash")
+        _spawn(work)
+
+    def _on_launch_failed(self, key: str) -> None:
+        log.info("installer not launched (%s)", key)
+        self._on_prepare_failed(key)
+
+    def _on_launch_ready(self, path) -> None:
         try:
-            updater.launch_installer(Path(path))
+            updater.launch_installer(Path(path), rehash=False)    # quick size+mtime check, then Popen
         except updater.UpdateError as exc:
             log.info("installer not launched (%s)", exc.key)
-            shutil.rmtree(Path(path).parent, ignore_errors=True)
+            self._discard(path)
             self._on_prepare_failed(exc.key)
             return
         except OSError:
@@ -428,7 +472,8 @@ class AboutDialog(QDialog):
         super().closeEvent(event)
 
     def hideEvent(self, event) -> None:
-        self._cancel.set()
+        if not event.spontaneous():                     # minimizing (system-driven hide) must not cancel
+            self._cancel.set()
         super().hideEvent(event)
 
 

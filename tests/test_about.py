@@ -162,7 +162,7 @@ def test_second_confirmation_before_launch_defaults_to_no(qapp, tmp_path, monkey
 
 def test_declining_second_confirmation_does_not_launch_and_deletes(qapp, tmp_path, monkeypatch):
     launched = []
-    monkeypatch.setattr(updater, "launch_installer", lambda p: launched.append(p))
+    monkeypatch.setattr(updater, "launch_installer", lambda p, **k: launched.append(p))
     d = _dlg(qapp, tmp_path)
     monkeypatch.setattr(d, "_confirm_launch", lambda: False)
     folder = tmp_path / "TBW-update-x"
@@ -175,8 +175,15 @@ def test_declining_second_confirmation_does_not_launch_and_deletes(qapp, tmp_pat
     assert launched == [] and quits == [] and not folder.exists()
 
 
-def test_launch_refusal_by_updater_is_reported(qapp, tmp_path, monkeypatch):
-    def boom(p):
+@pytest.fixture
+def sync_spawn(monkeypatch):
+    """Run worker functions inline (signals then arrive directly in the test thread)."""
+    monkeypatch.setattr(about, "_spawn", lambda fn: fn())
+    monkeypatch.setattr(updater, "reverify_installer", lambda p: None)
+
+
+def test_launch_refusal_by_updater_is_reported(qapp, tmp_path, monkeypatch, sync_spawn):
+    def boom(p, **k):
         raise updater.UpdateError("upd_err_hash")
     monkeypatch.setattr(updater, "launch_installer", boom)
     d = _dlg(qapp, tmp_path)
@@ -211,15 +218,15 @@ def test_install_requires_confirmation(qapp, tmp_path, monkeypatch, installed):
     assert not d._busy
 
 
-def test_prepared_launches_installer_and_quits(qapp, tmp_path, monkeypatch):
+def test_prepared_launches_installer_and_quits(qapp, tmp_path, monkeypatch, sync_spawn):
     launched = []
-    monkeypatch.setattr(updater, "launch_installer", lambda p: launched.append(p))
+    monkeypatch.setattr(updater, "launch_installer", lambda p, **k: launched.append((p, k)))
     d = _dlg(qapp, tmp_path)
     monkeypatch.setattr(d, "_confirm_launch", lambda: True)
     quits = []
     d.quit_requested.connect(lambda: quits.append(1))
     d._on_prepared(tmp_path / "x.exe")
-    assert launched == [tmp_path / "x.exe"] and quits == [1]
+    assert launched == [(tmp_path / "x.exe", {"rehash": False})] and quits == [1]
 
 
 def test_check_failure_message(qapp, tmp_path):
@@ -261,3 +268,66 @@ def test_i18n_keys_complete():
               "upd_err_unverified", "upd_err_mode", "upd_err_timeout", "upd_close"):
         assert i18n.EN[k] and i18n.ES[k]
     assert "{version}" in i18n.EN["upd_confirm"] and "{version}" in i18n.ES["upd_confirm"]
+
+
+def test_rehash_runs_in_worker_not_in_ui_thread(qapp, tmp_path, monkeypatch):
+    seen = {}
+    spawned = []
+    monkeypatch.setattr(about, "_spawn", lambda fn: spawned.append(fn))
+    monkeypatch.setattr(updater, "reverify_installer", lambda p: seen.setdefault("re", p))
+    monkeypatch.setattr(updater, "launch_installer", lambda p, **k: seen.setdefault("launch", p))
+    d = _dlg(qapp, tmp_path)
+    monkeypatch.setattr(d, "_confirm_launch", lambda: True)
+    d._on_prepared(tmp_path / "x.exe")
+    assert seen == {} and len(spawned) == 1              # nothing heavy ran in the calling (UI) thread
+    spawned[0]()
+    assert seen["re"] == tmp_path / "x.exe" and seen["launch"] == tmp_path / "x.exe"
+
+
+def test_popen_oserror_is_reported_and_ui_restored(qapp, tmp_path, monkeypatch, sync_spawn):
+    def boom(p, **k):
+        raise OSError("nope")
+    monkeypatch.setattr(updater, "launch_installer", boom)
+    d = _dlg(qapp, tmp_path)
+    monkeypatch.setattr(d, "_confirm_launch", lambda: True)
+    d._busy = True
+    d._on_prepared(tmp_path / "x.exe")
+    assert not d._busy and d.status_label.text() == tr("upd_err_launch")
+
+
+class _FakeHide:
+    def __init__(self, spontaneous):
+        self._s = spontaneous
+
+    def spontaneous(self):
+        return self._s
+
+
+def test_hide_cancels_only_when_not_spontaneous(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+    monkeypatch.setattr(QDialog, "hideEvent", lambda self, e: None)
+    d = _dlg(qapp, tmp_path)
+    d.hideEvent(_FakeHide(True))                          # minimizing
+    assert not d._cancel.is_set()
+    d.hideEvent(_FakeHide(False))                         # programmatic hide()
+    assert d._cancel.is_set()
+
+
+def test_close_cancels_download(qapp, tmp_path):
+    from PySide6.QtGui import QCloseEvent
+    d = _dlg(qapp, tmp_path)
+    d.closeEvent(QCloseEvent())
+    assert d._cancel.is_set()
+
+
+def test_set_release_while_busy_is_deferred(qapp, tmp_path, monkeypatch, installed):
+    d = _dlg(qapp, tmp_path)
+    d._busy = True
+    d.install_button.setEnabled(False)
+    d._set_status("downloading")
+    d.set_release(_signed_rel())
+    assert d._release is None and d.status_label.text() == "downloading"
+    assert not d.install_button.isEnabled() and d._pending_release is not None
+    d._end_install_ui()                                   # operation over: the pending release is applied
+    assert d._release is not None and d._pending_release is None
+    assert d.status_label.text() == tr("upd_new", version=d._release.version)

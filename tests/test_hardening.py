@@ -371,3 +371,29 @@ def test_hid_paths_are_redacted_in_logs():
     assert redact_path(bt) == "054c:0ce6 col02" and "a1b2c3d4e5f6" not in redact_path(bt)
     assert redact_path(usb) == "046d:c539 col01"
     assert redact_path("garbage") == "<hid>"
+
+
+def test_shutdown_always_releases_lock_even_if_stop_steps_fail():
+    from taskbar_battery_widget import app as app_mod
+
+    class Ok:
+        def stop(self): pass
+        def hide(self): pass
+        def close(self): pass
+
+    class Boom(Ok):
+        def stop(self): raise RuntimeError("x")
+        def hide(self): raise RuntimeError("x")
+
+    class Lock:
+        n = 0
+        def unlock(self): Lock.n += 1
+
+    for widget, tray in ((Boom(), Ok()), (Ok(), Boom())):
+        Lock.n = 0
+        with pytest.raises(RuntimeError):
+            app_mod.run_shutdown(Ok(), widget, tray, Ok(), Ok(), Lock())
+        assert Lock.n == 1
+    Lock.n = 0
+    app_mod.run_shutdown(Ok(), Ok(), Ok(), Boom(), Ok(), Lock())      # monitor.stop failure is logged
+    assert Lock.n == 1

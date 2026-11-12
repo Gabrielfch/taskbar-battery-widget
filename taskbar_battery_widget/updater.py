@@ -194,7 +194,7 @@ def _final_url_ok(resp, hosts=REDIRECT_HOSTS) -> bool:
     try:
         final = resp.geturl()
     except Exception:
-        return True
+        return False                 # cannot tell where the data came from: do not trust it
     if not isinstance(final, str):
         return True
     u = urllib.parse.urlsplit(final)
@@ -353,9 +353,15 @@ def verify_sums_signature(sums: bytes, sig_file: bytes, keys: list[bytes] | None
     return bool(keys) and sig is not None and any(ed25519.verify(k, sums, sig) for k in keys)
 
 
-# SHA-256 of installers that prepare_update verified, kept only in memory so launch_installer can detect
-# a swap of the file between verification and execution (the temp folder is not a trust boundary).
-_verified: dict[str, str] = {}
+# (SHA-256, size, mtime_ns) of installers that prepare_update verified, kept only in memory so
+# launch_installer can detect a swap of the file between verification and execution (the temp folder is not
+# a trust boundary).
+_verified: dict[str, tuple[str, int, int]] = {}
+
+
+def _stat_sig(path: Path) -> tuple[int, int]:
+    st = os.stat(path)
+    return st.st_size, st.st_mtime_ns
 
 
 def prepare_update(rel: Release, progress=None, cancel=None, opener=None,
@@ -400,7 +406,8 @@ def prepare_update(rel: Release, progress=None, cancel=None, opener=None,
         if got != want:
             log.info("update download failed: checksum mismatch")
             raise UpdateError("upd_err_hash")
-        _verified[str(exe_path)] = got
+        size, mtime = _stat_sig(exe_path)
+        _verified[str(exe_path)] = (got, size, mtime)
         log.info("update download verified: %s", rel.version)
         return exe_path
     except BaseException:
@@ -418,23 +425,69 @@ def _system32() -> str:
     return str(Path(os.environ.get("SystemRoot") or os.environ.get("WINDIR") or "C:\\Windows") / "System32")
 
 
-def launch_installer(path: Path) -> None:
+def reverify_installer(path: Path) -> None:
+    """Full re-hash of a previously verified installer. CPU/disk heavy: call it from a worker thread.
+
+    Raises UpdateError('upd_err_hash') when the file is unknown, missing, changed or being modified.
+    On success the stored size/mtime snapshot is refreshed so ``launch_installer(rehash=False)`` can do a
+    cheap final check.
+    """
+    key = str(path)
+    entry = _verified.get(key)
+    if entry is None:
+        log.info("installer not verified; not launching")
+        raise UpdateError("upd_err_hash")
+    try:
+        before = _stat_sig(path)
+        got = sha256_file(Path(path))
+        after = _stat_sig(path)
+    except OSError as exc:
+        raise UpdateError("upd_err_hash") from exc
+    if got != entry[0] or before != after:
+        log.info("installer changed since verification; not launching")
+        raise UpdateError("upd_err_hash")
+    _verified[key] = (entry[0], *after)
+
+
+def discard_update(path: Path) -> None:
+    """Delete the folder of a downloaded installer and forget its verification."""
+    _verified.pop(str(path), None)
+    shutil.rmtree(Path(path).parent, ignore_errors=True)
+
+
+def launch_installer(path: Path, rehash: bool = True) -> None:
     """Start the (already verified) Inno installer detached from this process.
 
-    Re-checks the install mode and re-hashes the file right before ``Popen``; raises UpdateError if the
-    file is not one that ``prepare_update`` verified or if it changed since.
+    Re-checks the install mode and, right before ``Popen``, that the file is still the one
+    ``prepare_update`` verified: with ``rehash`` (default) by hashing it again; with ``rehash=False`` only by
+    size + mtime against the snapshot taken by ``reverify_installer`` (which the caller must have run in a
+    worker thread just before, so the UI thread never hashes tens of MB). Raises UpdateError otherwise.
+    If ``Popen`` fails, the download folder is deleted and the verification forgotten before re-raising.
     """
     if install_mode() != "installed":
         raise UpdateError("upd_err_mode")
-    want = _verified.get(str(path))
-    if want is None or not Path(path).is_file() or sha256_file(Path(path)) != want:
+    key = str(path)
+    if key not in _verified or not Path(path).is_file():
+        log.info("installer changed or not verified; not launching")
+        raise UpdateError("upd_err_hash")
+    if rehash:
+        reverify_installer(Path(path))
+    try:
+        unchanged = _stat_sig(Path(path)) == _verified[key][1:]
+    except OSError:
+        unchanged = False
+    if not unchanged:
         log.info("installer changed or not verified; not launching")
         raise UpdateError("upd_err_hash")
     flags = 0
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen([str(path), *installer_args()], close_fds=True, creationflags=flags,
-                     cwd=_system32())
+    try:
+        subprocess.Popen([str(path), *installer_args()], close_fds=True, creationflags=flags,
+                         cwd=_system32())
+    except BaseException:
+        discard_update(Path(path))
+        raise
 
 
 # ------------------------------------------------------------------ stale download cleanup
