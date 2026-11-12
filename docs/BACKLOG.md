@@ -5,46 +5,60 @@ Ordered by delivery sequence (dependencies first, small wins early, largest/risk
 
 | Order | Item | Request | Effort | Depends on | Target |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Green status dot in the tray device list | #4 | S | — | 1.5.0 |
-| 2 | Simplify sources: Bluetooth + 2.4 GHz only, all on by default | #3 | S | — | 1.5.0 |
-| 3 | Settings menu with Personalization subgroup | #2 | M | 2 | 1.5.0 |
-| 4 | Scrollable device panel (Connected / Known) with eye toggles | #6 | M | 3 | 1.6.0 |
-| 5 | Per-device detailed log (1-minute samples), toggle next to the device log | #5 | M | 3, 4 | 1.6.0 |
-| 6 | Widget placement: taskbar left/right, other monitors, floating corners/edges, visible in fullscreen | #1 | L | 3 | 1.7.0 |
+| — | ~~Green status dot in the tray device list~~ — dropped, covered by item 4 | #4 | — | — | — |
+| 1 | Simplify sources: Bluetooth + 2.4 GHz only, all on by default (except beta readers) | #3 | S | — | 1.5.0 |
+| 2 | Settings menu with Personalization subgroup | #2 | M | 1 | 1.5.0 |
+| 3 | Scrollable device panel (Connected / Known) with eye toggles and status colours | #6 + #4 | M | 2 | 1.6.0 |
+| 4 | Per-device detailed log (1-minute samples), toggle next to the device log | #5 | M | 2, 3 | 1.6.0 |
+| 5 | Widget placement: taskbar left/right, other monitors, floating corners/edges, visible in fullscreen | #1 | L | 2 | 1.7.0 |
 
 ---
 
-## 1. Green status dot in the tray device list (#4)
-The coloured dot shown next to each device in the tray menu list (above *Refresh*) must be green.
-- Clarify: green for every connected device, or keep the level colour only in the taskbar pills? Proposed:
-  green = connected and reporting, grey = disconnected/stale, red only when at or below the low threshold.
-- Acceptance: dot colour follows the rule above in light and dark themes; tests for the colour mapping.
+## ~~Green status dot (#4)~~ — dropped
+Superseded by item 3: the new device panel replaces the device list in the tray menu, and that panel carries
+the status colours (green *Connected* section, each row coloured by its state).
 
-## 2. Simplify sources (#3)
+## 1. Simplify sources (#3)
 - *Sources* keeps only two toggles: **2.4 GHz wireless** and **Bluetooth**, both **on by default**.
-- The "Experimental readers" category is removed: each experimental reader joins the group it belongs to
+- The "Experimental readers" category is removed: every reader joins the group it belongs to
   (USB dongles → 2.4 GHz; Bluetooth-only readers such as DualSense over BT → Bluetooth).
 - The "DualSense over Bluetooth (extended mode)" toggle is folded into *Bluetooth*.
+- **All previously experimental readers are on by default, except a small "beta" set** whose protocol notes
+  were the least certain in the reviews (risk of misreading a value, or of picking the wrong collection):
+  - Logitech PRO X 2 / PRO X 3 / G522 LIGHTSPEED (Centurion bridge, 3 round trips)
+  - Corsair Void Wireless V2 / Virtuoso Max / HS80 Max (collection chosen by report length only)
+  - HyperX Cloud Alpha Wireless and Cloud II Wireless (Kingston 0951:1718) (usage page not documented)
+  - SteelSeries legacy protocol: Arctis 1 / 7 / 9, Arctis Pro Wireless, Nova Pro Wireless (report-id handling
+    unverified on Windows, no reply echo check)
+  - DualShock 4 over Bluetooth (calibration feature id unverified)
+  Beta readers stay available behind an advanced config key `beta_readers` (default **off**), documented in
+  the README, so testers can enable them; they move to the default set once someone confirms them.
+- README: a clear note that most readers are implemented from public protocol notes and **untested on real
+  hardware**, which ones are beta, and an explicit request for feedback: *"Tell us which devices work and
+  which don't"* with a link to the *Device report* issue template (works / wrong value / not shown).
+  Keep ✅ / 🟢 / 🧪 (beta) marks in the compatibility table.
 - Migration: existing configs map `wireless_enabled`, `experimental_readers`, `dualsense_bt_extended` to the
   two new keys (on unless the user had turned the whole source off).
-- **Decision to confirm:** this turns the unverified (🧪) readers **on by default**. They only send whitelisted
-  query commands, but they have not been tested on real hardware. Option: keep a hidden config key
-  `experimental_readers` (default on) for support/debugging, and keep the 🧪 marks in the README.
-- Acceptance: tray shows exactly two source toggles; scan honours them; migration tests; README updated.
+- Acceptance: tray shows exactly two source toggles; scan honours them and the beta list; migration tests;
+  README note + feedback request; compatibility table updated.
 
-## 3. Settings menu (#2)
+## 2. Settings menu (#2)
 Group the configuration entries under **Settings**, leaving the top level short.
 - Top level: device list, *Refresh*, *Settings ▸*, *About…*, *Quit*.
 - *Settings ▸*: *Sources ▸* (2.4 GHz, Bluetooth), *Alerts ▸* (low-battery notification, threshold),
-  *Logs ▸* (open device log, open logs folder; later the detailed-log toggle from item 5),
+  *Logs ▸* (open device log, open logs folder; later the detailed-log toggle from item 4),
   *Start with Windows*, *Personalization ▸*.
 - *Personalization ▸*: colour by battery level (and future: theme, pill size, placement shortcut).
 - Acceptance: menu structure test updated; every existing action reachable; ES/EN strings.
 
-## 4. Scrollable device panel (#6)
+## 3. Scrollable device panel (#6, includes #4)
 Replace the device list inside the tray menu and the *Show ▸ Disconnected / Visible devices* submenus with
 a scrollable panel opened from the menu.
 - Two sections: **Connected** and **Known** (disconnected / last known value).
+- **Colours:** the *Connected* section is highlighted in **green** (header and accent); every row is coloured by
+  its own state — battery level colour (green / yellow / orange / red), charging, idle (dimmed), unknown
+  (grey), disconnected/last known (dimmed grey with the last value). Readable in light and dark themes and
+  with the non-colour cues already used in the pills ("!", outline, moon).
 - Each row: kind icon, name, level/status, and an **eye** button to show/hide that device on the taskbar.
 - The **Known** section header has its own eye button = show/hide disconnected devices on the taskbar
   (replaces the *Show disconnected* toggle).
@@ -52,7 +66,7 @@ a scrollable panel opened from the menu.
 - Acceptance: hidden state persists (`hidden_devices`), header eye persists (`show_disconnected`);
   the old *Show* submenu is removed; tests for grouping, toggles and persistence.
 
-## 5. Per-device detailed log (#5)
+## 4. Per-device detailed log (#5)
 Optional per-device history sampled **once per minute** (date/time, battery, charging, connected, link).
 - Enabled per device from an eye/record toggle in the device panel row, and globally from
   *Settings ▸ Logs* next to *Open device log* (button to open that device's log).
@@ -62,7 +76,7 @@ Optional per-device history sampled **once per minute** (date/time, battery, cha
 - Acceptance: toggle per device persists; 1-minute cadence verified with a fake clock; rotation and
   redaction tests; "open log" opens the device file.
 
-## 6. Widget placement (#1)
+## 5. Widget placement (#1)
 Let the user choose where the pills are shown:
 - **Taskbar**: right (next to the tray, current), left (next to Start), centre.
 - **Monitor**: primary or a specific monitor (and the taskbar of that monitor when it has one).
