@@ -29,3 +29,13 @@ the release page. The private key lives only on the maintainer's PC (see `docs/r
 CI creates unsigned drafts. If the key is lost or leaked, report it/rotate: publish a release that embeds a new
 public key (signed with the old key if still trusted) and announce it in the release notes. Check a release
 by hand with `python -m taskbar_battery_widget.ed25519 verify <public-key-hex> SHA256SUMS.txt SHA256SUMS.txt.sig`.
+
+Release-signing public keys (Ed25519, hex):
+
+| Key | Public key |
+| --- | --- |
+| Primary (signs releases) | `3a19dbb213885211c87bada3f95d562199a5087d2a42b46891f37fa7dd3f50dd` |
+| Backup (kept offline, used only to rotate) | `8706ea9a037f5002b639d38dbce83d4bb1ffce1ad145d56dddb0fe446d909f81` |
+
+Releases built by CI also carry build provenance attestations:
+`gh attestation verify <file>.exe --repo Gabrielfch/taskbar-battery-widget`.

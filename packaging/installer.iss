@@ -1,4 +1,4 @@
-; Inno Setup script. Compile with: ISCC.exe /DAppVersion=1.3.0 packaging\installer.iss
+; Inno Setup script. Compile with: ISCC.exe /DAppVersion=1.4.0 packaging\installer.iss
 #ifndef AppVersion
   #error AppVersion is required: run packaging/build.ps1 (it passes /DAppVersion from __version__)
 #endif
