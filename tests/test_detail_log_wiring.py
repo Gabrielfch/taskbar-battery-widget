@@ -168,11 +168,34 @@ def test_open_detail_log_reveals_existing_file_in_explorer(tmp_path):
     assert revealed == [tmp_path / "devs" / "a.csv"] and opened == []
 
 
-def test_tray_reveal_path_uses_explorer_select(qapp, tmp_path, monkeypatch):
+def test_tray_opens_csv_in_notepad_without_association(qapp, tmp_path, monkeypatch):
     from taskbar_battery_widget import tray as tray_mod
     calls = []
+    monkeypatch.setattr(tray_mod, "has_file_association", lambda ext: False)
     monkeypatch.setattr(tray_mod.subprocess, "Popen", lambda args, **kw: calls.append(args))
     t = tray_mod.TrayController.__new__(tray_mod.TrayController)
     f = tmp_path / "x.csv"
-    tray_mod.TrayController.reveal_path(t, f)
-    assert calls == [["explorer.exe", f"/select,{f}"]]
+    tray_mod.TrayController.open_text_file(t, f)
+    assert calls == [["notepad.exe", str(f)]]
+
+
+def test_tray_opens_csv_with_associated_program(qapp, tmp_path, monkeypatch):
+    from taskbar_battery_widget import tray as tray_mod
+    opened = []
+    monkeypatch.setattr(tray_mod, "has_file_association", lambda ext: True)
+    t = tray_mod.TrayController.__new__(tray_mod.TrayController)
+    monkeypatch.setattr(tray_mod.TrayController, "open_path", lambda self, p: opened.append(p))
+    f = tmp_path / "x.csv"
+    tray_mod.TrayController.open_text_file(t, f)
+    assert opened == [f]
+
+
+def test_recording_on_emits_detail_log_started(qapp, tmp_path):
+    from taskbar_battery_widget import tray as tray_mod
+    from taskbar_battery_widget.config import Config
+    t = tray_mod.TrayController(Config(tmp_path / "c.json"))
+    got = []
+    t.detail_log_started.connect(got.append)
+    t._on_logging("h:abc", True)
+    t._on_logging("h:abc", False)
+    assert got == ["h:abc"]

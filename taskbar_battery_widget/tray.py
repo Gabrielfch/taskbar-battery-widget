@@ -25,6 +25,24 @@ PANEL_REOPEN_GRACE_S = 0.3
 SETTINGS_MENU_DELAY_MS = 60       # let the panel finish closing before the Settings menu pops up
 
 
+def has_file_association(ext: str) -> bool:
+    """True if Windows has a program to open files with extension `ext` (e.g. ".csv")."""
+    if not ext or os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(1024)
+        # ASSOCF_NONE=0, ASSOCSTR_EXECUTABLE=2; S_OK (0) when an executable is associated
+        hr = ctypes.windll.shlwapi.AssocQueryStringW(0, 2, ext, "open", buf, ctypes.byref(size))
+        exe = buf.value.lower()
+        # with no real association Windows answers with the "Open with" chooser (OpenWith.exe)
+        return hr == 0 and bool(exe) and not exe.endswith("openwith.exe")
+    except Exception:  # noqa: BLE001 - fall back to Notepad
+        return False
+
+
 class TrayController(QObject):
     refresh_requested = Signal()
     quit_requested = Signal()
@@ -32,6 +50,7 @@ class TrayController(QObject):
     ui_settings_changed = Signal()      # visibility / recording only: re-filter, no device rescan
     open_detail_log_requested = Signal(str)     # visibility key of the device whose log to open
     open_detail_folder_requested = Signal()
+    detail_log_started = Signal(str)     # recording turned on for this visibility key: write a sample now
 
     def __init__(self, cfg, parent=None):
         super().__init__(parent)
@@ -107,12 +126,16 @@ class TrayController(QObject):
             log.exception("could not open %s", path.name)
             self.notify(tr("app_name"), str(path))
 
-    def reveal_path(self, path) -> None:
-        """Show `path` selected in File Explorer (works even when no program is associated with .csv)."""
+    def open_text_file(self, path) -> None:
+        """Open a text/CSV file with its associated program, or Notepad when none is associated
+        (otherwise Windows shows an error / "open with" prompt instead of the file)."""
+        if has_file_association(getattr(path, "suffix", "")):
+            self.open_path(path)
+            return
         try:
-            subprocess.Popen(["explorer.exe", f"/select,{path}"], close_fds=True)
+            subprocess.Popen(["notepad.exe", str(path)], close_fds=True)
         except OSError:
-            log.exception("could not reveal %s", getattr(path, "name", "path"))
+            log.exception("could not open %s in Notepad", getattr(path, "name", "file"))
             self.open_path(path.parent)
 
     def open_device_log(self) -> None:
@@ -263,6 +286,8 @@ class TrayController(QObject):
         except ValueError:
             log.exception("could not save the detailed log switch")
         self._changed(ui_only=True)
+        if on:
+            self.detail_log_started.emit(key)
 
     def _refresh_panel_force(self) -> None:
         """Redraw the panel from the config (a failed save must not leave the toggle out of step)."""
