@@ -157,3 +157,22 @@ def test_panel_strings_in_i18n():
             assert tr_in(lang, k) != k
     assert tr_in("es", "panel_connected") == "Conectados"
     assert tr_in("en", "panel_record", name="X") == "Record X to the detailed log"
+
+
+def test_open_detail_log_reveals_existing_file_in_explorer(tmp_path):
+    lg = FakeLogger(tmp_path / "devs")
+    (tmp_path / "devs").mkdir()
+    (tmp_path / "devs" / "a.csv").write_text("x")
+    opened, revealed = [], []
+    app_mod.open_detail_log(lg, DEVS, visibility_key("a"), opened.append, revealed.append)
+    assert revealed == [tmp_path / "devs" / "a.csv"] and opened == []
+
+
+def test_tray_reveal_path_uses_explorer_select(qapp, tmp_path, monkeypatch):
+    from taskbar_battery_widget import tray as tray_mod
+    calls = []
+    monkeypatch.setattr(tray_mod.subprocess, "Popen", lambda args, **kw: calls.append(args))
+    t = tray_mod.TrayController.__new__(tray_mod.TrayController)
+    f = tmp_path / "x.csv"
+    tray_mod.TrayController.reveal_path(t, f)
+    assert calls == [["explorer.exe", f"/select,{f}"]]

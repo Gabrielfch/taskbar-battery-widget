@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import time
 
 from PySide6.QtCore import QObject, QPoint, QRect, QTimer, Signal
@@ -105,6 +106,14 @@ class TrayController(QObject):
         except (OSError, AttributeError):
             log.exception("could not open %s", path.name)
             self.notify(tr("app_name"), str(path))
+
+    def reveal_path(self, path) -> None:
+        """Show `path` selected in File Explorer (works even when no program is associated with .csv)."""
+        try:
+            subprocess.Popen(["explorer.exe", f"/select,{path}"], close_fds=True)
+        except OSError:
+            log.exception("could not reveal %s", getattr(path, "name", "path"))
+            self.open_path(path.parent)
 
     def open_device_log(self) -> None:
         from . import device_history

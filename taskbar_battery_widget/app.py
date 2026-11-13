@@ -195,15 +195,17 @@ class DetailLogDriver(QObject):
             log.exception("detail log tick failed")
 
 
-def open_detail_log(logger, devices, key: str, open_path) -> None:
-    """Open the CSV of the device with visibility key `key` (its folder if it was not written yet)."""
+def open_detail_log(logger, devices, key: str, open_path, reveal_path=None) -> None:
+    """Show the CSV of the device with visibility key `key` selected in File Explorer (its folder if it
+    was not written yet). Explorer is used instead of the .csv default program because many PCs have no
+    program associated with .csv, and then Windows shows an error/"open with" prompt instead."""
     from .models import visibility_key
     dev = next((d for d in devices if visibility_key(d.id) == key), None)
     if dev is None:
         return
     path = logger.path_for(dev)
     if path.exists():
-        open_path(path)
+        (reveal_path or open_path)(path)
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,7 +306,7 @@ def main() -> int:
     tray.quit_requested.connect(app.quit)
     widget.panel_requested.connect(tray.open_panel)
     tray.open_detail_log_requested.connect(
-        lambda key: open_detail_log(detail_logger, latest, key, tray.open_path))
+        lambda key: open_detail_log(detail_logger, latest, key, tray.open_path, tray.reveal_path))
 
     def open_detail_folder() -> None:
         try:
