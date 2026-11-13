@@ -50,6 +50,7 @@ class Env:
     icons_centered: bool | None = True     # taskbar_icons_centered(); the left anchor needs True
     widgets_button: bool | None = False    # Win11 Widgets button shown at the left end (None: unknown = shown)
     floating_fallback: bool = False        # taskbar mode, monitor without a taskbar: float on it instead
+    show_in_fullscreen: bool = False       # keep the widget visible (click-through) over a fullscreen app
 
 
 @dataclass
@@ -73,6 +74,7 @@ class PlacementResult:
                                # "left_needs_centered_icons" (visible, fell back to the right end),
                                # "no_taskbar_floating" (visible, floating on a monitor without a taskbar)
     pill_h: int = 0
+    fullscreen_passive: bool = False   # visible over a fullscreen app: pure overlay, mouse passes through
 
 
 def _hidden(env: Env, reason: str) -> PlacementResult:
@@ -190,17 +192,24 @@ def _left_rect(info: taskbar.TaskbarInfo, w: int, h: int, gap: int, vertical: bo
 
 
 def compute_placement(env: Env, placement: Placement) -> PlacementResult:
+    res = _compute(env, placement)
+    if res.visible and env.fullscreen and env.show_in_fullscreen:
+        res.fullscreen_passive = True
+    return res
+
+
+def _compute(env: Env, placement: Placement) -> PlacementResult:
     if placement.mode == "floating":
         if not env.has_pills:
             return _hidden(env, "no_pills")
-        if env.fullscreen:
+        if env.fullscreen and not env.show_in_fullscreen:
             return _hidden(env, "fullscreen")
         return _floating(env, placement)
     info = env.info
     if info is None and env.floating_fallback:
         if not env.has_pills:
             return _hidden(env, "no_pills")
-        if env.fullscreen:
+        if env.fullscreen and not env.show_in_fullscreen:
             return _hidden(env, "fullscreen")
         return _floating(env, placement, REASON_NO_TASKBAR_FLOATING)
     if info is None:
@@ -209,7 +218,7 @@ def compute_placement(env: Env, placement: Placement) -> PlacementResult:
         return _hidden(env, "no_pills")
     if taskbar.is_tucked(info.rect, info.monitor_rect, info.edge, info.autohide):
         return _hidden(env, "tucked")
-    if env.fullscreen:
+    if env.fullscreen and not env.show_in_fullscreen:
         return _hidden(env, "fullscreen")
     dpr = env.dpr or 1.0
     vertical = info.edge in (taskbar.EDGE_LEFT, taskbar.EDGE_RIGHT)

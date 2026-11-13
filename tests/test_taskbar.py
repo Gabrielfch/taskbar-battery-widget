@@ -72,6 +72,7 @@ def test_fullscreen_state_mapping():
         assert tb.state_is_fullscreen(s) is False
 
 
+@pytest.mark.live_taskbar      # exercises the real is_fullscreen_foreground (its Win32 calls are mocked)
 def test_fullscreen_uses_shell_state_over_heuristic(monkeypatch):
     mon = (0, 0, 1920, 1080)
     monkeypatch.setattr(tb, "query_user_notification_state", lambda: 5)

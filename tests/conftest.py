@@ -51,6 +51,8 @@ def _no_real_taskbar(request, monkeypatch):
     monkeypatch.setattr(taskbar, "get_taskbar_infos", lambda: [])
     monkeypatch.setattr(taskbar, "monitor_devices", lambda: [])
     monkeypatch.setattr(taskbar, "monitor_stable_id", lambda name: "")
+    # the real foreground app (a game, a presentation) must not decide test outcomes
+    monkeypatch.setattr(taskbar, "is_fullscreen_foreground", lambda *a, **k: False)
 
 
 @pytest.fixture(autouse=True)

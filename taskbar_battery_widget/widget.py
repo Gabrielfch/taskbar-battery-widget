@@ -27,7 +27,7 @@ from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, REASON_LEFT_NE
                         Placement, ScreenInfo, center_rect_y, compute_placement, lookup_floating,
                         pill_height_for, resolve_screen, snap_anchor, taskbar_for_screen)
 from .win_window import (_ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
-                         popup_menu_foreground)
+                         popup_menu_foreground, set_click_through, shift_down)
 
 MARGIN = 2           # outer margin around the pills (logical px)
 SPACING = 4          # gap between pills
@@ -38,6 +38,7 @@ BAR_MIN_PILL_H = 24   # below this height the level bar is dropped
 BAR_H = 3.0
 MOON_W = 7
 TICK_MS = 500
+SHIFT_POLL_MS = 100     # Shift polling while shown over a fullscreen app
 DRAG_THRESHOLD = 4        # px of movement before a press in floating mode becomes a drag
 FLOATING_BG_ALPHA = 245   # backdrop of the floating bar (slightly translucent)
 FLOATING_BORDER_ALPHA = 60
@@ -250,6 +251,11 @@ class TaskbarWidget(QWidget):
         self._hover_timer.setSingleShot(True)
         self._hover_timer.setInterval(HOVER_DELAY_MS)
         self._hover_timer.timeout.connect(self._show_popup)
+        self._passive = False           # shown over a fullscreen app: click-through unless Shift is held
+        self._shift_held = False
+        self._shift_timer = QTimer(self)
+        self._shift_timer.setInterval(SHIFT_POLL_MS)
+        self._shift_timer.timeout.connect(self._shift_tick)
         self._zguard = _ZGuard(lambda: int(self.winId()) if self.isVisible() else 0,
                                self._popup_hwnd)
         self.destroyed.connect(self._zguard.stop)
@@ -373,7 +379,7 @@ class TaskbarWidget(QWidget):
 
     def _rearm_hover(self) -> None:
         """After a rebuild the pill under a still mouse is hovered again (and its popup re-armed)."""
-        if not self.isVisible() or not self._pills:
+        if not self.isVisible() or not self._pills or not self._interactive():
             return
         lp = self.mapFromGlobal(self._cursor_pos())
         idx = pill_index_at(self._rects, lp.x(), lp.y())
@@ -575,7 +581,7 @@ class TaskbarWidget(QWidget):
 
     def _build_env(self, info, screen: ScreenInfo, placement: Placement, fallback: bool = False) -> Env:
         fullscreen = False
-        if (self._pills and not self._cfg_get("show_in_fullscreen", False)
+        if (self._pills
                 and (info is not None or fallback or self._is_floating())):
             if self._n_screens > 1:
                 fullscreen = taskbar.is_fullscreen_on_monitor(screen.name)
@@ -593,7 +599,8 @@ class TaskbarWidget(QWidget):
         return Env(info=info, fullscreen=fullscreen, has_pills=bool(self._pills),
                    screen_name=screen.name, screen_origin=screen.geometry[:2], dpr=screen.dpr or 1.0,
                    size=(self.width(), self.height()), available=screen.available, icons_centered=centered,
-                   widgets_button=widgets, floating_fallback=fallback)
+                   widgets_button=widgets, floating_fallback=fallback,
+                   show_in_fullscreen=bool(self._cfg_get("show_in_fullscreen", False)))
 
     def _apply_screen(self, qscreen) -> None:
         """Bind the window to `qscreen` before moving it (per-monitor DPI)."""
@@ -677,6 +684,7 @@ class TaskbarWidget(QWidget):
             self._last_geom = key
             self.move(x, y)
         self._set_visible(True)
+        self._set_passive(res.fullscreen_passive and self.isVisible())
         if self.isVisible():
             _assert_topmost(int(self.winId()))
             if self._popup is not None and self._popup.isVisible():
@@ -693,7 +701,47 @@ class TaskbarWidget(QWidget):
             self.show()
         elif not vis and self.isVisible():
             self._hide_popup()
+            self._set_passive(False)
             self.hide()
+
+    # ------------------------------------------------------------------ fullscreen passive mode
+    def _interactive(self) -> bool:
+        return not self._passive or self._shift_held
+
+    def _set_passive(self, on: bool) -> None:
+        """Over a fullscreen app the widget ignores the mouse (click-through) unless Shift is held."""
+        if on == self._passive:
+            return
+        self._passive = on
+        self._shift_held = False
+        self._hide_popup()
+        if self._hover != -1:
+            self._hover = -1
+            self.update()
+        if self._dragging or self._press_global is not None:
+            self._cancel_drag()
+        if on:
+            set_click_through(int(self.winId()), True)
+            self._shift_timer.start()
+        else:
+            self._shift_timer.stop()
+            set_click_through(int(self.winId()), False)
+
+    def _shift_tick(self) -> None:
+        if not self._passive:
+            self._shift_timer.stop()
+            return
+        down = shift_down()
+        if down == self._shift_held:
+            return
+        self._shift_held = down
+        set_click_through(int(self.winId()), not down)
+        if not down:
+            self._hide_popup()
+            self._hover = -1
+            if self._dragging or self._press_global is not None:
+                self._cancel_drag()
+            self.update()
 
     # ------------------------------------------------------------------ hover popup
     def _popup_hwnd(self) -> int:
@@ -707,7 +755,7 @@ class TaskbarWidget(QWidget):
 
     def _show_popup(self) -> None:
         idx = self._hover
-        if idx < 0 or idx >= len(self._pills) or not self.isVisible():
+        if not self._interactive() or idx < 0 or idx >= len(self._pills) or not self.isVisible():
             return
         pill = self._pills[idx]
         if pill.members is not None:
@@ -874,6 +922,8 @@ class TaskbarWidget(QWidget):
         return QPoint(x, y)
 
     def mouseMoveEvent(self, e) -> None:
+        if not self._interactive():
+            return
         if (self._press_global is not None and self._floating
                 and e.buttons() & Qt.MouseButton.LeftButton):
             delta = e.globalPosition().toPoint() - self._press_global
@@ -901,6 +951,8 @@ class TaskbarWidget(QWidget):
 
     def mousePressEvent(self, e) -> None:
         self._hide_popup()
+        if not self._interactive():
+            return
         if e.button() == Qt.MouseButton.LeftButton:     # touch / click: show the card right away
             self._press_global = e.globalPosition().toPoint()
             self._press_origin = self.pos()

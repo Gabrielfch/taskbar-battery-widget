@@ -20,6 +20,8 @@ if sys.platform == "win32":
     _u32.SetForegroundWindow.restype = wt.BOOL
     _u32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
     _u32.PostMessageW.restype = wt.BOOL
+    _u32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    _u32.GetAsyncKeyState.restype = ctypes.c_short
 
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x80, 0x08000000
@@ -33,6 +35,38 @@ def _apply_ex_styles(hwnd: int) -> None:
     h = wt.HWND(hwnd)
     cur = _u32.GetWindowLongPtrW(h, GWL_EXSTYLE)
     _u32.SetWindowLongPtrW(h, GWL_EXSTYLE, cur | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
+
+
+WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x20
+VK_SHIFT = 0x10
+
+
+def set_click_through(hwnd: int, on: bool) -> bool:
+    """Toggle WS_EX_TRANSPARENT (mouse falls through to the window below); keeps the other ex-styles.
+
+    Returns True when the style was applied; a safe no-op (False) off Windows or on any failure.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        h = wt.HWND(hwnd)
+        cur = _u32.GetWindowLongPtrW(h, GWL_EXSTYLE)
+        new = (cur | WS_EX_LAYERED | WS_EX_TRANSPARENT) if on else (cur & ~WS_EX_TRANSPARENT)
+        if new != cur:
+            _u32.SetWindowLongPtrW(h, GWL_EXSTYLE, new)
+        return True
+    except Exception:
+        return False
+
+
+def shift_down() -> bool:
+    """True while a Shift key is physically held (system-wide, works while another app has focus)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        return bool(_u32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    except Exception:
+        return False
 
 
 WM_NULL = 0x0000

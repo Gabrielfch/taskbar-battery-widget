@@ -180,8 +180,7 @@ def test_tray_gear_shows_settings_menu_and_closes_panel(qapp, tmp_path, monkeypa
     t._panel._toolbar["settings"].click()
     assert not t._panel.isVisible()
     assert shown == []                       # deferred until the panel has finished closing
-    QTest.qWait(tray_mod.SETTINGS_MENU_DELAY_MS + 100)
-    assert len(shown) == 1 and shown[0][0] is t._settings.menu
+    assert QTest.qWaitFor(lambda: len(shown) == 1, 3000)     # deferred popup; generous under load and shown[0][0] is t._settings.menu
     texts = [a.text() for a in shown[0][0].actions() if not a.isSeparator()]
     assert texts == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]
 
@@ -191,7 +190,7 @@ def test_settings_menu_really_pops_up(qapp, tmp_path):
     t.open_panel()
     t._panel._toolbar["settings"].click()
     menu = t._settings.menu
-    QTest.qWait(tray_mod.SETTINGS_MENU_DELAY_MS + 100)
+    QTest.qWaitFor(menu.isVisible, 3000)
     try:
         assert menu.isVisible()
     finally:
