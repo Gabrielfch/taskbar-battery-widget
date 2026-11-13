@@ -1,4 +1,4 @@
-# Implementation plan — backlog 1.5.0 / 1.6.0 / 1.7.0
+# Implementation plan — backlog 1.5.0 / 1.6.0
 
 Companion to [BACKLOG.md](BACKLOG.md). Sizes: S = ≤2 production files and ~150 lines; M = 1–3 days;
 L = > 3 days. `∥` = can run in parallel with other tasks of the same wave (disjoint files).
@@ -36,7 +36,8 @@ L = > 3 days. `∥` = can run in parallel with other tasks of the same wave (dis
   entries there). `_sync_menu` delegates to the syncs the builder registers.
 - Top level: device list, Refresh, Settings ▸, About…, Quit. Settings ▸: Sources ▸, Alerts ▸, Logs ▸, Start
   with Windows, Personalization ▸ (colour by level).
-- 1.5.0 keeps a temporary *Devices ▸* submenu (disconnected / visible); it goes away in 1.6.0.
+- No temporary *Devices ▸* submenu: items 1–4 ship together in 1.5.0, so the *Show ▸* submenu is replaced
+  directly by the device panel (item 3).
 
 ### Item 3 — Device panel
 - **Own frameless popup** (`DevicePanel`, `QFrame` with `Qt.Popup`), not `QMenu` + `QWidgetAction`: real
@@ -88,7 +89,9 @@ L = > 3 days. `∥` = can run in parallel with other tasks of the same wave (dis
 
 ## 2. Tasks
 
-### 1.5.0
+### 1.5.0 — sources, settings menu, device panel, detailed log (items 1–4)
+
+Wave A (sources + menu):
 | Id | Goal | Files | Size | Depends |
 | --- | --- | --- | --- | --- |
 | T01 | `beta_readers`, `bluetooth_enabled`, migration, drop `experimental_readers` | `config.py` + tests | S | — |
@@ -101,9 +104,10 @@ L = > 3 days. `∥` = can run in parallel with other tasks of the same wave (dis
 | T04 | Wire flags in monitor, skip BT scan when off | `monitor.py` + tests | S | T03 |
 | T05 | Sources = 2 toggles | `tray.py`, `i18n.py` + tests | S | T01 |
 | T06 ∥ | README: untested note, beta list, `beta_readers`, feedback request, ✅/🟢/🧪 | `README.md` | S | T02* |
-| T07 | `settings_menu.py` + menu restructure, temporary *Devices ▸* | `settings_menu.py`, `tray.py`, `i18n.py` + tests | M | T05 |
+| T07 | `settings_menu.py` + menu restructure (no temporary *Devices ▸*) | `settings_menu.py`, `tray.py`, `i18n.py` + tests | M | T05 |
 
-### 1.6.0
+Wave B (device panel + detailed log; T11 and T20 can start during wave A):
+
 | Id | Goal | Files | Size | Depends |
 | --- | --- | --- | --- | --- |
 | T10 ∥ | `panel_model.py`, `row_style` | `panel_model.py`, `colors.py` | S | T07 |
@@ -114,7 +118,7 @@ L = > 3 days. `∥` = can run in parallel with other tasks of the same wave (dis
 | T20 ∥ | Detailed-log keys + `detail_log.py` (writer, rotation, redaction, salt) | `detail_log.py`, `config.py` | M | T01 |
 | T21 | Minute timer, panel toggle, *Settings ▸ Logs* entry | `app.py`, `device_panel.py`, `settings_menu.py` | M | T13, T14, T20 |
 
-### 1.7.0
+### 1.6.0 — widget placement (item 5)
 | Id | Goal | Files | Size | Depends |
 | --- | --- | --- | --- | --- |
 | T30 | Extract `win_window.py`; `update_position` behind `placement.py`, no behaviour change | `win_window.py`, `widget.py`, `placement.py` | M | T14 |
@@ -138,7 +142,7 @@ two monitors with different DPI (drag, secondary taskbar, hot-plug); borderless 
 auto-hide taskbar; panel with Narrator and keyboard only; 1-hour detailed-log session.
 
 ## 4. Open decisions
-1. Taskbar **centre** anchor: not offered in 1.7.0 (no free-gap info without UI Automation); covered by
+1. Taskbar **centre** anchor: not offered in 1.6.0 (no free-gap info without UI Automation); covered by
    floating top/bottom-centre. Later spike if needed.
 2. Wired controllers (`link == "usb"`) under the 2.4 GHz toggle, labelled "2.4 GHz and USB".
 3. `dualsense_bt_extended` kept as an advanced key (default True), no menu entry, not migrated.
