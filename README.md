@@ -78,7 +78,8 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   - **Floating (draggable)**: drag it anywhere; it snaps to the nearest corner or edge and remembers its place
     per monitor. *Floating position* picks one of the 8 positions without dragging; *Reset position* brings it
     back to the bottom-right corner.
-  - **Visible in fullscreen** (off by default).
+  - **Visible in fullscreen** (off by default). Over a fullscreen app the widget lets clicks pass through and
+    shows no hover card; hold **Shift** to use it.
 - Optional detailed log per device: one CSV row per minute in `%LOCALAPPDATA%\TaskbarBatteryWidget\logs\devices\`
   (max. 4 MB per device, no MAC addresses or serial numbers).
 
