@@ -64,10 +64,21 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
 - Last known value: a disconnected device (or one that reports no level) keeps its last battery reading,
   dimmed, with "Disconnected · last value 56% 2 h ago" on the hover card; it never triggers low-battery alerts.
   Stored in `%LOCALAPPDATA%\TaskbarBatteryWidget\last_known.json` (max. 200 devices, purged after 90 days).
-- Device panel: left-click the tray icon to open a scrollable panel with *Connected* and *Known* devices. An
-  eye icon per device shows or hides it on the taskbar.
-- *Settings* submenu in the tray menu, with *Sources*: *2.4 GHz and USB* (USB dongles and wired controllers)
-  and *Bluetooth*. Both are on by default.
+- Device panel: left or right click on the tray icon (or right click on the pills) opens a scrollable panel
+  with *Connected* and *Known* devices. An eye icon per device shows or hides it on the taskbar; an icon
+  toolbar at the bottom gives *Refresh*, *Show all*, *Settings*, *About* and *Quit*.
+- *Settings* (gear button): *Sources* (*2.4 GHz and USB* — USB dongles and wired controllers — and
+  *Bluetooth*, both on by default), *Alerts*, *Logs*, *Start with Windows* and *Personalization*.
+- Placement (*Settings ▸ Personalization ▸ Position*):
+  - **Taskbar, right** (next to the tray, default) or **left** (needs centred Windows icons; otherwise the app
+    warns and uses the right). Works with the taskbar on any edge; on vertical taskbars the pills go to the
+    bottom end.
+  - **Monitor**: primary or any other monitor, using that monitor's taskbar. A monitor without a taskbar shows
+    the widget floating.
+  - **Floating (draggable)**: drag it anywhere; it snaps to the nearest corner or edge and remembers its place
+    per monitor. *Floating position* picks one of the 8 positions without dragging; *Reset position* brings it
+    back to the bottom-right corner.
+  - **Visible in fullscreen** (off by default).
 - Optional detailed log per device: one CSV row per minute in `%LOCALAPPDATA%\TaskbarBatteryWidget\logs\devices\`
   (max. 4 MB per device, no MAC addresses or serial numbers).
 
@@ -234,7 +245,11 @@ It runs the tests, generates the icon, builds the onedir and onefile apps and th
 - While a Windows 11 shell flyout is open (Quick Settings, Start, notifications), the taskbar is drawn in a
   system layer above all normal windows, so the widget is hidden until the flyout closes. Avoiding this
   requires UIAccess (signed exe installed under Program Files).
-- Windows 11 only; primary taskbar only (bottom edge verified on screen, others by unit tests).
+- Windows 11 only. Bottom taskbars on two monitors verified on screen; other edges, vertical taskbars and
+  mixed DPI are covered by unit tests only.
+- *Visible in fullscreen* works over borderless/windowed fullscreen apps, not over exclusive DirectX fullscreen.
+- The *left* position cannot know how many apps are on a centred taskbar; it keeps to the left quarter of the
+  taskbar.
 - Devices must expose their battery level through one of the supported methods above.
 
 ## Acknowledgements
