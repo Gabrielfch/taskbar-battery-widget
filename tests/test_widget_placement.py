@@ -189,6 +189,8 @@ def test_left_anchor_when_centered(make, monkeypatch):
     info = tb.TaskbarInfo(rect=(0, 1032, 1920, 1080), tray_rect=(1602, 1032, 1920, 1080), edge="bottom",
                           autohide=False, monitor_rect=(0, 0, 1920, 1080), device_name=D1)
     monkeypatch.setattr(w.taskbar, "get_taskbar_infos", lambda: [info])
+    # do not depend on the machine's Widgets button setting (CI runners have it on → bigger margin)
+    monkeypatch.setattr(w.taskbar, "taskbar_widgets_button", lambda: False)
     wd, _ = make(taskbar_anchor="left")
     assert wd.x() == 4 and wd._last_reason == "ok"
 

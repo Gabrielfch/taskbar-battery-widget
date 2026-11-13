@@ -5,6 +5,8 @@ import html
 import math
 import sys  # noqa: F401  (tests read widget.sys.platform)
 import time
+
+import shiboken6
 from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
@@ -463,9 +465,15 @@ class TaskbarWidget(QWidget):
     # ------------------------------------------------------------------ positioning
     def _screens(self) -> list:
         """[(ScreenInfo, QScreen)]; cached and rebuilt only after a screen signal."""
-        if self._screens_cache is None:
-            self._screens_cache = screen_infos()
-        return self._screens_cache
+        cache = self._screens_cache
+        if cache is not None:
+            # a screen can be destroyed before its removal signal reaches us (unplug, RDP, tests)
+            current = QGuiApplication.screens()
+            if any(not shiboken6.isValid(sc) or sc not in current for _, sc in cache):
+                cache = None
+        if cache is None:
+            cache = self._screens_cache = screen_infos()
+        return cache
 
     def _reg(self, fn):
         """fn() with a ~5 s cache (registry reads); keyed by the function object."""
