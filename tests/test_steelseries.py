@@ -49,7 +49,7 @@ def info(pid, page=0xFFC0, usage=1, path="p", out_len=65, in_len=65, product="",
 def run(replies, infos, budget=1.0, cancel=None):
     h = FakeHandle(replies)
     out = ss.read(infos, time.monotonic() + budget, cancel,
-                  handle_factory=lambda path, in_len=64: h)
+                  handle_factory=lambda path, in_len=64: h, beta=True)
     return out, h
 
 
@@ -321,3 +321,20 @@ def test_never_raises():
         raise OSError("x")
     assert ss.read([info(0x220E)], time.monotonic() + 1, None, handle_factory=boom) == []
     assert ss.read(None, time.monotonic() + 1) == []
+
+
+def test_beta_families_skipped_without_beta_and_stable_always_read():
+    assert {f.key for f in ss.FAMILIES if f.beta} == {"arctis1", "arctis7", "arctis9", "nova_pro",
+                                                       "pro_wireless"}
+    opened = []
+
+    def rec(path, in_len=64):
+        opened.append(path)
+        raise OSError("x")
+    old = info(0x1260, 0xFF43, 0x202)
+    assert ss.read([old], time.monotonic() + 1, None, handle_factory=rec) == []
+    assert opened == []
+    ss.read([old], time.monotonic() + 1, None, handle_factory=rec, beta=True)
+    assert len(opened) == 1
+    ss.read([info(0x220E)], time.monotonic() + 1, None, handle_factory=rec)   # arctis7plus: stable
+    assert len(opened) == 2

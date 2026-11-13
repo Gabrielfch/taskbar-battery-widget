@@ -144,16 +144,18 @@ class Family:
     interface: int | None = None                    # USB interface (path "mi_XX") when no usage page
     expect0: int | None = None                      # required first payload byte (status reports)
     stop_early: Callable | None = None
+    beta: bool = False                              # least certain protocol: beta readers only
 
 
 FAMILIES: tuple[Family, ...] = (
     Family("arctis1", {0x12B3: "SteelSeries Arctis 1", 0x12B6: "SteelSeries Arctis 1 Xbox",
                        0x12D7: "SteelSeries Arctis 7X", 0x12D5: "SteelSeries Arctis 7P"},
-           (REQ_LEGACY_ARCTIS1,), (4,), _parse_arctis1, usage_page=0xFF43, usage=0x202),
+           (REQ_LEGACY_ARCTIS1,), (4,), _parse_arctis1, usage_page=0xFF43, usage=0x202, beta=True),
     Family("arctis7", {0x1260: "SteelSeries Arctis 7", 0x12AD: "SteelSeries Arctis 7 (2019)"},
-           (REQ_LEGACY_ARCTIS7,), (3,), _parse_arctis7, usage_page=0xFF43, usage=0x202),
+           (REQ_LEGACY_ARCTIS7,), (3,), _parse_arctis7, usage_page=0xFF43, usage=0x202,
+           beta=True),
     Family("arctis9", {0x12C2: "SteelSeries Arctis 9", 0x12C4: "SteelSeries Arctis 9"},
-           (REQ_ARCTIS9,), (5,), _parse_arctis9, interface=0),
+           (REQ_ARCTIS9,), (5,), _parse_arctis9, interface=0, beta=True),
     Family("arctis7plus", {0x220E: "SteelSeries Arctis 7+", 0x2212: "SteelSeries Arctis 7+ PlayStation",
                            0x2216: "SteelSeries Arctis 7+ Xbox", 0x2236: "SteelSeries Arctis 7+ Destiny"},
            (REQ_NOVA_STATUS,), (4,), _parse_nova7plus, usage_page=0xFFC0, usage=0x1, expect0=NOVA_STATUS),
@@ -175,10 +177,10 @@ FAMILIES: tuple[Family, ...] = (
            (REQ_NOVA_STATUS,), (4,), _parse_nova7, usage_page=0xFFC0, usage=0x1, expect0=NOVA_STATUS),
     Family("nova_pro", {0x12E0: "SteelSeries Arctis Nova Pro Wireless",
                         0x12E5: "SteelSeries Arctis Nova Pro Wireless X"},
-           (REQ_NOVA_PRO,), (16,), _parse_nova_pro, interface=4),
+           (REQ_NOVA_PRO,), (16,), _parse_nova_pro, interface=4, beta=True),
     Family("pro_wireless", {0x1290: "SteelSeries Arctis Pro Wireless"},
            (REQ_PRO_CONNECTION, REQ_PRO_BATTERY), (1, 1), _parse_pro_wireless, interface=0,
-           stop_early=_pro_wireless_stop),
+           stop_early=_pro_wireless_stop, beta=True),
 )
 
 # name, kind, pids table for callers/docs
@@ -276,8 +278,10 @@ def _matches(info, family: Family) -> bool:
 
 
 def read(infos, deadline: float, cancel: threading.Event | None = None,
-         handle_factory=None) -> list[Device]:
-    """Read every SteelSeries wireless headset dongle in `infos`. Never raises."""
+         handle_factory=None, beta: bool = False) -> list[Device]:
+    """Read every SteelSeries wireless headset dongle in `infos`. Never raises.
+
+    Families flagged `beta` are skipped unless `beta` is True."""
     try:
         if handle_factory is None:
             from .hid_win import HidHandle
@@ -289,7 +293,7 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
             if _stopped(deadline, cancel):
                 break
             family = _BY_PID[i.pid]
-            if i.pid in done or not _matches(i, family):
+            if i.pid in done or (family.beta and not beta) or not _matches(i, family):
                 continue
             try:
                 dev = _read_one(i, family, min(deadline, time.monotonic() + DEVICE_BUDGET_S),

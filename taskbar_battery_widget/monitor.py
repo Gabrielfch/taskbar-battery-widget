@@ -197,9 +197,19 @@ class DeviceMonitor(QObject):
         except Exception:
             return True
 
+    def _bluetooth_enabled(self) -> bool:
+        if self._cfg is None:
+            return True
+        try:
+            return bool(self._cfg.get("bluetooth_enabled"))
+        except Exception:
+            return True
+
     def _filter_sources(self, devices) -> list:
-        """Wireless devices are shown only while the 2.4 GHz source is enabled."""
-        return list(devices) if self._wireless_enabled() else []
+        """HID devices are shown only while their source is enabled (by link: Bluetooth vs 2.4 GHz/USB)."""
+        dongles, bluetooth = self._wireless_enabled(), self._bluetooth_enabled()
+        return [d for d in devices
+                if (bluetooth if getattr(d, "link", "") == "bluetooth" else dongles)]
 
     async def _scan_wireless(self) -> list:
         """Run the wireless scan in a daemon thread, bounded by WIRELESS_TIMEOUT_S.
@@ -208,15 +218,16 @@ class DeviceMonitor(QObject):
         poll loop nor keep the process alive at exit.
         """
         hid_on = self._wireless_enabled()
-        if not hid_on:
+        bt_on = self._bluetooth_enabled()
+        if not (hid_on or bt_on):
             return []
         prev = self._wireless_call
         if prev is not None and not prev.done.is_set():
             return self._filter_sources(self._last_wireless)    # still hung: do not stack threads
         try:
-            wireless.set_hid_enabled(hid_on)
-            wireless.set_experimental_readers(
-                False if self._cfg is None else bool(self._cfg.get("experimental_readers")))
+            wireless.set_sources(hid_on, bt_on)
+            wireless.set_beta_readers(
+                False if self._cfg is None else bool(self._cfg.get("beta_readers")))
             wireless.set_dualsense_bt_extended(
                 True if self._cfg is None else bool(self._cfg.get("dualsense_bt_extended")))
             if self._cfg is not None:
@@ -268,6 +279,13 @@ class DeviceMonitor(QObject):
         On timeout or error the last known list is reused (fresh=False) so the wireless scan and the
         poll loop carry on.
         """
+        if not self._bluetooth_enabled():
+            # source off: no radio check, no scan and no "Bluetooth off" pill
+            if self._radio_on is False:
+                self._radio_ready.emit(True)
+            self._radio_on = None
+            return [], True
+
         async def _go():
             on = await scanner.is_radio_on()
             if on != self._radio_on:
@@ -296,7 +314,7 @@ class DeviceMonitor(QObject):
         first = wireless.merge_devices(bt, cached)              # Bluetooth first, never wait on HID
         if self._signature(first) != self._last_sig:
             self._publish(first)
-        if not self._wireless_enabled():
+        if not (self._wireless_enabled() or self._bluetooth_enabled()):
             return
         extra = await self._scan_wireless()
         devices = wireless.merge_devices(bt, extra)

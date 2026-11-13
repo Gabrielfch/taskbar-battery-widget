@@ -12,7 +12,7 @@ from taskbar_battery_widget.models import Device
 
 real_scan = wireless.scan_wireless
 
-EXPERIMENTAL_ONLY = {"steelseries", "corsair", "audeze", "jabra", "sony", "misc"}
+EXTRA_ONLY = {"steelseries", "corsair", "audeze", "jabra", "sony", "misc"}
 
 
 def info(vid, pid=0x0001):
@@ -29,7 +29,9 @@ def rig(monkeypatch):
     """Record which readers run; fake readers return nothing."""
     wireless.reset_cache()
     wireless._inflight.clear()
-    monkeypatch.setattr(wireless, "_experimental", True)
+    monkeypatch.setattr(wireless, "_beta", True)
+    monkeypatch.setattr(wireless, "_hid_enabled", True)
+    monkeypatch.setattr(wireless, "_bluetooth", True)
     calls = []
     state = {"infos": [], "vids": None}
 
@@ -62,7 +64,7 @@ def rig(monkeypatch):
     monkeypatch.setattr(od, "read_odessa", lambda *a, **k: calls.append(("odessa", [])) or [])
     monkeypatch.setattr(ds, "read_dualsense", lambda *a, **k: calls.append(("ds", [])) or [])
     yield state, calls
-    wireless.set_experimental_readers(False)
+    wireless.set_beta_readers(False)
     wireless._inflight.clear()
     wireless.reset_cache()
 
@@ -75,7 +77,7 @@ def test_unrelated_hid_runs_no_vendor_reader(rig):
     state, calls = rig
     state["infos"] = [info(0x9999)]
     real_scan()
-    assert (EXPERIMENTAL_ONLY | {"hyperx"}).isdisjoint(names(calls))
+    assert (EXTRA_ONLY | {"hyperx"}).isdisjoint(names(calls))
 
 
 @pytest.mark.parametrize("vid,reader", [
@@ -88,7 +90,7 @@ def test_reader_called_only_when_vid_enumerated(rig, vid, reader):
     state["infos"] = [info(vid, 0x16C4 if vid == 0x0951 else 0x0696 if vid == 0x03F0 else 1)]
     real_scan()
     assert reader in names(calls)
-    assert ((EXPERIMENTAL_ONLY | {"hyperx"}) - {reader}).isdisjoint(names(calls))
+    assert ((EXTRA_ONLY | {"hyperx"}) - {reader}).isdisjoint(names(calls))
 
 
 def test_xinput_always_runs(rig):
@@ -120,29 +122,38 @@ def test_bt600_is_not_handled_at_all(rig):
     assert misc_calls and misc_calls[0][1] == [(0x17EF, 0xA07D)]
 
 
-def test_experimental_off_runs_only_verified_readers(rig):
+def test_beta_off_still_runs_every_reader_and_passes_the_flag(rig, monkeypatch):
     state, calls = rig
-    wireless.set_experimental_readers(False)
+    wireless.set_beta_readers(False)
+    seen = {}
+    for mod, attr in ((steelseries, "read"), (corsair, "read"), (sony, "read"),
+                      (logitech_headsets, "read"), (hyperx, "read_hyperx")):
+        monkeypatch.setattr(mod, attr, lambda i, d, c=None, _n=mod.__name__, **k:
+                            seen.__setitem__(_n, k.get("beta")) or [])
     state["infos"] = [info(v, 0x16C4 if v == 0x0951 else 1) for v in
                       (0x1038, 0x1B1C, 0x3329, 0x0B0E, 0x054C, 0x17EF, 0x0951, 0x046D, 0x03F0)]
     real_scan()
     n = set(names(calls))
-    assert (EXPERIMENTAL_ONLY | {"xinput", "lgh"}).isdisjoint(n)
-    assert {"hidpp", "razer", "odessa", "ds", "hyperx"} <= n
-    assert set(state["vids"]) == set(wireless.CORE_VENDOR_IDS)
+    assert {"audeze", "jabra", "misc", "xinput", "hidpp", "razer", "odessa", "ds"} <= n
+    assert set(seen.values()) == {False} and len(seen) == 5
+    wireless.set_beta_readers(True)
+    seen.clear()
+    wireless.reset_cache()
+    real_scan()
+    assert set(seen.values()) == {True} and len(seen) == 5
 
 
-def test_experimental_off_hyperx_only_flight(rig):
+def test_hyperx_reader_receives_every_model(rig):
     state, calls = rig
-    wireless.set_experimental_readers(False)
+    wireless.set_beta_readers(False)
     state["infos"] = [info(0x0951, 0x1723), info(0x0951, 0x16C4)]
     real_scan()
-    assert [c[1] for c in calls if c[0] == "hyperx"] == [[(0x0951, 0x16C4)]]
+    assert [c[1] for c in calls if c[0] == "hyperx"] == [[(0x0951, 0x1723), (0x0951, 0x16C4)]]
 
 
 def test_xinput_wired_dropped_and_bt_dedupe(monkeypatch):
     wireless.reset_cache()
-    monkeypatch.setattr(wireless, "_experimental", True)
+    monkeypatch.setattr(wireless, "_beta", True)
     monkeypatch.setattr(xinput, "_query", lambda i: {0: (1, 0), 1: (2, 2)}.get(i))
     monkeypatch.setattr(hid_win, "enumerate_hid", lambda v=None: [])
     out = real_scan()
@@ -155,7 +166,7 @@ def test_xinput_wired_dropped_and_bt_dedupe(monkeypatch):
 
 def test_xinput_never_idle_cached(monkeypatch):
     wireless.reset_cache()
-    monkeypatch.setattr(wireless, "_experimental", True)
+    monkeypatch.setattr(wireless, "_beta", True)
     monkeypatch.setattr(hid_win, "enumerate_hid", lambda v=None: [info(0x046D)])
     monkeypatch.setattr(hidpp, "scan_logitech", lambda i, cancel=None: [])
     monkeypatch.setattr(xinput, "_query", lambda i: (2, 2) if i == 0 else None)
@@ -203,18 +214,18 @@ def test_other_devices_still_expire():
     assert wireless.apply_cache(cache, [], {"1b1c:0a2b"}, 10_000.0, grace=1800.0) == []
 
 
-def test_config_experimental_validated(tmp_path):
+def test_config_beta_and_sources_validated(tmp_path):
     from taskbar_battery_widget.config import Config
     c = Config(tmp_path / "c.json")
-    assert c.get("experimental_readers") is False           # opt-in
-    c.set("experimental_readers", True)
-    assert c.get("experimental_readers") is True
+    assert c.get("beta_readers") is False                   # opt-in
+    assert c.get("bluetooth_enabled") is True
+    c.set("beta_readers", True)
+    assert c.get("beta_readers") is True
 
 
 def test_module_default_is_off():
-    import importlib
     src = open(wireless.__file__, encoding="utf-8").read()
-    assert "_experimental = False" in src
+    assert "_beta = False" in src
 
 
 # ---------------------------------------------------------------- isolation of slow readers
@@ -281,7 +292,7 @@ def test_headset_cancel_token_is_not_the_core_one(rig, monkeypatch):
     assert tokens["core"] is not tokens["hs"]
 
 
-def test_slow_experimental_enumeration_does_not_stop_core_readers(rig, monkeypatch):
+def test_slow_extra_enumeration_does_not_stop_core_readers(rig, monkeypatch):
     state, calls = rig
     state["infos"] = [info(0x046D, 0xC539), info(0x1B1C, 0x0A14)]
     release = threading.Event()
@@ -302,36 +313,99 @@ def test_slow_experimental_enumeration_does_not_stop_core_readers(rig, monkeypat
         wireless._inflight.clear()
 
 
-def test_core_vendors_enumerated_without_experimental_ids(rig):
+def test_core_and_extra_vendors_always_enumerated_separately(rig):
     state, _ = rig
     seen = []
     orig = hid_win.enumerate_hid
     hid_win.enumerate_hid = lambda v=None: seen.append(tuple(v)) or []
     try:
-        wireless.set_experimental_readers(False)
-        real_scan()
-        assert seen == [wireless.CORE_VENDOR_IDS]
-        seen.clear()
-        wireless.set_experimental_readers(True)
-        real_scan()
-        assert set(seen) == {wireless.CORE_VENDOR_IDS, wireless.EXPERIMENTAL_VENDOR_IDS}
+        for beta in (False, True):
+            seen.clear()
+            wireless.set_beta_readers(beta)
+            real_scan()
+            assert set(seen) == {wireless.CORE_VENDOR_IDS, wireless.EXTRA_VENDOR_IDS}
     finally:
         hid_win.enumerate_hid = orig
 
 
-# ---------------------------------------------------------------- cache purge / dedupe
-def test_toggling_experimental_off_purges_cached_experimental_ids():
+def test_extra_enumeration_failure_does_not_block_core_readers(rig, monkeypatch):
+    state, calls = rig
+    state["infos"] = [info(0x046D, 0xC539), info(0x1B1C, 0x0A14)]
+
+    def enum(v=None):
+        if v is not None and 0x1B1C in v:
+            raise OSError("enumeration failed")
+        return [i for i in state["infos"] if v is None or i.vid in v]
+    monkeypatch.setattr(hid_win, "enumerate_hid", enum)
+    monkeypatch.setattr(hidpp, "scan_logitech", lambda i, cancel=None: [_dev_logi()])
+    assert [d.id for d in real_scan()] == ["logi:c539:01"]
+    assert "corsair" not in names(calls)
+
+
+def test_sources_gate_readers_and_output_by_link(rig, monkeypatch):
+    state, calls = rig
+    state["infos"] = [info(0x046D, 0xC539), info(0x054C, 0x0CE6)]
+    import taskbar_battery_widget.dualsense as ds
+    pad_bt = dev("sony:0ce6", "DualSense", "gamepad", 70, link="bluetooth")
+    pad_usb = dev("sony:0ce7", "DualSense wired", "gamepad", 70, link="usb")
+    monkeypatch.setattr(ds, "read_dualsense",
+                        lambda *a, **k: calls.append(("ds", [])) or [pad_bt, pad_usb])
+    monkeypatch.setattr(hidpp, "scan_logitech", lambda i, cancel=None: [_dev_logi()])
+    wireless.set_sources(True, True)
+    assert sorted(d.id for d in real_scan()) == ["logi:c539:01", "sony:0ce6", "sony:0ce7"]
+    wireless.set_sources(False, True)                       # Bluetooth only
+    calls.clear()
     wireless.reset_cache()
-    cache_ids = ["corsair:0a14", "sony:0d5e", "sony:0ec2", "xinput:0", "hyperx:1718", "jabra:2e56",
-                 "logi:0a66"]
-    keep = ["logi:c539:01", "sony:0ce6", "hyperx:16c4", "razer:0565"]
+    assert [d.id for d in real_scan()] == ["sony:0ce6"]
+    assert "hidpp" not in names(calls) and "ds" in names(calls)
+    assert [d.id for d in wireless.cached_devices()] == ["sony:0ce6"]
+    wireless.set_sources(True, False)                       # dongles + USB only
+    wireless.reset_cache()
+    assert sorted(d.id for d in real_scan()) == ["logi:c539:01", "sony:0ce7"]
+    wireless.set_sources(False, False)
+    calls.clear()
+    assert real_scan() == [] and calls == []
+
+
+# ---------------------------------------------------------------- cache purge / dedupe
+def test_is_beta_device_per_model():
+    def d(i, link="2.4ghz"):
+        return dev(i, link=link)
+    for beta_id in ("logi:0af7", "logi:0b45", "logi:0b18", "corsair:2a08", "corsair:2a02",
+                    "corsair:0a97", "hyperx:098d", "hyperx:1718", "steelseries:12b3",
+                    "steelseries:1260", "steelseries:12c2", "steelseries:12e0", "steelseries:1290"):
+        assert wireless.is_beta_device(d(beta_id)), beta_id
+    assert wireless.is_beta_device(d("sony:05c4", "bluetooth"))
+    assert wireless.is_beta_device(d("sony:05c4:abc123", "bluetooth"))
+    for stable_id in ("logi:0a66", "logi:c539:01", "logi:0b1c", "corsair:0a14",
+                      "corsair:0a64", "hyperx:16c4", "hyperx:0696", "hyperx:08be",
+                      "steelseries:220e", "steelseries:230a", "steelseries:2269", "xinput:0",
+                      "sony:0d5e", "jabra:2e56", "razer:0565"):
+        assert not wireless.is_beta_device(d(stable_id)), stable_id
+    assert not wireless.is_beta_device(d("sony:05c4", "usb"))
+    assert not wireless.is_beta_device(d("sony:0ce6", "bluetooth"))
+
+
+def test_turning_beta_off_purges_cached_beta_devices_and_snapshot_hides_them():
+    wireless.reset_cache()
+    beta_devs = [dev("logi:0af7"), dev("corsair:2a08"), dev("hyperx:1718"), dev("hyperx:098d"),
+                 dev("steelseries:1260"), dev("sony:05c4", link="bluetooth")]
+    keep = [dev("logi:0a66"), dev("corsair:0a14"), dev("hyperx:16c4"),
+            dev("sony:0d5e"), dev("jabra:2e56"), dev("steelseries:220e"),
+            dev("sony:05c4:usb", link="usb")]
+    all_devs = beta_devs + keep
     try:
+        wireless.set_beta_readers(True)
         with wireless._lock:
-            for i in cache_ids + keep:
-                wireless._cache[i] = (dev(i), time.monotonic())
-        wireless.set_experimental_readers(False)
-        assert sorted(wireless._cache) == sorted(keep)
+            for d in all_devs:
+                wireless._cache[d.id] = (d, time.monotonic())
+            wireless._last_present = {k for k in (wireless.dongle_key(d.id) for d in all_devs) if k}
+        assert {d.id for d in beta_devs} <= {d.id for d in wireless.cached_devices()}
+        wireless.set_beta_readers(False)
+        assert sorted(wireless._cache) == sorted(d.id for d in keep)
+        assert not {d.id for d in beta_devs} & {d.id for d in wireless.cached_devices()}
     finally:
+        wireless.set_beta_readers(False)
         wireless.reset_cache()
 
 

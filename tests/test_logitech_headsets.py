@@ -48,7 +48,8 @@ def info(pid, page, usage, n=20, out=None, feat=0, path=None, product=""):
 
 
 def run(infos, handle, budget=2.0, cancel=None):
-    return lh.read(infos, time.monotonic() + budget, cancel, handle_factory=lambda path, n=0: handle)
+    return lh.read(infos, time.monotonic() + budget, cancel, handle_factory=lambda path, n=0: handle,
+                   beta=True)
 
 
 # ---- legacy HID++ ------------------------------------------------------------------------------
@@ -325,3 +326,19 @@ def test_model_table_has_no_pid_overlap():
             assert pid not in seen
             seen[pid] = m
     assert lh.VENDOR_IDS == (0x046D,)
+
+
+def test_beta_centurion_skipped_without_beta_and_stable_always_read():
+    assert {m.pids[0] for m in lh.MODELS if m.beta} == {0x0AF7, 0x0B45, 0x0B18}
+    opened = []
+
+    def rec(path, n=0):
+        opened.append(path)
+        raise OSError("x")
+    cent = info(0x0AF7, 0xFFA0, 1, n=64)
+    assert lh.read([cent], time.monotonic() + 1, None, handle_factory=rec) == []
+    assert opened == []
+    lh.read([cent], time.monotonic() + 1, None, handle_factory=rec, beta=True)
+    assert len(opened) == 1
+    lh.read([info(0x0A66, 0xFF43, 0x0202)], time.monotonic() + 1, None, handle_factory=rec)
+    assert len(opened) == 2                         # legacy headset: stable

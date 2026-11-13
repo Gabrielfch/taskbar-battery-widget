@@ -46,7 +46,7 @@ def info(pid, page, usage=1, in_len=64, out_len=64, path="p", vid=0x1B1C, produc
 def run(responder, infos, budget=1.0, cancel=None):
     h = FakeHandle(responder)
     out = cs.read(infos, time.monotonic() + budget, cancel,
-                  handle_factory=lambda path, in_len=0: h)
+                  handle_factory=lambda path, in_len=0: h, beta=True)
     return out, h
 
 
@@ -335,3 +335,18 @@ def test_product_name_sanitized_and_never_raises():
 
 def test_vendor_ids():
     assert cs.VENDOR_IDS == (0x1B1C,)
+
+
+def test_beta_v2_skipped_without_beta_and_stable_always_read():
+    assert {p for p, m in cs.MODELS.items() if m.beta} == {0x2A08, 0x2A02, 0x0A97}
+    opened = []
+
+    def rec(path, in_len=0):
+        opened.append(path)
+        raise OSError("x")
+    assert cs.read([V2], time.monotonic() + 1, None, handle_factory=rec) == []
+    assert opened == []
+    cs.read([V2], time.monotonic() + 1, None, handle_factory=rec, beta=True)
+    assert len(opened) == 1
+    cs.read([XT], time.monotonic() + 1, None, handle_factory=rec)     # stable: no beta needed
+    assert len(opened) == 2

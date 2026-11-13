@@ -43,7 +43,7 @@ def info(pid=0x16C4, page=0xFF53, n=20, path="p", product=""):
 def run(replies, infos=None, budget=1.0, cancel=None):
     h = FakeHandle(replies)
     out = hx.read_hyperx(infos or [info()], time.monotonic() + budget, cancel,
-                         handle_factory=lambda path, in_len=20: h)
+                         handle_factory=lambda path, in_len=20: h, beta=True)
     return out, h
 
 
@@ -173,7 +173,7 @@ def minfo(vid, pid, page, usage, in_len, out_len, path="p", product=""):
 def mrun(responder, infos, budget=1.0, cancel=None):
     h = ScriptHandle(responder)
     out = hx.read_hyperx(infos, time.monotonic() + budget, cancel,
-                         handle_factory=lambda path, in_len=0: h)
+                         handle_factory=lambda path, in_len=0: h, beta=True)
     return out, h
 
 
@@ -365,3 +365,23 @@ def test_kingston_and_alpha_pin_exact_usage():
                 minfo(0x03F0, 0x098D, 0xFFA0, 1, 31, 31), minfo(0x03F0, 0x098D, 0xFF00, 5, 31, 31)):
         out, h = mrun(cloud2_reply, [inf])
         assert out == [] and h.sent == []
+
+
+def test_beta_models_flagged_and_skipped_without_beta():
+    flags = {(m.vid, p): m.beta for m in hx.MODELS for p in m.pids}
+    assert flags == {(0x03F0, 0x0696): False, (0x03F0, 0x018B): False, (0x0951, 0x1718): True,
+                     (0x03F0, 0x098D): True, (0x03F0, 0x08BE): False}
+    opened = []
+
+    def rec(path, in_len=0):
+        opened.append(path)
+        raise OSError("x")
+    for beta_info in (KS2, ALPHA):
+        assert hx.read_hyperx([beta_info], time.monotonic() + 1, None, handle_factory=rec) == []
+    assert opened == []
+    hx.read_hyperx([KS2, ALPHA], time.monotonic() + 1, None, handle_factory=rec, beta=True)
+    assert len(opened) == 2
+    opened.clear()
+    for stable in (HP2, ALPHA2):                # stable models are always read
+        hx.read_hyperx([stable], time.monotonic() + 1, None, handle_factory=rec)
+    assert len(opened) == 2

@@ -61,6 +61,7 @@ class Fake:
 
 
 def run(infos, fake, **kw):
+    kw.setdefault("beta", True)
     return sony.read(infos, time.monotonic() + 1.0, kw.pop("cancel", None),
                      handle_factory=lambda p, in_len=64: fake, **kw)
 
@@ -251,3 +252,15 @@ def test_pulse_and_buds_passive_window_is_short():
         t = _t.monotonic()
         assert run([i], Fake([])) == []
         assert _t.monotonic() - t < 0.6
+
+
+def test_ds4_bt_is_beta_but_usb_is_stable():
+    f = Fake([bytes([1]) + bytes(9)], [ds4_bt(0x06)])
+    assert run([info(path=BT, n=78)], f, beta=False) == []
+    assert f.features == []                         # skipped before any device access
+    assert run([info(path=BT, n=78)], Fake([bytes([1]) + bytes(9)], [ds4_bt(0x06)]),
+               beta=True)[0].link == "bluetooth"
+    usb = [d for d in run([info(path=USB, n=64)], Fake([], []), beta=False)]
+    assert sony._is_beta_info(info(path=BT, n=78)) is True
+    assert sony._is_beta_info(info(path=USB, n=64)) is False
+    assert usb == [] or usb[0].link == "usb"

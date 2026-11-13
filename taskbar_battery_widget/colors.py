@@ -1,6 +1,8 @@
 """Battery-level colours (pure, no widgets): readable on dark and light taskbars."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 
@@ -96,3 +98,63 @@ def color_dot_icon(color: QColor, size: int = 16) -> QIcon:
     p.drawEllipse(int(m), int(m), int(size - 2 * m), int(size - 2 * m))
     p.end()
     return QIcon(pm)
+
+
+# ---------------------------------------------------------------------------- per-row style
+IDLE_ALPHA = 153     # ~60 % opacity of the icon and bar of sleeping devices (never of the text)
+DIM_ALPHA = 170      # icon of a disconnected / last-known device
+
+
+@dataclass(frozen=True)
+class RowStyle:
+    """Pure description of how a device is drawn (shared by the pills and the device panel).
+
+    `fg` is the opaque text colour, `accent` the level colour (None = no level colour: mono mode,
+    unknown or disconnected), `bg` the opaque background the text sits on. `cues` are the
+    non-colour hints: "warn" ("!" glyph, orange/red), "alert" (outline, red), "charging" (bolt),
+    "idle" (moon), "stale" (last known value), "unknown" (no reading), "disconnected".
+    """
+    fg: QColor
+    accent: QColor | None
+    bg: QColor
+    band: str
+    dimmed: bool
+    alert: bool
+    cues: tuple[str, ...]
+
+
+def _plain_fg(dark: bool) -> QColor:
+    return QColor(255, 255, 255) if dark else QColor(20, 20, 20)
+
+
+def row_style(device, threshold: int, dark: bool, color_by_level: bool = True) -> RowStyle:
+    """Mirror of the colour/cue decisions of `widget.TaskbarWidget._rebuild` and `_text_color`."""
+    dark = bool(dark)
+    bgs = pill_backgrounds(dark)
+    battery = getattr(device, "battery", None)
+    connected = bool(getattr(device, "connected", True))
+    grey = band_color("grey", dark)
+    if getattr(device, "stale", False) and battery is not None:
+        cues = ("stale",) if connected else ("stale", "disconnected")
+        return RowStyle(grey, None, bgs["normal"], "grey", True, False, cues)
+    if not connected:
+        return RowStyle(grey, None, bgs["normal"], "grey", True, False, ("disconnected",))
+    if battery is None:
+        return RowStyle(grey, None, bgs["normal"], "grey", False, False, ("unknown",))
+    charging = bool(getattr(device, "charging", False))
+    idle = bool(getattr(device, "idle", False))
+    band = level_band(battery, charging, threshold)
+    alert = band == "red"
+    cues = tuple(c for c, on in (("warn", band in ("orange", "red")), ("alert", alert),
+                                 ("charging", charging), ("idle", idle)) if on)
+    accent = band_color(band, dark) if color_by_level else None
+    if accent is not None:
+        fg = accent
+    else:
+        fg = band_color("red", dark) if alert else _plain_fg(dark)
+    return RowStyle(fg, accent, bgs["low" if alert else "normal"], band, False, alert, cues)
+
+
+def section_header_color(kind: str, dark: bool) -> QColor:
+    """Panel section header: green for connected devices, grey for known (not connected) ones."""
+    return band_color("green" if kind == "connected" else "grey", dark)

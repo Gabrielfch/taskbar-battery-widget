@@ -1,4 +1,4 @@
-"""2.4 GHz / USB-dongle devices: Logitech HID++ and Razer, with a short-lived per-device cache."""
+"""2.4 GHz / USB-dongle devices (Logitech HID++, Razer, headsets, ...) with a short-lived per-device cache."""
 from __future__ import annotations
 
 import copy
@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 CACHE_TTL_S = 120.0
 CORE_VENDOR_IDS = (0x046D, 0x1532, 0x0951, 0x054C)   # always-on readers (verified on hardware)
-EXPERIMENTAL_VENDOR_IDS = (
+EXTRA_VENDOR_IDS = (            # enumerated by their own guarded call: never delays the core readers
     0x1038,                     # SteelSeries
     0x03F0,                     # HP / HyperX Cloud II/Alpha Wireless
     0x1B1C,                     # Corsair
@@ -21,8 +21,7 @@ EXPERIMENTAL_VENDOR_IDS = (
     0x0B0E,                     # Jabra
     0x17EF, 0x3837, 0x291D,     # Lenovo, MCHOSE
 )
-VENDOR_IDS = CORE_VENDOR_IDS + EXPERIMENTAL_VENDOR_IDS
-FLIGHT_VID, FLIGHT_PID = 0x0951, 0x16C4     # the only HyperX model kept when experimental is off
+VENDOR_IDS = CORE_VENDOR_IDS + EXTRA_VENDOR_IDS
 # Sony PULSE 3D / INZONE Buds push reports only on change: their last value must outlive the grace
 PUSH_ONLY_IDS = frozenset({"sony:0d5e", "sony:0ec2"})
 ENUM_BUDGET_S = 1.2         # HID enumeration (synchronous HidD_* calls) must finish within this
@@ -40,8 +39,9 @@ _last_present: set[str] = set()         # dongles seen by the last conclusive en
 _last_present_ts = 0.0
 _inflight: dict[str, GuardedCall] = {}  # name -> possibly hung call; never start a second one
 _dualsense_bt_extended = True           # allow the one-off feature read enabling BT battery reports
-_hid_enabled = True                     # False: 2.4 GHz HID reads are off
-_experimental = False                   # opt-in: unverified readers; False = only verified ones
+_hid_enabled = True                     # "2.4 GHz and USB" source: dongle and wired readers
+_bluetooth = True                       # Bluetooth source: gates the BT-transport readers' output
+_beta = False                           # opt-in: readers for the least certain protocols
 IDLE_GRACE_DEFAULT_S = 30 * 60.0
 _idle_grace_s = IDLE_GRACE_DEFAULT_S    # how long a silent device stays listed as idle
 
@@ -51,41 +51,64 @@ def set_hid_enabled(enabled: bool) -> None:
     _hid_enabled = bool(enabled)
 
 
-def set_experimental_readers(enabled: bool) -> None:
-    global _experimental
-    _experimental = bool(enabled)
-    if not _experimental:
+def set_sources(dongles: bool, bluetooth: bool) -> None:
+    """Enable the "2.4 GHz and USB" source (`dongles`) and the Bluetooth source."""
+    global _hid_enabled, _bluetooth
+    _hid_enabled = bool(dongles)
+    _bluetooth = bool(bluetooth)
+
+
+def link_enabled(link: str) -> bool:
+    """Is the source that carries a device with this `link` enabled? (bluetooth vs 2.4 GHz / USB)"""
+    return _bluetooth if link == "bluetooth" else _hid_enabled
+
+
+def set_beta_readers(enabled: bool) -> None:
+    global _beta
+    _beta = bool(enabled)
+    if not _beta:
         with _lock:
-            _purge_experimental()
+            _purge_beta()
 
 
-def is_experimental_id(device_id: str) -> bool:
-    """True for ids produced only by the opt-in (unverified) readers."""
-    parts = device_id.split(":")
-    prefix = parts[0]
-    if prefix in ("steelseries", "corsair", "audeze", "jabra", "lenovo", "mchose", "xinput"):
-        return True
-    if prefix == "sony" and len(parts) == 3:        # 'sony:<pid>:<hash>': second identical pad
-        parts = parts[:2]
-    if len(parts) != 2:
+set_experimental_readers = set_beta_readers     # TODO(T05): drop once tray.py uses set_beta_readers
+
+
+def is_beta_device(dev: Device) -> bool:
+    """True for a device that only a beta reader produces (per-model flag, see the reader tables)."""
+    key = dongle_key(dev.id)
+    if key is None:
         return False
-    if prefix == "logi":                    # 'logi:<pid>' = headset base; the generic scanner adds ':<idx>'
-        return True
     try:
-        pid = int(parts[1], 16)
+        vid_s, pid_s = key.split(":")[:2]
+        vid, pid = int(vid_s, 16), int(pid_s, 16)
     except ValueError:
         return False
-    if prefix == "hyperx":
-        return pid != FLIGHT_PID
-    if prefix == "sony":
+    if vid == 0x046D:
+        from . import logitech_headsets
+        m = logitech_headsets._BY_PID.get(pid)
+        return bool(m and m.beta)
+    if vid == 0x1B1C:
+        from . import corsair
+        m = corsair.MODELS.get(pid)
+        return bool(m and m.beta)
+    if vid == 0x1038:
+        from . import steelseries
+        f = steelseries._BY_PID.get(pid)
+        return bool(f and f.beta)
+    if vid in (0x03F0, 0x0951):
+        from . import hyperx
+        return any(m.beta and m.vid == vid and pid in m.pids for m in hyperx.MODELS)
+    if vid == 0x054C:
         from . import sony
-        return pid in sony.NAMES
+        return getattr(dev, "link", "") == "bluetooth" and (
+            pid in sony.DS4_PIDS or pid == sony.DS4_DONGLE_PID)
     return False
 
 
-def _purge_experimental() -> None:
-    """Forget cached experimental devices, PUSH_ONLY ones included (caller holds _lock)."""
-    for dev_id in [k for k in _cache if is_experimental_id(k)]:
+def _purge_beta() -> None:
+    """Forget cached beta devices, PUSH_ONLY ones included (caller holds _lock)."""
+    for dev_id in [k for k, (d, _ts) in _cache.items() if is_beta_device(d)]:
         del _cache[dev_id]
 
 
@@ -274,14 +297,18 @@ def dedupe_logitech(devices: list[Device]) -> list[Device]:
     return out
 
 
+def _filter_links(devices: list[Device]) -> list[Device]:
+    """Keep only devices whose source (Bluetooth / 2.4 GHz and USB) is enabled."""
+    return [d for d in devices if link_enabled(d.link)]
+
+
 def _snapshot(now: float, present: set[str] | None = None) -> list[Device]:
     with _lock:
-        if not _experimental:
-            _purge_experimental()
+        if not _beta:
+            _purge_beta()
         pres = present if present is not None else set(_last_present)
-        if not _hid_enabled:
-            return []
-        return dedupe_logitech(apply_cache(_cache, [], pres, now, grace=_idle_grace_s))
+        out = dedupe_logitech(apply_cache(_cache, [], pres, now, grace=_idle_grace_s))
+        return _filter_links(out)
 
 
 def cached_devices() -> list[Device]:
@@ -315,7 +342,8 @@ def _vendor_of(key: str) -> int:
     return int(key.split(":")[0], 16)
 
 
-def _headsets_runner(core: GuardedCall, logi_infos, t_end: float, cancel: threading.Event):
+def _headsets_runner(core: GuardedCall, logi_infos, t_end: float, cancel: threading.Event,
+                     beta: bool = False):
     """Logitech headset reader: starts once the core Logitech scan is done, on its own cancel token."""
     def run(_sel):
         if not core.wait(t_end - time.monotonic()) or core.error is not None:
@@ -332,23 +360,24 @@ def _headsets_runner(core: GuardedCall, logi_infos, t_end: float, cancel: thread
         if not sel or time.monotonic() >= t_end:
             return []
         from . import logitech_headsets
-        return logitech_headsets.read(sel, t_end, cancel)
+        return logitech_headsets.read(sel, t_end, cancel, beta=beta)
     return run
 
 
 def _scan_locked() -> list[Device]:
     global _last_present, _last_present_ts
     cancel = threading.Event()
-    experimental = _experimental
-    if not experimental:
+    beta = _beta
+    dongles, bluetooth = _hid_enabled, _bluetooth
+    if not beta:
         with _lock:
-            _purge_experimental()
+            _purge_beta()
     t_start = time.monotonic()
     t_hard = t_start + TOTAL_BUDGET_S
     t_enum = t_start + ENUM_BUDGET_S
-    # core and experimental vendors are enumerated by separate guarded calls with their own budget
+    # core and extra vendors are enumerated by separate guarded calls with their own budget
     core_call = _start_enum("enum", CORE_VENDOR_IDS, cancel)
-    exp_call = _start_enum("enum-exp", EXPERIMENTAL_VENDOR_IDS, cancel) if experimental else None
+    exp_call = _start_enum("enum-exp", EXTRA_VENDOR_IDS, cancel) if dongles else None
     infos = _enum_result(core_call, "enum", t_enum)
     now = time.monotonic()
     if infos is None:                       # hung or failed: inconclusive
@@ -365,7 +394,7 @@ def _scan_locked() -> list[Device]:
     carried = False
     if not core_present and prev_core and now - prev_ts <= CACHE_TTL_S:
         core_present, carried = prev_core, True      # still empty: keep cached values until their TTL
-    if not _hid_enabled:                    # 2.4 GHz reads off
+    if not (dongles or bluetooth):          # every source off
         return []
 
     bt_ext = _dualsense_bt_extended
@@ -397,9 +426,7 @@ def _scan_locked() -> list[Device]:
 
     def hyperx_read(sel):
         from .hyperx import read_hyperx
-        if not experimental:
-            sel = [i for i in sel if (i.vid, i.pid) == (FLIGHT_VID, FLIGHT_PID)]
-        return read_hyperx(sel, t_end, cancel) if sel else []
+        return read_hyperx(sel, t_end, cancel, beta=beta) if sel else []
 
     def xinput(_sel):
         from . import xinput as xi
@@ -422,38 +449,44 @@ def _scan_locked() -> list[Device]:
         from .dualsense import read_dualsense
         return read_dualsense(sel, t_end, cancel, enable_bt_extended=bt_ext)
 
-    add("logitech", None, logitech, infos)
-    add("razer", None, razer, infos)
-    add("odessa", None, odessa, infos)
-    add("hyperx", (0x0951,), hyperx_read, infos)
+    def sony_read(sel):
+        from .sony import read as read_sony
+        return read_sony(sel, t_end, cancel, enable_bt_extended=bt_ext, beta=beta)
+
+    if dongles:
+        add("logitech", None, logitech, infos)
+        add("razer", None, razer, infos)
+        add("odessa", None, odessa, infos)
+        add("hyperx", (0x0951,), hyperx_read, infos)
+    # readers with a Bluetooth transport run for either source; their output is filtered by link
     add("dualsense", None, dualsense, infos)
+    add("sony", (0x054C,), sony_read, infos)
+    add("xinput", None, xinput, infos)
 
     exp_present: set[str] = set()
-    if experimental:
-        # the core readers above are already running: a slow experimental enumeration only delays
-        # (or skips) the experimental ones
+    if dongles:
+        # the core readers above are already running: a slow extra-vendor enumeration only delays
+        # (or skips) the extra readers
         prev_exp = prev_present - prev_core
         exp_infos = _enum_result(exp_call, "enum-exp", t_enum)
         if exp_infos is not None and not exp_infos and prev_exp:
-            exp_infos = _enumerate(cancel, EXPERIMENTAL_VENDOR_IDS, "enum-exp",
+            exp_infos = _enumerate(cancel, EXTRA_VENDOR_IDS, "enum-exp",
                                    budget=min(ENUM_RETRY_BUDGET_S, max(0.0, t_end - time.monotonic())))
         if exp_infos is None:
             exp_present = prev_exp          # inconclusive: keep what was cached
         else:
             exp_present = {f"{i.vid:04x}:{i.pid:04x}" for i in exp_infos}
-            add("hyperx-exp", (0x03F0,), hyperx_read, exp_infos)
-            add("steelseries", (0x1038,), lazy("steelseries"), exp_infos)
-            add("corsair", (0x1B1C,), lazy("corsair"), exp_infos)
+            add("hyperx-extra", (0x03F0,), hyperx_read, exp_infos)
+            add("steelseries", (0x1038,), lazy("steelseries", beta=beta), exp_infos)
+            add("corsair", (0x1B1C,), lazy("corsair", beta=beta), exp_infos)
             add("audeze", (0x3329,), lazy("audeze"), exp_infos)
             add("jabra", (0x0B0E,), lazy("jabra"), exp_infos)
             add("misc", (0x17EF, 0x3837, 0x291D), lazy("misc_headsets"), exp_infos)
-            add("sony", (0x054C,), lazy("sony", enable_bt_extended=bt_ext), infos)
-            add("xinput", None, xinput, infos)
-            logi = [i for i in infos if i.vid == 0x046D]
-            if logi and "logitech" in named:
-                hs_cancel = threading.Event()       # never cancels the core Logitech readers
-                add("logitech-headsets", None,
-                    _headsets_runner(named["logitech"], logi, t_end, hs_cancel), logi, hs_cancel)
+        logi = [i for i in infos if i.vid == 0x046D]
+        if logi and "logitech" in named:
+            hs_cancel = threading.Event()       # never cancels the core Logitech readers
+            add("logitech-headsets", None,
+                _headsets_runner(named["logitech"], logi, t_end, hs_cancel, beta), logi, hs_cancel)
 
     present = core_present | exp_present
     with _lock:
@@ -473,7 +506,7 @@ def _scan_locked() -> list[Device]:
             fresh += list(c.value or [])
     with _lock:
         out = apply_cache(_cache, fresh, present, time.monotonic(), grace=_idle_grace_s)
-    return dedupe_logitech(out)
+    return _filter_links(dedupe_logitech(out))
 
 
 def scan_wireless() -> list[Device]:

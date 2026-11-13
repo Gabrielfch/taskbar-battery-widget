@@ -61,6 +61,7 @@ class Model:
     name: str
     link: str
     wired: bool = False
+    beta: bool = False     # least certain protocol: read only with beta readers on
 
 
 # pid -> model
@@ -70,9 +71,9 @@ MODELS.update({
     0x0A62: Model("xt", "Corsair Virtuoso XT", "usb", wired=True),
     0x0A3E: Model("xt", "Corsair Virtuoso SE", "2.4ghz"),
     0x0A3D: Model("xt", "Corsair Virtuoso SE", "usb", wired=True),
-    0x2A08: Model("v2", "Corsair Void Wireless V2", "2.4ghz"),
-    0x2A02: Model("v2", "Corsair Virtuoso Max Wireless", "2.4ghz"),
-    0x0A97: Model("v2", "Corsair HS80 Max Wireless", "2.4ghz"),
+    0x2A08: Model("v2", "Corsair Void Wireless V2", "2.4ghz", beta=True),
+    0x2A02: Model("v2", "Corsair Virtuoso Max Wireless", "2.4ghz", beta=True),
+    0x0A97: Model("v2", "Corsair HS80 Max Wireless", "2.4ghz", beta=True),
 })
 
 
@@ -317,8 +318,10 @@ def _read_one(info, deadline: float, cancel, handle_factory) -> Device | None:
 
 
 def read(infos, deadline: float, cancel: threading.Event | None = None,
-         handle_factory=None) -> list[Device]:
-    """Read every supported Corsair headset receiver in `infos`. Never raises."""
+         handle_factory=None, beta: bool = False) -> list[Device]:
+    """Read every supported Corsair headset receiver in `infos`. Never raises.
+
+    Models flagged `beta` are skipped unless `beta` is True."""
     try:
         if handle_factory is None:
             from .hid_win import HidHandle
@@ -329,7 +332,8 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
                         key=lambda x: x.path):
             if cancel is not None and cancel.is_set() or time.monotonic() >= deadline:
                 break
-            if i.pid in done or not _collection_ok(MODELS[i.pid], i):
+            if i.pid in done or (MODELS[i.pid].beta and not beta) \
+                    or not _collection_ok(MODELS[i.pid], i):
                 continue
             try:
                 dev = _read_one(i, min(deadline, time.monotonic() + DEVICE_BUDGET_S), cancel,

@@ -71,6 +71,7 @@ class Model:
     sw: int = 0                         # legacy: software id of the requests (1..15)
     curve: tuple[tuple[int, int], ...] = ()
     prefix: bytes = b""                 # centurion frame prefix
+    beta: bool = False                  # least certain protocol: read only with beta readers on
 
 
 _LEGACY_COLL = ((0xFF43, 0x0202),)
@@ -84,11 +85,11 @@ MODELS: tuple[Model, ...] = (
     Model("Logitech G PRO Headset", (0x0AA7, 0x0AAA, 0x0ABA, 0x0AFB, 0x0AFC), "legacy", _LEGACY_COLL,
           0x0D, CURVE_GPRO),
     Model("Logitech G PRO X 2 LIGHTSPEED", (0x0AF7,), "centurion", ((0xFFA0, 0x0001),),
-          prefix=b"\x51"),
+          prefix=b"\x51", beta=True),
     Model("Logitech G PRO X 3 LIGHTSPEED", (0x0B45,), "centurion", ((0xFFA0, 0x0001),),
-          prefix=b"\x50\x23"),
+          prefix=b"\x50\x23", beta=True),
     Model("Logitech G522 LIGHTSPEED", (0x0B18,), "centurion", ((0xFFA0, 0x0001),),
-          prefix=b"\x50\x23"),
+          prefix=b"\x50\x23", beta=True),
     Model("Logitech ASTRO A50 Gen 5", (0x0B1C,), "astro5", ((0xFF32, 0x0074),)),
 )
 _BY_PID = {pid: m for m in MODELS for pid in m.pids}
@@ -424,8 +425,10 @@ def _read_one(info, model: Model, deadline: float, cancel, handle_factory) -> De
 
 
 def read(infos, deadline: float, cancel: threading.Event | None = None,
-         handle_factory=None) -> list[Device]:
+         handle_factory=None, beta: bool = False) -> list[Device]:
     """Read every supported Logitech/Astro headset base in `infos`. Never raises.
+
+    Models flagged `beta` are skipped unless `beta` is True.
 
     The caller (`wireless`) removes bases that the generic HID++ scanner already lists.
     """
@@ -440,7 +443,7 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
             if _expired(deadline, cancel):
                 break
             model = _BY_PID[i.pid]
-            if i.pid in done or not _matches(i, model):
+            if i.pid in done or (model.beta and not beta) or not _matches(i, model):
                 continue
             try:
                 dev = _read_one(i, model, min(deadline, time.monotonic() + DEVICE_BUDGET_S), cancel,

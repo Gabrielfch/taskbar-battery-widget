@@ -75,7 +75,8 @@ def test_monitor_publishes_idle_transition(qapp, monkeypatch):
 # ---- 13. monitor sources follow the config -------------------------------------------------
 class Cfg:
     def __init__(self, **kw):
-        self.d = {"wireless_enabled": True, "idle_grace_min": 30, **kw}
+        self.d = {"wireless_enabled": True, "bluetooth_enabled": True, "beta_readers": False,
+                  "idle_grace_min": 30, **kw}
 
     def get(self, k):
         return self.d[k]
@@ -101,7 +102,10 @@ def test_monitor_hides_wireless_when_source_disabled(qapp, monkeypatch):
     async def run():
         await m._cycle()
         assert [d.id for d in got[-1]] == ["logi:c539:01"]
-        cfg.d["wireless_enabled"] = False
+        cfg.d["wireless_enabled"] = False       # 2.4 GHz off: its devices vanish, BT readers may run
+        await m._cycle()
+        assert got[-1] == []
+        cfg.d["bluetooth_enabled"] = False      # every source off: no HID scan at all
         n = len(seen)
         await m._cycle()
         assert len(seen) == n and got[-1] == []
@@ -178,3 +182,43 @@ def test_visible_devices_and_alerts_ignore_hidden(tmp_path):
     out = AlertManager(cfg).check(vis, 0.0)
     assert len(out) == 1 and "Other" in out[0][1]
     assert visible_devices([low], SimpleNamespace(get=lambda k: 1 / 0)) == [low]
+
+
+def test_bluetooth_off_skips_scan_and_radio_pill(qapp, monkeypatch):
+    calls = {"scan": 0, "radio": 0}
+
+    async def is_on():
+        calls["radio"] += 1
+        return False
+
+    async def scan():
+        calls["scan"] += 1
+        return []
+
+    monkeypatch.setattr(scanner, "is_radio_on", is_on)
+    monkeypatch.setattr(scanner, "scan", scan)
+    cfg = Cfg(bluetooth_enabled=False)
+    radio = []
+    m = mon.DeviceMonitor(use_watchers=False, cfg=cfg, wireless_scan=lambda: [])
+    m.radio_changed.connect(radio.append)
+
+    async def run():
+        bt, fresh = await m._scan_bluetooth()
+        assert (bt, fresh) == ([], True)
+        await m._cycle()
+
+    asyncio.run(run())
+    assert calls == {"scan": 0, "radio": 0}
+    assert radio == [] or radio == [True]          # never "radio off"
+    assert False not in radio
+
+
+def test_monitor_wires_source_and_beta_flags(qapp, monkeypatch):
+    from taskbar_battery_widget import wireless
+    seen = {}
+    monkeypatch.setattr(wireless, "set_sources", lambda d, b: seen.__setitem__("src", (d, b)))
+    monkeypatch.setattr(wireless, "set_beta_readers", lambda v: seen.__setitem__("beta", v))
+    cfg = Cfg(wireless_enabled=False, bluetooth_enabled=True, beta_readers=True)
+    m = mon.DeviceMonitor(use_watchers=False, cfg=cfg, wireless_scan=lambda: [])
+    asyncio.run(m._scan_wireless())
+    assert seen == {"src": (False, True), "beta": True}

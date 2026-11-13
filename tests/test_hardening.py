@@ -330,7 +330,7 @@ def test_empty_enumeration_after_seen_dongles_is_inconclusive(monkeypatch):
     assert [d.battery for d in real_scan()] == [70]
     state["infos"], state["n"] = [], 0
     assert [d.battery for d in real_scan()] == [70]                        # cache survives
-    assert state["n"] == 2                                            # one retry of the enumeration
+    assert state["n"] == 3                  # core, extra vendors, and one retry of the core enumeration
     wireless.reset_cache()
 
 

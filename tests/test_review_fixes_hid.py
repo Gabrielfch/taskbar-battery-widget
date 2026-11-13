@@ -77,9 +77,16 @@ def test_two_ds4_with_same_pid_are_two_devices():
 def test_three_part_sony_ids_in_wireless_helpers():
     assert wireless.dongle_key("sony:0ce6:a1b2c3") == "054c:0ce6"
     assert wireless.dongle_key("sony:0ce6") == "054c:0ce6"
-    assert wireless.is_experimental_id("sony:05c4:a1b2c3") is True       # DS4: experimental reader
-    assert wireless.is_experimental_id("sony:0ce6:a1b2c3") is False      # DualSense: verified
-    assert wireless.is_experimental_id("sony:05c4") is True
+    ds4_bt = Device(id="sony:05c4:a1b2c3", name="DS4", kind="gamepad", battery=50, connected=True,
+                     link="bluetooth")
+    assert wireless.is_beta_device(ds4_bt) is True                      # DS4 over BT: beta reader
+    ds4_bt.id = "sony:05c4"
+    assert wireless.is_beta_device(ds4_bt) is True
+    ds4_bt.link = "usb"
+    assert wireless.is_beta_device(ds4_bt) is False                     # DS4 over USB: stable
+    ds5 = Device(id="sony:0ce6:a1b2c3", name="DS", kind="gamepad", battery=50, connected=True,
+                 link="bluetooth")
+    assert wireless.is_beta_device(ds5) is False                        # DualSense: stable
 
 
 # ---- 4: carried battery keeps the fresh charging flag ------------------------------------------

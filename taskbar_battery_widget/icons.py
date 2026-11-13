@@ -237,3 +237,71 @@ def make_tray_icon(level: int | None, dark: bool, fill_color: QColor | None = No
         p.drawText(body, Qt.AlignmentFlag.AlignCenter, "?")
     p.end()
     return QIcon(pm)
+
+
+def _stroke_pen(color: QColor, width: float = 1.7) -> QPen:
+    pen = QPen(color, width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return pen
+
+
+def draw_eye(painter: QPainter, rect: QRectF, color: QColor, open: bool = True) -> None:
+    """Eye (visible) or eye with a slash (hidden), 24x24 design grid like the kind icons."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    side = min(rect.width(), rect.height())
+    painter.translate(rect.center().x() - side / 2, rect.center().y() - side / 2)
+    painter.scale(side / 24.0, side / 24.0)
+    painter.setPen(_stroke_pen(color))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    path = QPainterPath(_P(2, 12))
+    path.cubicTo(6, 5, 18, 5, 22, 12)
+    path.cubicTo(18, 19, 6, 19, 2, 12)
+    painter.drawPath(path)
+    if open:
+        painter.drawEllipse(_P(12, 12), 3.2, 3.2)
+    else:
+        _poly(painter, [(4, 4), (20, 20)])
+    painter.restore()
+
+
+def draw_record(painter: QPainter, rect: QRectF, color: QColor, active: bool = True) -> None:
+    """Record marker: filled dot inside a ring when active, ring only when not."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    side = min(rect.width(), rect.height())
+    painter.translate(rect.center().x() - side / 2, rect.center().y() - side / 2)
+    painter.scale(side / 24.0, side / 24.0)
+    painter.setPen(_stroke_pen(color))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(_P(12, 12), 9, 9)
+    if active:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(_P(12, 12), 4.5, 4.5)
+    painter.restore()
+
+
+def _icon_from(draw, size: int, color: QColor, flag: bool) -> QIcon:
+    icon = QIcon()
+    for scale in (1, 2):
+        px = max(1, int(size)) * scale
+        pm = QPixmap(px, px)
+        pm.fill(Qt.GlobalColor.transparent)
+        pm.setDevicePixelRatio(scale)
+        p = QPainter(pm)
+        draw(p, QRectF(0, 0, px / scale, px / scale), color, flag)
+        p.end()
+        icon.addPixmap(pm)
+    return icon
+
+
+def eye_icon(size: int, open: bool, color: QColor) -> QIcon:
+    """QIcon with 1x and 2x pixmaps of the eye (open) / slashed eye (closed)."""
+    return _icon_from(draw_eye, size, color, open)
+
+
+def record_icon(size: int, active: bool, color: QColor) -> QIcon:
+    """QIcon with 1x and 2x pixmaps of the record marker (filled when active)."""
+    return _icon_from(draw_record, size, color, active)

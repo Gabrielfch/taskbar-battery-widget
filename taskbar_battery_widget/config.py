@@ -18,7 +18,10 @@ DEFAULTS = {
     "start_with_windows": False,
     "wireless_enabled": True,
     "dualsense_bt_extended": True,  # allow the one-off feature read that enables DualSense BT battery
-    "experimental_readers": False,  # opt-in: unverified vendor readers (headsets, Sony, Xbox, ...)
+    "beta_readers": False,          # opt-in: readers for the least certain protocols (see README)
+    "bluetooth_enabled": True,      # False: no Bluetooth scan at all
+    "detail_log_enabled": False,    # per-device detailed CSV log (global switch)
+    "detail_log_devices": [],       # visibility keys of the devices being logged
     "idle_grace_min": 30,           # minutes a silent (asleep) 2.4 GHz device stays listed
     "color_mode": "levels",         # "levels" | "mono"
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
@@ -61,7 +64,7 @@ def _valid(key, value) -> bool:
     default = DEFAULTS[key]
     if key == "color_mode":
         return isinstance(value, str) and value in COLOR_MODES
-    if key == "hidden_devices":
+    if key in ("hidden_devices", "detail_log_devices"):
         return (isinstance(value, list) and len(value) <= MAX_HIDDEN
                 and all(isinstance(v, str) and 0 < len(v) <= 200 for v in value))
     if isinstance(default, bool):
@@ -99,6 +102,12 @@ class Config:
         for key in DEFAULTS:
             if key in raw and _valid(key, raw[key]):
                 self._data[key] = raw[key]
+        migrated_beta = False
+        if "beta_readers" not in raw and raw.get("experimental_readers") is True:
+            self._data["beta_readers"] = True
+            migrated_beta = True
+        if "experimental_readers" in raw:
+            migrated_beta = True                # drop the obsolete key from the file
         hidden = self._data["hidden_devices"]
         if any(not is_visibility_key(v) for v in hidden):
             # migrate raw device ids (may contain MAC addresses) to hashed keys and scrub the file
@@ -108,6 +117,8 @@ class Config:
                 if k not in migrated:
                     migrated.append(k)
             self._data["hidden_devices"] = migrated
+            migrated_beta = True
+        if migrated_beta:
             self.save()
 
     def get(self, key):

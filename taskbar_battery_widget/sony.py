@@ -211,6 +211,11 @@ def _transport(info) -> str | None:
     return "usb" if info.in_len == DS4_USB_LEN else None
 
 
+def _is_beta_info(info) -> bool:
+    """DualShock 4 over Bluetooth (the only beta Sony reader)."""
+    return _select(info) is _read_ds4 and _transport(info) == "bluetooth"
+
+
 def _dev(pid, kind, battery, connected, charging, link, info) -> Device:
     return Device(id=f"sony:{pid:04x}",
                   name=sanitize_name(getattr(info, "product", "") or "") or NAMES[pid],
@@ -303,13 +308,17 @@ def _select(i):
 
 
 def read(infos, deadline: float, cancel: threading.Event | None = None,
-         handle_factory=None, enable_bt_extended: bool = True) -> list[Device]:
-    """Read every supported Sony device (not DualSense) in `infos`. Never raises."""
+         handle_factory=None, enable_bt_extended: bool = True,
+         beta: bool = False) -> list[Device]:
+    """Read every supported Sony device (not DualSense) in `infos`. Never raises.
+
+    A DualShock 4 over Bluetooth is beta: skipped unless `beta` is True."""
     try:
         if handle_factory is None:
             from .hid_win import HidHandle
             handle_factory = HidHandle
-        mine = [i for i in infos if i.vid == VENDOR_IDS[0] and _select(i) is not None]
+        mine = [i for i in infos if i.vid == VENDOR_IDS[0] and _select(i) is not None
+                and (beta or not _is_beta_info(i))]
         _triggered.intersection_update({i.path for i in mine})
         out: list[Device] = []
         from .hid_win import path_hash

@@ -123,15 +123,16 @@ class Model:
     usage: int
     in_len: int
     out_len: int
+    beta: bool = False        # least certain protocol: read only with beta readers on
 
 
 MODELS: tuple[Model, ...] = (
     Model("cloud2", "HyperX Cloud II Wireless", HP_VID, frozenset({0x0696, 0x018B}),
           0xFF90, 0x0303, 20, 52),
     Model("cloud2k", "HyperX Cloud II Wireless", HYPERX_VID, frozenset({0x1718}),
-          0xFF00, 0x0001, 64, 62),
+          0xFF00, 0x0001, 64, 62, beta=True),
     Model("alpha", "HyperX Cloud Alpha Wireless", HP_VID, frozenset({0x098D}),
-          0xFF00, 0x0001, 31, 31),
+          0xFF00, 0x0001, 31, 31, beta=True),
     Model("alpha2", "HyperX Cloud Alpha 2 Wireless", HP_VID, frozenset({0x08BE}),
           0xFF13, 0xFF00, 64, 64),
 )
@@ -276,8 +277,10 @@ def _collection_ok(m: Model, i) -> bool:
 
 
 def read_hyperx(infos, deadline: float, cancel: threading.Event | None = None,
-                handle_factory=None) -> list[Device]:
-    """Read every supported HyperX dongle in `infos`. Never raises."""
+                handle_factory=None, beta: bool = False) -> list[Device]:
+    """Read every supported HyperX dongle in `infos`. Never raises.
+
+    Models flagged `beta` are skipped unless `beta` is True."""
     try:
         if handle_factory is None:
             from .hid_win import HidHandle
@@ -296,7 +299,7 @@ def read_hyperx(infos, deadline: float, cancel: threading.Event | None = None,
                     continue
             else:
                 m = _model_for(i)
-                if m is None or not _collection_ok(m, i):
+                if m is None or (m.beta and not beta) or not _collection_ok(m, i):
                     continue
             try:
                 end = min(deadline, time.monotonic() + DEVICE_BUDGET_S)
