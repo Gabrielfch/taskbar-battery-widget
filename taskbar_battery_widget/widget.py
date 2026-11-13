@@ -18,7 +18,8 @@ from .icons import draw_bolt, draw_kind_icon
 from .models import Device, visibility_key
 from .naming import sanitize_name
 from .popup import HOVER_DELAY_MS, HoverPopup, PopupContent, build_popup_content, place_popup, stale_text
-from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, REASON_LEFT_NEEDS_CENTERED, Env,  # noqa: F401
+from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, REASON_LEFT_NEEDS_CENTERED,  # noqa: F401
+                        REASON_NO_TASKBAR_FLOATING, Env,
                         Placement, ScreenInfo, center_rect_y, compute_placement, lookup_floating,
                         pill_height_for, resolve_screen, snap_anchor, taskbar_for_screen)
 from .win_window import (_ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
@@ -465,22 +466,28 @@ class TaskbarWidget(QWidget):
     def _is_floating(self) -> bool:
         return self._cfg_get("placement_mode", "taskbar") == "floating"
 
-    def _build_placement(self, choice: str, screen: ScreenInfo) -> Placement:
+    def _build_placement(self, choice: str, screen: ScreenInfo, fallback: bool = False) -> Placement:
         if self._is_floating():
             anchor, dx, dy = lookup_floating(self._cfg_get("floating_positions", {}), screen.key, choice)
             return Placement("floating", "right", choice, anchor, dx, dy)
         anchor = "left" if self._cfg_get("taskbar_anchor", "right") == "left" else "right"
+        if fallback:    # taskbar mode on a monitor without a taskbar: saved floating spot of that monitor
+            fa, dx, dy = lookup_floating(self._cfg_get("floating_positions", {}), screen.key, choice)
+            return Placement("taskbar", anchor, choice, fa, dx, dy)
         return Placement("taskbar", anchor, choice)
 
-    def _build_env(self, info, screen: ScreenInfo, placement: Placement) -> Env:
+    def _build_env(self, info, screen: ScreenInfo, placement: Placement, fallback: bool = False) -> Env:
         fullscreen = False
-        if self._pills and not self._cfg_get("show_in_fullscreen", False) and (info is not None or self._is_floating()):
+        if (self._pills and not self._cfg_get("show_in_fullscreen", False)
+                and (info is not None or fallback or self._is_floating())):
             fullscreen = taskbar.is_fullscreen_on_monitor(screen.name)
-        centered = taskbar.taskbar_icons_centered() if (placement.mode == "taskbar"
-                                                        and placement.anchor == "left") else True
+        left = placement.mode == "taskbar" and placement.anchor == "left" and info is not None
+        centered = taskbar.taskbar_icons_centered() if left else True
+        widgets = taskbar.taskbar_widgets_button() if left else False
         return Env(info=info, fullscreen=fullscreen, has_pills=bool(self._pills),
                    screen_name=screen.name, screen_origin=screen.geometry[:2], dpr=screen.dpr or 1.0,
-                   size=(self.width(), self.height()), available=screen.available, icons_centered=centered)
+                   size=(self.width(), self.height()), available=screen.available, icons_centered=centered,
+                   widgets_button=widgets, floating_fallback=fallback)
 
     def _apply_screen(self, qscreen) -> None:
         """Bind the window to `qscreen` before moving it (per-monitor DPI)."""
@@ -509,9 +516,12 @@ class TaskbarWidget(QWidget):
         floating = self._is_floating()
         infos = [] if floating else taskbar.get_taskbar_infos()
         tinfo = None if floating else taskbar_for_screen(sinfo, infos)
-        placement = self._build_placement(choice, sinfo)
-        res = compute_placement(self._build_env(tinfo, sinfo, placement), placement)
+        # A monitor without a taskbar floats; no primary taskbar at all (explorer restarting) just hides.
+        fallback = (not floating and tinfo is None and any(i.kind == "primary" for i in infos))
+        placement = self._build_placement(choice, sinfo, fallback)
+        res = compute_placement(self._build_env(tinfo, sinfo, placement, fallback), placement)
         self._note_reason(res.reason)
+        floating = floating or res.reason == REASON_NO_TASKBAR_FLOATING
         if not res.visible:
             self._floating = floating
             self._set_visible(False)
@@ -525,9 +535,9 @@ class TaskbarWidget(QWidget):
         if res.pill_h != self._pill_h or res.vertical != self._vertical or res.max_extent != self._max_extent:
             self._pill_h, self._vertical, self._max_extent = res.pill_h, res.vertical, res.max_extent
             self._relayout()
-            res = compute_placement(self._build_env(tinfo, sinfo, placement), placement)   # size changed
+            res = compute_placement(self._build_env(tinfo, sinfo, placement, fallback), placement)   # size changed
         x, y = res.rect[0], res.rect[1]
-        key = (x, y, self.width(), self.height(), sinfo.name, placement.mode)
+        key = (x, y, self.width(), self.height(), sinfo.name, placement.mode, res.reason)
         if self._last_geom != key:
             self._last_geom = key
             self.move(x, y)
@@ -757,9 +767,10 @@ class TaskbarWidget(QWidget):
         pairs = self._screens()
         centre = self.geometry().center()
         target = None
+        taskbar_mode = not self._is_floating()      # no-taskbar fallback: stay on that monitor, mode untouched
         for info, _q in pairs:
             gx, gy, gw, gh = info.geometry
-            if gx <= centre.x() < gx + gw and gy <= centre.y() < gy + gh:
+            if not taskbar_mode and gx <= centre.x() < gx + gw and gy <= centre.y() < gy + gh:
                 target = info
                 break
         if target is None:
@@ -771,7 +782,8 @@ class TaskbarWidget(QWidget):
         positions = dict(positions) if isinstance(positions, dict) else {}
         positions[target.key] = {"anchor": anchor, "dx": dx, "dy": dy}
         choice = self._cfg_get("placement_monitor", "primary")
-        new_choice = "primary" if (choice == "primary" and target.primary) else target.key
+        new_choice = choice if taskbar_mode else ("primary" if (choice == "primary" and target.primary)
+                                                  else target.key)
         try:
             self._cfg.set("floating_positions", positions)
             if new_choice != choice:

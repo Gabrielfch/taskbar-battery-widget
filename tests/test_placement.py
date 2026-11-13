@@ -174,10 +174,11 @@ def test_left_anchor_falls_back_to_right(centered):
     assert left.rect == right.rect and left.max_extent == right.max_extent
 
 
-def test_left_anchor_vertical_is_top_end():
+def test_left_anchor_vertical_falls_back_to_bottom_end():
+    # icons of a vertical bar start at the top, so the top end is never free: always the bottom fallback
     i = info(rect=(0, 0, 48, 1080), tray_rect=(0, 900, 48, 1080), edge="left")
     r = compute_placement(env(i, size=(40, 100), icons_centered=True), Placement(anchor="left"))
-    assert r.vertical and r.rect == (4, 4, 40, 100)
+    assert r.vertical and r.reason == "left_needs_centered_icons" and r.rect == (4, 796, 40, 100)
     r2 = compute_placement(env(i, size=(40, 100), icons_centered=False), Placement(anchor="left"))
     assert r2.reason == "left_needs_centered_icons" and r2.rect == (4, 796, 40, 100)
 

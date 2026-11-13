@@ -113,11 +113,17 @@ _BETA_KEYS: set[str] = set()     # visibility keys of devices that only a beta r
 def screen_menu_entries() -> list[tuple[str, str]]:
     """(monitor key, label) for Settings ▸ Personalization ▸ Position ▸ Monitor."""
     from .i18n import tr
+    from . import taskbar
     from .widget import screen_keys
+    names = {t.device_name for t in taskbar.get_taskbar_infos()}
+    have_info = bool(names)             # no taskbar info at all (explorer restarting): no suffix anywhere
     out = []
     for i, (key, screen) in enumerate(screen_keys(), start=1):
         g = screen.geometry()
-        out.append((key, f"{tr('monitor_label', n=i)} — {g.width()}×{g.height()}"))
+        label = f"{tr('monitor_label', n=i)} — {g.width()}×{g.height()}"
+        if have_info and screen.name() not in names:
+            label += tr("monitor_no_taskbar")
+        out.append((key, label))
     return out
 
 

@@ -19,6 +19,8 @@ FLOATING_PILL_H = 28
 FLOATING_SPACE_SHARE = 0.9   # share of the available width the floating pills may use
 DEFAULT_FLOATING = ("bottom-right", -12, -12)   # (anchor, dx, dy) when nothing is stored
 REASON_LEFT_NEEDS_CENTERED = "left_needs_centered_icons"
+REASON_NO_TASKBAR_FLOATING = "no_taskbar_floating"
+WIDGETS_BUTTON_GAP = 8   # logical px after the Win11 Widgets button (which is as wide as the bar is thick)
 
 
 def pill_height_for(taskbar_logical_thickness: float) -> int:
@@ -44,6 +46,8 @@ class Env:
     size: tuple = (0, 0)                   # current logical widget size (w, h)
     available: tuple | None = None         # logical (x, y, w, h) available geometry (floating mode)
     icons_centered: bool | None = True     # taskbar_icons_centered(); the left anchor needs True
+    widgets_button: bool | None = False    # Win11 Widgets button shown at the left end (None: unknown = shown)
+    floating_fallback: bool = False        # taskbar mode, monitor without a taskbar: float on it instead
 
 
 @dataclass
@@ -64,7 +68,8 @@ class PlacementResult:
     max_extent: int | None
     visible: bool
     reason: str                # "ok", "no_taskbar", "no_pills", "tucked", "fullscreen", "no_screen",
-                               # "left_needs_centered_icons" (visible, fell back to the right end)
+                               # "left_needs_centered_icons" (visible, fell back to the right end),
+                               # "no_taskbar_floating" (visible, floating on a monitor without a taskbar)
     pill_h: int = 0
 
 
@@ -140,7 +145,7 @@ def snap_anchor(widget_rect: tuple, available: tuple) -> tuple:
     return a, int(round(x - ax)), int(round(y - ay))
 
 
-def _floating(env: Env, placement: Placement) -> PlacementResult:
+def _floating(env: Env, placement: Placement, reason: str = "ok") -> PlacementResult:
     av = env.available
     if av is None:
         return _hidden(env, "no_screen")
@@ -151,7 +156,7 @@ def _floating(env: Env, placement: Placement) -> PlacementResult:
     x = max(ax, min(bx + placement.dx, ax + aw - w))
     y = max(ay, min(by + placement.dy, ay + ah - h))
     limit = max(MIN_LIMIT, int(aw * FLOATING_SPACE_SHARE))
-    return PlacementResult((x, y, w, h), env.screen_name, False, limit, True, "ok", FLOATING_PILL_H)
+    return PlacementResult((x, y, w, h), env.screen_name, False, limit, True, reason, FLOATING_PILL_H)
 
 
 def _left_rect(info: taskbar.TaskbarInfo, w: int, h: int, gap: int, vertical: bool) -> tuple:
@@ -176,6 +181,12 @@ def compute_placement(env: Env, placement: Placement) -> PlacementResult:
             return _hidden(env, "fullscreen")
         return _floating(env, placement)
     info = env.info
+    if info is None and env.floating_fallback:
+        if not env.has_pills:
+            return _hidden(env, "no_pills")
+        if env.fullscreen:
+            return _hidden(env, "fullscreen")
+        return _floating(env, placement, REASON_NO_TASKBAR_FLOATING)
     if info is None:
         return _hidden(env, "no_taskbar")
     if not env.has_pills:
@@ -193,10 +204,14 @@ def compute_placement(env: Env, placement: Placement) -> PlacementResult:
     w_phys, h_phys = round(env.size[0] * dpr), round(env.size[1] * dpr)
     reason = "ok"
     left = placement.anchor == "left"
-    if left and env.icons_centered is not True:
+    # Icons start at the top of a vertical bar and are never centred along it: no free top end there.
+    if left and (vertical or env.icons_centered is not True):
         left, reason = False, REASON_LEFT_NEEDS_CENTERED
     if left:
-        prect = _left_rect(info, w_phys, h_phys, round(LEFT_GAP * dpr), vertical)
+        margin = round(LEFT_GAP * dpr)
+        if info.kind == "primary" and env.widgets_button is not False:   # leave the Widgets button free
+            margin = max(margin, taskbar.rect_h(info.rect) + round(WIDGETS_BUTTON_GAP * dpr))
+        prect = _left_rect(info, w_phys, h_phys, margin, vertical)
     else:
         prect = taskbar.anchor_widget_rect(info, w_phys, h_phys, gap=round(4 * dpr))
         if not vertical:    # centre on the notification area's icon row, not just the bar

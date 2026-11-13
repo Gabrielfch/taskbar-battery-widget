@@ -120,12 +120,54 @@ def test_taskbar_matched_by_name_on_selected_monitor(make, monkeypatch):
     assert wd.y() >= 1500
 
 
-def test_taskbar_missing_on_chosen_monitor_hides(make, monkeypatch):
-    prim = tb.TaskbarInfo(rect=(0, 1032, 1920, 1080), tray_rect=(1602, 1032, 1920, 1080), edge="bottom",
+def _prim():
+    return tb.TaskbarInfo(rect=(0, 1032, 1920, 1080), tray_rect=(1602, 1032, 1920, 1080), edge="bottom",
                           autohide=False, monitor_rect=(0, 0, 1920, 1080), device_name=D1)
-    monkeypatch.setattr(w.taskbar, "get_taskbar_infos", lambda: [prim])
-    wd, _ = make(placement_monitor="bbb")
-    assert not wd.isVisible()
+
+
+def test_taskbar_missing_on_chosen_monitor_floats_bottom_right(make, monkeypatch):
+    monkeypatch.setattr(w.taskbar, "get_taskbar_infos", lambda: [_prim()])
+    wd, cfg = make(placement_monitor="bbb")
+    assert wd.isVisible() and wd._floating and wd._last_reason == "no_taskbar_floating"
+    assert (wd.x() + wd.width(), wd.y() + wd.height()) == (1920 + 1080 - 12, -360 + 1872 - 12)
+    assert cfg.get("placement_mode") == "taskbar"
+
+
+def test_taskbar_missing_uses_saved_floating_position(make, monkeypatch):
+    monkeypatch.setattr(w.taskbar, "get_taskbar_infos", lambda: [_prim()])
+    pos = {"bbb": {"anchor": "top-left", "dx": 20, "dy": 30}}
+    wd, _ = make(placement_monitor="bbb", floating_positions=pos)
+    assert (wd.x(), wd.y()) == (1920 + 20, -360 + 30) and wd._last_reason == "no_taskbar_floating"
+
+
+def test_no_primary_taskbar_info_still_hides(make):
+    wd, _ = make(placement_monitor="bbb")      # get_taskbar_infos() == [] (explorer restarting)
+    assert not wd.isVisible() and wd._last_reason == "no_taskbar"
+
+
+def test_drag_in_no_taskbar_fallback_saves_for_that_monitor_only(make, monkeypatch):
+    monkeypatch.setattr(w.taskbar, "get_taskbar_infos", lambda: [_prim()])
+    wd, cfg = make(placement_monitor="bbb")
+    drag(wd, QPoint(-500, -900))
+    saved = cfg.get("floating_positions")
+    assert list(saved) == ["bbb"] and saved["bbb"]["anchor"].endswith("left")
+    assert cfg.get("placement_mode") == "taskbar" and cfg.get("placement_monitor") == "bbb"
+    assert inside(wd, B.available) and wd._last_reason == "no_taskbar_floating"
+
+
+def test_drag_in_fallback_cannot_leave_monitor_or_change_choice(make, monkeypatch):
+    monkeypatch.setattr(w.taskbar, "get_taskbar_infos", lambda: [_prim()])
+    wd, cfg = make(placement_monitor="bbb")
+    drag(wd, QPoint(-1500, 0))                   # centre would land on the primary monitor
+    assert cfg.get("placement_monitor") == "bbb" and list(cfg.get("floating_positions")) == ["bbb"]
+    assert inside(wd, B.available)
+
+
+def test_widgets_button_margin_applied_on_win11(make, monkeypatch):
+    monkeypatch.setattr(w.taskbar, "get_taskbar_infos", lambda: [_prim()])
+    monkeypatch.setattr(w.taskbar, "taskbar_widgets_button", lambda: True)
+    wd, _ = make(taskbar_anchor="left")
+    assert wd.x() >= 48 + 8 and wd._last_reason == "ok"
 
 
 def test_left_anchor_fallback_emits_warning_once(make, monkeypatch):

@@ -439,6 +439,24 @@ def taskbar_icons_centered() -> bool | None:
         return None
 
 
+def taskbar_widgets_button() -> bool | None:
+    """Explorer\\Advanced ``TaskbarDa``: Widgets button shown (missing = shown on Win11); None on failure.
+
+    Always False before Windows 11 (no such button at the left end of the taskbar).
+    """
+    try:
+        import winreg
+        if not _is_windows_11():
+            return False
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _ADVANCED_KEY) as k:
+            try:
+                return int(winreg.QueryValueEx(k, "TaskbarDa")[0]) != 0
+            except FileNotFoundError:
+                return True
+    except Exception:
+        return None
+
+
 def taskbar_uses_light_theme() -> bool:
     """HKCU Personalize SystemUsesLightTheme (taskbar/system theme); default dark."""
     try:
