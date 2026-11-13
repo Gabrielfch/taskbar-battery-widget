@@ -50,7 +50,7 @@ def screen_keys() -> list:
     Keys come from taskbar.monitor_key(); duplicates (identical monitors) get "#n" suffixes assigned in
     a name-sorted order so they do not swap when Qt reorders the list.
     """
-    screens = list(QGuiApplication.screens())
+    screens = [sc for sc in QGuiApplication.screens() if shiboken6.isValid(sc)]
     devs = _device_names(screens)
     taken: list[str] = []
     keys: dict[int, str] = {}
@@ -74,6 +74,9 @@ def _device_names(screens: list) -> list:
     devs = taskbar.monitor_devices()
     out = []
     for sc in screens:
+        if not shiboken6.isValid(sc):       # destroyed meanwhile (unplug, RDP, headless CI)
+            out.append("")
+            continue
         g, dpr = sc.geometry(), sc.devicePixelRatio() or 1.0
         cands = [d for d in devs if d[1][:2] == (g.x(), g.y())]
         if len(cands) > 1:
@@ -89,12 +92,18 @@ def _rect_t(r: QRect) -> tuple:
 
 def screen_infos() -> list:
     """[(ScreenInfo, QScreen)] with logical geometry, primary flagged; name = Windows device name."""
-    primary = QGuiApplication.primaryScreen()
-    pairs = screen_keys()
-    devs = _device_names([sc for _, sc in pairs])
-    return [(ScreenInfo(k, devs[i] or sc.name(), _rect_t(sc.geometry()), _rect_t(sc.availableGeometry()),
-                        sc.devicePixelRatio() or 1.0, sc == primary), sc)
-            for i, (k, sc) in enumerate(pairs)]
+    for _attempt in range(2):           # a screen can be destroyed while we read it: retry once
+        try:
+            primary = QGuiApplication.primaryScreen()
+            pairs = [(k, sc) for k, sc in screen_keys() if shiboken6.isValid(sc)]
+            devs = _device_names([sc for _, sc in pairs])
+            return [(ScreenInfo(k, devs[i] or sc.name(), _rect_t(sc.geometry()),
+                                _rect_t(sc.availableGeometry()), sc.devicePixelRatio() or 1.0,
+                                sc == primary), sc)
+                    for i, (k, sc) in enumerate(pairs)]
+        except RuntimeError:
+            continue
+    return []
 
 
 # --------------------------------------------------------------------------- pure layout

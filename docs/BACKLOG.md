@@ -10,7 +10,7 @@ Ordered by delivery sequence (dependencies first, small wins early, largest/risk
 | 2 ✅ | Settings menu with Personalization subgroup | #2 | M | 1 | 1.5.0 |
 | 3 ✅ | Scrollable device panel (Connected / Known) with eye toggles and status colours | #6 + #4 | M | 2 | 1.5.0 |
 | 4 ✅ | Per-device detailed log (1-minute samples), toggle next to the device log | #5 | M | 2, 3 | 1.5.0 |
-| 5 ✅ | Widget placement: taskbar left/right, other monitors, floating corners/edges, visible in fullscreen | #1 | L | 2 | 1.6.1 |
+| 5 ✅ | Widget placement: taskbar left/right, other monitors, floating corners/edges, visible in fullscreen | #1 | L | 2 | 1.6.2 |
 
 ---
 
