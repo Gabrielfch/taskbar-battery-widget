@@ -11,6 +11,7 @@ from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from . import startup
+from . import taskbar
 from . import visibility
 from .colors import battery_color
 from .i18n import tr
@@ -65,6 +66,10 @@ class TrayController(QObject):
         self._release = None            # newer release found by the automatic check, if any
         self._screen_lister = None      # () -> [(monitor key, label)], set by the app
         self._warned_placement = set()  # warning reasons already shown this session
+        self._floating_hinted = False   # the "drag it" hint is shown once per session
+        self._current_key_fn = None
+        self._floating_anchor_fn = None
+        self._has_taskbar_fn = None
         self._build_menu()
         self._tray.activated.connect(self._on_activated)
         self._tray.setToolTip(tr("app_name"))
@@ -108,7 +113,9 @@ class TrayController(QObject):
             open_detail_folder=self.open_detail_folder_requested.emit,
             startup_enabled=lambda: startup.is_enabled(),
             set_placement=self._set_placement, set_monitor=self._set_monitor,
-            reset_position=self._reset_position, list_screens=self._list_screens))
+            reset_position=self._reset_position, list_screens=self._list_screens,
+            set_floating_anchor=self._set_floating_anchor, current_key=self._current_key,
+            icons_centered=self._icons_centered, monitor_has_taskbar=self._monitor_has_taskbar))
         acts = self._settings.actions
         self._act_wireless = acts["wireless_enabled"]
         self._act_bluetooth = acts["bluetooth_enabled"]
@@ -328,22 +335,78 @@ class TrayController(QObject):
         fn = self._screen_lister
         return list(fn()) if fn is not None else []
 
+    def set_current_screen_key_fn(self, fn) -> None:
+        """`fn() -> str | None`: key of the monitor the widget is on (for reset / anchor checks)."""
+        self._current_key_fn = fn
+
+    def set_floating_anchor_fn(self, fn) -> None:
+        """`fn(anchor)`: moves the floating widget to one of the 8 anchors."""
+        self._floating_anchor_fn = fn
+
+    def set_monitor_has_taskbar_fn(self, fn) -> None:
+        """`fn() -> bool`: does the widget's current monitor have a taskbar."""
+        self._has_taskbar_fn = fn
+
+    def _current_key(self):
+        try:
+            return self._current_key_fn() if self._current_key_fn is not None else None
+        except Exception:  # noqa: BLE001
+            log.exception("current screen key failed")
+            return None
+
+    def _monitor_has_taskbar(self) -> bool:
+        if self._has_taskbar_fn is None:
+            return True
+        try:
+            return bool(self._has_taskbar_fn())
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _icons_centered(self):
+        try:
+            return taskbar.taskbar_icons_centered()
+        except Exception:  # noqa: BLE001
+            return None
+
     def _set_placement(self, choice: str) -> None:
         if choice == "floating":
             self._cfg.set("placement_mode", "floating")
+            if not self._floating_hinted:
+                self._floating_hinted = True
+                self.notify(tr("app_name"), tr("floating_hint"), info=True)
         else:
             self._cfg.set("placement_mode", "taskbar")
             self._cfg.set("taskbar_anchor", "left" if choice == "left" else "right")
+            if choice == "left" and self._icons_centered() is not True:
+                # explicit pick: warn right now, and keep the widget's own one-per-session warning quiet
+                self._warned_placement.add("left_needs_centered_icons")
+                self.notify(tr("app_name"), tr("warn_left_needs_centered"))
         self.settings_changed.emit()
+
+    def _set_floating_anchor(self, anchor: str) -> None:
+        switched = self._cfg.get("placement_mode") != "floating"
+        if switched:
+            self._cfg.set("placement_mode", "floating")
+        fn = self._floating_anchor_fn
+        if fn is not None:
+            try:
+                fn(anchor)
+            except Exception:  # noqa: BLE001
+                log.exception("could not set the floating anchor")
+        if switched:
+            self.settings_changed.emit()
 
     def _set_monitor(self, key: str) -> None:
         self._cfg.set("placement_monitor", str(key))
         self.settings_changed.emit()
 
     def _reset_position(self) -> None:
-        """Back to the default floating offset (bottom-right, no offset) on the current monitor only."""
+        """Forget the stored floating position of the current monitor (and the "primary" default entry)
+        so the widget falls back to the default one."""
         positions = dict(self._cfg.get("floating_positions") or {})
-        positions[str(self._cfg.get("placement_monitor"))] = {"anchor": "bottom-right", "dx": 0, "dy": 0}
+        key = self._current_key()
+        for k in {"primary", str(key) if key is not None else "primary"}:
+            positions.pop(k, None)
         self._cfg.set("floating_positions", positions)
         self.settings_changed.emit()
 

@@ -396,15 +396,80 @@ def is_fullscreen_on_monitor(device_name: str) -> bool:
         return False
 
 
-def monitor_key(manufacturer: str, model: str, serial: str, name: str, existing_keys) -> str:
+if sys.platform == "win32":
+    class _DISPLAY_DEVICEW(ctypes.Structure):
+        _fields_ = [("cb", wt.DWORD), ("DeviceName", ctypes.c_wchar * 32),
+                    ("DeviceString", ctypes.c_wchar * 128), ("StateFlags", wt.DWORD),
+                    ("DeviceID", ctypes.c_wchar * 128), ("DeviceKey", ctypes.c_wchar * 128)]
+
+    _user32.EnumDisplayDevicesW.argtypes = [wt.LPCWSTR, wt.DWORD, ctypes.POINTER(_DISPLAY_DEVICEW), wt.DWORD]
+    _user32.EnumDisplayDevicesW.restype = wt.BOOL
+
+EDD_GET_DEVICE_INTERFACE_NAME = 1
+
+
+def monitor_devices() -> list:
+    """[(szDevice, (left, top, right, bottom))] of every attached monitor (physical px); [] on failure.
+
+    Needed because newer Qt versions report a friendly name from QScreen.name() instead of the
+    ``\\\\.\\DISPLAYn`` device name that the taskbar helpers use.
+    """
+    if sys.platform != "win32":
+        return []
+    out: list = []
+    try:
+        proto = ctypes.WINFUNCTYPE(wt.BOOL, wt.HANDLE, wt.HDC, ctypes.POINTER(wt.RECT), wt.LPARAM)
+
+        def _cb(hmon, _hdc, _rc, _lp):
+            mi = _MONITORINFOEXW()
+            mi.cbSize = ctypes.sizeof(_MONITORINFOEXW)
+            if _user32.GetMonitorInfoW(hmon, ctypes.cast(ctypes.byref(mi), ctypes.POINTER(_MONITORINFO))):
+                m = mi.rcMonitor
+                out.append((mi.szDevice, (m.left, m.top, m.right, m.bottom)))
+            return True
+
+        _user32.EnumDisplayMonitors.argtypes = [wt.HDC, ctypes.c_void_p, proto, wt.LPARAM]
+        _user32.EnumDisplayMonitors(None, None, proto(_cb), 0)
+    except Exception:
+        return []
+    return out
+
+
+def monitor_stable_id(device_name: str) -> str:
+    """Hash (16 hex) of the monitor's device interface path for ``\\\\.\\DISPLAYn``; "" when unavailable.
+
+    The interface path (EnumDisplayDevicesW with EDD_GET_DEVICE_INTERFACE_NAME) is stable per physical
+    monitor and port, unlike the DISPLAYn number which Windows renumbers. Only the hash is returned.
+    """
+    if sys.platform != "win32" or not device_name:
+        return ""
+    try:
+        import hashlib
+        dd = _DISPLAY_DEVICEW()
+        dd.cb = ctypes.sizeof(_DISPLAY_DEVICEW)
+        if not _user32.EnumDisplayDevicesW(device_name, 0, ctypes.byref(dd), EDD_GET_DEVICE_INTERFACE_NAME):
+            return ""
+        raw = (dd.DeviceID or "").strip().lower()
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16] if raw else ""
+    except Exception:
+        return ""
+
+
+def monitor_key(manufacturer: str, model: str, serial: str, name: str, existing_keys,
+                stable_id: str = "") -> str:
     """Stable monitor id: first 12 hex of sha256(manufacturer|model|serial); raw serial never kept.
 
-    When all three are empty the Qt screen ``name`` is hashed instead. Duplicates (identical
-    monitors) get ``#2``, ``#3``... appended. Pure function.
+    When all three are empty the (already hashed) ``stable_id`` is used, else the Qt screen ``name``
+    is hashed. Duplicates (identical monitors) get ``#2``, ``#3``... appended. Pure function.
     """
     import hashlib
     parts = [(p or "").strip().lower() for p in (manufacturer, model, serial)]
-    material = "|".join(parts) if any(parts) else "name|" + (name or "").strip().lower()
+    if any(parts):
+        material = "|".join(parts)
+    elif stable_id:
+        material = "id|" + stable_id.strip().lower()
+    else:
+        material = "name|" + (name or "").strip().lower()
     base = hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
     taken = set(existing_keys or ())
     if base not in taken:

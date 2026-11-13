@@ -7,7 +7,10 @@ from typing import Callable
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu
 
+from .config import FLOATING_ANCHORS
 from .i18n import tr
+
+DEFAULT_FLOATING_ANCHOR = "bottom-right"
 
 THRESHOLDS = (10, 15, 20, 25, 30)
 
@@ -26,6 +29,10 @@ class SettingsCallbacks:
     set_monitor: Callable[[str], None] = lambda key: None           # "primary" or a monitor key
     reset_position: Callable[[], None] = lambda: None
     list_screens: Callable[[], list] = lambda: []                   # [(key, label)]
+    set_floating_anchor: Callable[[str], None] = lambda anchor: None
+    current_key: Callable[[], object] = lambda: None                # monitor key the widget is on
+    icons_centered: Callable[[], object] = lambda: True             # True / False / None (unknown)
+    monitor_has_taskbar: Callable[[], bool] = lambda: True          # does the widget's monitor have a taskbar
 
 
 @dataclass
@@ -36,6 +43,9 @@ class SettingsMenu:
     syncs: list = field(default_factory=list)
     pos_actions: dict = field(default_factory=dict)         # "right" | "left" | "floating" -> action
     monitor_actions: dict = field(default_factory=dict)     # monitor key -> action
+    anchor_actions: dict = field(default_factory=dict)      # floating anchor -> action
+    reset_action: object = None
+    anchor_menu: object = None
     position_menu: object = None
     monitor_menu: object = None
 
@@ -132,6 +142,7 @@ def _placement_choice(cfg) -> str:
 
 def _build_position_menu(sm: SettingsMenu, pers: QMenu, cfg, cb: SettingsCallbacks) -> None:
     pos = pers.addMenu(tr("menu_position"))
+    pos.setToolTipsVisible(True)
     sm.position_menu = pos
     group = QActionGroup(pos)
     group.setExclusive(True)
@@ -147,14 +158,52 @@ def _build_position_menu(sm: SettingsMenu, pers: QMenu, cfg, cb: SettingsCallbac
         a.triggered.connect(lambda _c=False, ch=choice: cb.set_placement(ch))
         sm.pos_actions[choice] = a
 
+    def safe(fn, default):
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 - a broken callback must not break the menu
+            return default
+
     def sync_position():
         cur = _placement_choice(cfg)
         for ch, act in sm.pos_actions.items():
             was = act.blockSignals(True)
             act.setChecked(ch == cur)
             act.blockSignals(was)
-    sync_position()
+        left = sm.pos_actions["left"]
+        left.setText(tr("pos_taskbar_left") if safe(cb.icons_centered, True) is True
+                     else tr("pos_left_fallback"))
+        if sm.reset_action is not None:
+            sm.reset_action.setEnabled(cur == "floating" or not safe(cb.monitor_has_taskbar, True))
     sm.syncs.append(sync_position)
+
+    anchors = pos.addMenu(tr("menu_float_anchor"))
+    sm.anchor_menu = anchors
+    agroup = QActionGroup(anchors)
+    agroup.setExclusive(True)
+    for anchor in FLOATING_ANCHORS:
+        a = anchors.addAction(tr(f"anchor_{anchor}"))
+        a.setCheckable(True)
+        agroup.addAction(a)
+        a.triggered.connect(lambda _c=False, an=anchor: cb.set_floating_anchor(an))
+        sm.anchor_actions[anchor] = a
+
+    def sync_anchor():
+        positions = cfg.get("floating_positions")
+        positions = positions if isinstance(positions, dict) else {}
+        key = safe(cb.current_key, None)
+        entry = positions.get(str(key)) if key is not None else None
+        if not isinstance(entry, dict):
+            entry = positions.get("primary")
+        cur = entry.get("anchor") if isinstance(entry, dict) else None
+        if cur not in sm.anchor_actions:
+            cur = DEFAULT_FLOATING_ANCHOR
+        for an, act in sm.anchor_actions.items():
+            was = act.blockSignals(True)
+            act.setChecked(an == cur)
+            act.blockSignals(was)
+    sync_anchor()
+    sm.syncs.append(sync_anchor)
 
     mon = pos.addMenu(tr("menu_monitor"))
     sm.monitor_menu = mon
@@ -172,7 +221,8 @@ def _build_position_menu(sm: SettingsMenu, pers: QMenu, cfg, cb: SettingsCallbac
         except Exception:  # noqa: BLE001 - a broken lister must not break the menu
             screens = []
         cur = str(cfg.get("placement_monitor"))
-        for key, label in [("primary", tr("monitor_primary"))] + [s for s in screens if s[0] != "primary"]:
+        entries = [("primary", tr("monitor_primary"))] + [s for s in screens if s[0] != "primary"]
+        for key, label in entries:
             a = mon.addAction(label)
             a.setCheckable(True)
             mgroup.addAction(a)
@@ -181,6 +231,13 @@ def _build_position_menu(sm: SettingsMenu, pers: QMenu, cfg, cb: SettingsCallbac
             a.blockSignals(was)
             a.triggered.connect(lambda _c=False, k=key: cb.set_monitor(k))
             sm.monitor_actions[key] = a
+        if cur != "primary" and cur not in sm.monitor_actions:
+            a = mon.addAction(tr("monitor_disconnected"))
+            a.setCheckable(True)
+            mgroup.addAction(a)
+            a.setChecked(True)
+            a.setEnabled(False)
+            sm.monitor_actions[cur] = a
     rebuild_monitors()
     mon.aboutToShow.connect(rebuild_monitors)
     sm.syncs.append(rebuild_monitors)
@@ -188,4 +245,6 @@ def _build_position_menu(sm: SettingsMenu, pers: QMenu, cfg, cb: SettingsCallbac
     _toggle(sm, pos, tr("show_in_fullscreen"), "show_in_fullscreen",
             lambda: bool(cfg.get("show_in_fullscreen")), lambda v: cb.set_bool("show_in_fullscreen", v))
     pos.addSeparator()
-    pos.addAction(tr("reset_position")).triggered.connect(lambda _c=False: cb.reset_position())
+    sm.reset_action = pos.addAction(tr("reset_position"))
+    sm.reset_action.triggered.connect(lambda _c=False: cb.reset_position())
+    sync_position()

@@ -15,6 +15,8 @@ MIN_PILL_H, MAX_PILL_H = 20, 32
 FREE_SPACE_SHARE = 0.4   # share of the taskbar run left of the tray the pills may use
 MIN_LIMIT = 120
 LEFT_GAP = 4             # logical px between the taskbar's left/top end and the pills
+LEFT_MAX_SHARE = 0.25    # left anchor: max share of the taskbar length the pills may use
+LEFT_MIN_LIMIT = 60
 FLOATING_PILL_H = 28
 FLOATING_SPACE_SHARE = 0.9   # share of the available width the floating pills may use
 DEFAULT_FLOATING = ("bottom-right", -12, -12)   # (anchor, dx, dy) when nothing is stored
@@ -102,23 +104,37 @@ def resolve_screen(monitor: str, screens: list) -> ScreenInfo | None:
     return screens[0]
 
 
-def taskbar_for_screen(screen: ScreenInfo | None, infos: list):
-    """Taskbar on `screen`, matched by szDevice == QScreen.name() (never by size); None if absent."""
+def taskbar_for_screen(screen: ScreenInfo | None, infos: list, screen_names=None):
+    """Taskbar on `screen`, matched by szDevice == QScreen.name() (never by size); None if absent.
+
+    Fallback (keeps 1.5.0 behaviour): on the primary screen, the primary taskbar whose device name is
+    empty or matches none of `screen_names` (all QScreen names) is used.
+    """
     if screen is None or not screen.name:
         return None
     for i in infos or ():
         if i.device_name and i.device_name == screen.name:
             return i
+    if screen.primary:
+        names = set(screen_names or ())
+        for i in infos or ():
+            if i.kind == "primary" and (not i.device_name or i.device_name not in names):
+                return i
     return None
 
 
 def lookup_floating(positions: dict, screen_key: str, monitor_choice: str = "primary") -> tuple:
     """(anchor, dx, dy) stored for this screen, else the "primary" entry when primary is the choice."""
-    entry = (positions or {}).get(screen_key)
+    if not isinstance(positions, dict):
+        return DEFAULT_FLOATING
+    entry = positions.get(screen_key)
     if entry is None and monitor_choice == "primary":
-        entry = (positions or {}).get("primary")
+        entry = positions.get("primary")
     if isinstance(entry, dict) and entry.get("anchor") in FLOATING_ANCHORS:
-        return entry["anchor"], int(entry.get("dx", 0)), int(entry.get("dy", 0))
+        try:
+            return entry["anchor"], int(entry.get("dx", 0)), int(entry.get("dy", 0))
+        except (TypeError, ValueError, OverflowError):
+            return DEFAULT_FLOATING
     return DEFAULT_FLOATING
 
 
@@ -212,6 +228,10 @@ def compute_placement(env: Env, placement: Placement) -> PlacementResult:
         if info.kind == "primary" and env.widgets_button is not False:   # leave the Widgets button free
             margin = max(margin, taskbar.rect_h(info.rect) + round(WIDGETS_BUTTON_GAP * dpr))
         prect = _left_rect(info, w_phys, h_phys, margin, vertical)
+        # Known limitation: the number of taskbar buttons is unknown, so the pills could still reach the
+        # centred icon group on a crowded bar. Conservative cap: at most a quarter of the bar length.
+        cap = int(taskbar.rect_w(info.rect) / dpr * LEFT_MAX_SHARE - margin / dpr)
+        limit = max(LEFT_MIN_LIMIT, min(limit, cap))
     else:
         prect = taskbar.anchor_widget_rect(info, w_phys, h_phys, gap=round(4 * dpr))
         if not vertical:    # centre on the notification area's icon row, not just the bar

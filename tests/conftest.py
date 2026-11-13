@@ -49,6 +49,8 @@ def _no_real_taskbar(request, monkeypatch):
     from taskbar_battery_widget import taskbar
     monkeypatch.setattr(taskbar, "get_taskbar_info", lambda: None)
     monkeypatch.setattr(taskbar, "get_taskbar_infos", lambda: [])
+    monkeypatch.setattr(taskbar, "monitor_devices", lambda: [])
+    monkeypatch.setattr(taskbar, "monitor_stable_id", lambda name: "")
 
 
 @pytest.fixture(autouse=True)

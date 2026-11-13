@@ -127,6 +127,24 @@ def screen_menu_entries() -> list[tuple[str, str]]:
     return out
 
 
+def monitor_has_taskbar(key) -> bool:
+    """False only when the monitor `key` is known to have no taskbar; True when unsure."""
+    if key is None:
+        return True
+    try:
+        from . import taskbar
+        from .widget import screen_keys
+        names = {t.device_name for t in taskbar.get_taskbar_infos()}
+        if not names:
+            return True
+        for k, screen in screen_keys():
+            if k == key:
+                return screen.name() in names
+    except Exception:  # noqa: BLE001
+        log.debug("monitor_has_taskbar failed", exc_info=True)
+    return True
+
+
 def widget_anchor(widget) -> QRect:
     """Global rect of the taskbar widget, used to anchor the device panel above (or beside) the pills."""
     tl = widget.mapToGlobal(QPoint(0, 0))
@@ -323,6 +341,11 @@ def main() -> int:
     widget.panel_requested.connect(tray.open_panel)
     widget.placement_warning.connect(tray.show_placement_warning)
     tray.set_screen_lister(screen_menu_entries)
+    if hasattr(widget, "current_screen_key"):
+        tray.set_current_screen_key_fn(widget.current_screen_key)
+        tray.set_monitor_has_taskbar_fn(lambda: monitor_has_taskbar(widget.current_screen_key()))
+    if hasattr(widget, "set_floating_anchor"):
+        tray.set_floating_anchor_fn(widget.set_floating_anchor)
     tray.open_detail_log_requested.connect(
         lambda _key: open_detail_folder())     # "…" on a recording row opens the detailed logs folder
     # first sample right away when recording starts (then one per minute)
