@@ -455,6 +455,17 @@ def discard_update(path: Path) -> None:
     shutil.rmtree(Path(path).parent, ignore_errors=True)
 
 
+# CreateProcess errors raised when Windows policy refuses to run the (not Authenticode-signed) installer:
+# ERROR_ACCESS_DISABLED_BY_POLICY (1260), ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION (4551, Smart App Control /
+# App Control for Business), ERROR_SYSTEM_INTEGRITY_REPUTATION_* (4553-4556, unknown/bad reputation).
+POLICY_BLOCK_WINERRORS = frozenset({1260, 4551, 4553, 4554, 4555, 4556})
+
+
+def is_policy_block(exc: BaseException) -> bool:
+    """True if launching failed because Windows (Smart App Control / App Control policy) blocked the file."""
+    return getattr(exc, "winerror", None) in POLICY_BLOCK_WINERRORS
+
+
 def launch_installer(path: Path, rehash: bool = True) -> None:
     """Start the (already verified) Inno installer detached from this process.
 

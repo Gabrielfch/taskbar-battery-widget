@@ -132,6 +132,8 @@ EN = {
                     "The update was not installed.",
     "upd_err_cancelled": "Download cancelled.",
     "upd_err_launch": "Could not start the installer.",
+    "upd_err_blocked": ("Windows blocked the installer (Smart App Control) because it has no Windows digital "
+                        "signature. Automatic updates are not available on this PC; see the release page."),
     "upd_err_unverified": "The authenticity of this update cannot be verified, so it was not installed. "
                           "Download it manually from the release page.",
     "upd_err_mode": "Only the installed copy can update itself. Download the new version from the release page.",
@@ -265,6 +267,9 @@ ES = {
                     "No se instaló la actualización.",
     "upd_err_cancelled": "Descarga cancelada.",
     "upd_err_launch": "No se pudo iniciar el instalador.",
+    "upd_err_blocked": ("Windows bloqueó el instalador (Control inteligente de aplicaciones) porque no tiene "
+                        "firma digital de Windows. La actualización automática no está disponible en este equipo; "
+                        "consulta la página de la versión."),
     "upd_err_unverified": "No se puede verificar la autenticidad de esta actualización, así que no se instaló. "
                           "Descárgala manualmente desde la página de la release.",
     "upd_err_mode": "Solo la copia instalada puede actualizarse sola. Descarga la versión nueva desde la página de la release.",

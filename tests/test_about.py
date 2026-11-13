@@ -295,6 +295,31 @@ def test_popen_oserror_is_reported_and_ui_restored(qapp, tmp_path, monkeypatch, 
     assert not d._busy and d.status_label.text() == tr("upd_err_launch")
 
 
+@pytest.mark.parametrize("winerror", [4551, 1260, 4553])
+def test_installer_blocked_by_smart_app_control_is_explained(qapp, tmp_path, monkeypatch, sync_spawn, winerror):
+    def blocked(p, **k):
+        e = OSError("blocked by policy")
+        e.winerror = winerror
+        raise e
+    monkeypatch.setattr(updater, "launch_installer", blocked)
+    d = _dlg(qapp, tmp_path)
+    monkeypatch.setattr(d, "_confirm_launch", lambda: True)
+    d._busy = True
+    quit_called = []
+    d.quit_requested.connect(lambda: quit_called.append(1))
+    d._on_prepared(tmp_path / "x.exe")
+    assert not d._busy and d.status_label.text() == tr("upd_err_blocked") and quit_called == []
+
+
+def test_is_policy_block():
+    e = OSError("x")
+    assert not updater.is_policy_block(e)
+    e.winerror = 4551
+    assert updater.is_policy_block(e)
+    e.winerror = 2
+    assert not updater.is_policy_block(e)
+
+
 class _FakeHide:
     def __init__(self, spontaneous):
         self._s = spontaneous

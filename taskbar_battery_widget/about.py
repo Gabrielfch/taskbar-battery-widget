@@ -456,10 +456,15 @@ class AboutDialog(QDialog):
             self._discard(path)
             self._on_prepare_failed(exc.key)
             return
-        except OSError:
-            log.exception("could not launch the installer")
+        except OSError as exc:
             self._end_install_ui()
-            self._set_status(tr("upd_err_launch"))
+            if updater.is_policy_block(exc):
+                # Smart App Control / App Control policy: the unsigned installer cannot run on this PC
+                log.warning("installer blocked by Windows policy (winerror %s)", getattr(exc, "winerror", None))
+                self._set_status(tr("upd_err_blocked"))
+            else:
+                log.exception("could not launch the installer")
+                self._set_status(tr("upd_err_launch"))
             return
         log.info("installer launched")
         self.quit_requested.emit()
