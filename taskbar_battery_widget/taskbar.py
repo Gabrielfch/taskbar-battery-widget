@@ -418,6 +418,13 @@ def monitor_key(manufacturer: str, model: str, serial: str, name: str, existing_
 _ADVANCED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
 
 
+def _is_windows_11() -> bool:
+    try:
+        return sys.getwindowsversion().build >= 22000
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def taskbar_icons_centered() -> bool | None:
     """Explorer\\Advanced ``TaskbarAl``: 0 = left, 1 or missing = centred (Win11); None on failure."""
     try:
@@ -426,8 +433,8 @@ def taskbar_icons_centered() -> bool | None:
             try:
                 val = winreg.QueryValueEx(k, "TaskbarAl")[0]
             except FileNotFoundError:
-                return True
-            return int(val) != 0
+                return _is_windows_11()         # Win11 default is centred; Win10 has no centring
+            return int(val) != 0 and _is_windows_11()
     except Exception:
         return None
 

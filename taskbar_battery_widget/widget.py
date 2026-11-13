@@ -1,7 +1,8 @@
-"""Frameless, always-on-top, non-activating pill bar docked to the Windows taskbar."""
+"""Frameless, always-on-top, non-activating pill bar docked to the Windows taskbar (or floating on a monitor)."""
 from __future__ import annotations
 
 import html
+import math
 import sys  # noqa: F401  (tests read widget.sys.platform)
 from dataclasses import dataclass
 
@@ -11,14 +12,15 @@ from PySide6.QtGui import (QAccessible, QAccessibleEvent, QColor, QCursor, QFont
 from PySide6.QtWidgets import QMenu, QWidget
 
 from . import taskbar
-from .colors import band_color, battery_color, pill_tint, row_style
+from .colors import TASKBAR_BASE, band_color, battery_color, pill_tint, row_style
 from .i18n import kind_name as _kind_name, tr
 from .icons import draw_bolt, draw_kind_icon
 from .models import Device, visibility_key
 from .naming import sanitize_name
 from .popup import HOVER_DELAY_MS, HoverPopup, PopupContent, build_popup_content, place_popup, stale_text
-from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, Env, Placement, center_rect_y,  # noqa: F401
-                        compute_placement, pill_height_for)
+from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, REASON_LEFT_NEEDS_CENTERED, Env,  # noqa: F401
+                        Placement, ScreenInfo, center_rect_y, compute_placement, lookup_floating,
+                        pill_height_for, resolve_screen, snap_anchor, taskbar_for_screen)
 from .win_window import (_ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
                          popup_menu_foreground)
 
@@ -31,6 +33,37 @@ BAR_MIN_PILL_H = 24   # below this height the level bar is dropped
 BAR_H = 3.0
 MOON_W = 7
 TICK_MS = 500
+DRAG_THRESHOLD = 4        # px of movement before a press in floating mode becomes a drag
+FLOATING_BG_ALPHA = 235   # backdrop of the floating bar (slightly translucent)
+
+
+def screen_keys() -> list:
+    """[(monitor_key, QScreen)] for every Qt screen, in QGuiApplication.screens() order.
+
+    Keys come from taskbar.monitor_key(); duplicates (identical monitors) get "#n" suffixes assigned in
+    a name-sorted order so they do not swap when Qt reorders the list.
+    """
+    screens = list(QGuiApplication.screens())
+    taken: list[str] = []
+    keys: dict[int, str] = {}
+    for idx in sorted(range(len(screens)), key=lambda i: screens[i].name()):
+        sc = screens[idx]
+        k = taskbar.monitor_key(sc.manufacturer(), sc.model(), sc.serialNumber(), sc.name(), taken)
+        taken.append(k)
+        keys[idx] = k
+    return [(keys[i], sc) for i, sc in enumerate(screens)]
+
+
+def _rect_t(r: QRect) -> tuple:
+    return (r.x(), r.y(), r.width(), r.height())
+
+
+def screen_infos() -> list:
+    """[(ScreenInfo, QScreen)] with logical geometry, primary flagged."""
+    primary = QGuiApplication.primaryScreen()
+    return [(ScreenInfo(k, sc.name(), _rect_t(sc.geometry()), _rect_t(sc.availableGeometry()),
+                        sc.devicePixelRatio() or 1.0, sc == primary), sc)
+            for k, sc in screen_keys()]
 
 
 # --------------------------------------------------------------------------- pure layout
@@ -121,6 +154,7 @@ class _Pill:
 class TaskbarWidget(QWidget):
     context_menu_requested = Signal(QPoint)
     panel_requested = Signal(QRect)         # the "+N" pill was activated (global pill rect)
+    placement_warning = Signal(str)         # e.g. "left_needs_centered_icons": the left anchor fell back
 
     def __init__(self, cfg=None, parent=None):
         super().__init__(parent)
@@ -145,6 +179,14 @@ class TaskbarWidget(QWidget):
         self._styled = False
         self._menu: QMenu | None = None
         self._last_geom = None
+        self._floating = False          # last applied placement was floating (draws a backdrop, drags)
+        self._cur_screen: ScreenInfo | None = None
+        self._cur_qscreen = None
+        self._last_reason = "ok"
+        self._press_global: QPoint | None = None
+        self._press_origin = QPoint()
+        self._dragging = False
+        self._watched: list = []
         self._want_visible = False
         self._all_pills: list[_Pill] = []
         self._max_extent: int | None = None     # px along the main axis the pills may use
@@ -170,6 +212,7 @@ class TaskbarWidget(QWidget):
         self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self.update_position)
         self._rebuild()
+        self._connect_screen_signals()
 
     # ------------------------------------------------------------------ public API
     def set_config(self, cfg) -> None:
@@ -383,46 +426,122 @@ class TaskbarWidget(QWidget):
         self.update()
 
     # ------------------------------------------------------------------ positioning
-    def _pick_screen(self, monitor_rect):
-        mw, mh = taskbar.rect_w(monitor_rect), taskbar.rect_h(monitor_rect)
-        for s in QGuiApplication.screens():
-            g, dpr = s.geometry(), s.devicePixelRatio()
-            if abs(g.width() * dpr - mw) <= 2 and abs(g.height() * dpr - mh) <= 2:
-                return s
-        return QGuiApplication.primaryScreen()
+    def _screens(self) -> list:
+        return screen_infos()
 
-    def _build_env(self, info, fullscreen: bool) -> Env:
-        screen = self._pick_screen(info.monitor_rect)
-        g = screen.geometry()
+    def _connect_screen_signals(self) -> None:
+        app = QGuiApplication.instance()
+        if app is None:
+            return
+        app.screenAdded.connect(self._on_screen_added)
+        app.screenRemoved.connect(self._on_screens_changed)
+        app.primaryScreenChanged.connect(self._on_screens_changed)
+        for sc in QGuiApplication.screens():
+            self._watch_screen(sc)
+
+    def _watch_screen(self, sc) -> None:
+        if any(sc == w for w in self._watched):
+            return
+        self._watched.append(sc)
+        sc.geometryChanged.connect(self._on_screens_changed)
+        sc.availableGeometryChanged.connect(self._on_screens_changed)
+
+    def _on_screen_added(self, sc) -> None:
+        self._watch_screen(sc)
+        self._on_screens_changed()
+
+    def _on_screens_changed(self, *_args) -> None:
+        self._last_geom = None
+        self.update_position()
+        QTimer.singleShot(0, self._reposition_later)     # the screen list settles after the signal
+
+    def _reposition_later(self) -> None:
+        try:
+            self._last_geom = None
+            self.update_position()
+        except RuntimeError:        # widget already deleted
+            pass
+
+    def _is_floating(self) -> bool:
+        return self._cfg_get("placement_mode", "taskbar") == "floating"
+
+    def _build_placement(self, choice: str, screen: ScreenInfo) -> Placement:
+        if self._is_floating():
+            anchor, dx, dy = lookup_floating(self._cfg_get("floating_positions", {}), screen.key, choice)
+            return Placement("floating", "right", choice, anchor, dx, dy)
+        anchor = "left" if self._cfg_get("taskbar_anchor", "right") == "left" else "right"
+        return Placement("taskbar", anchor, choice)
+
+    def _build_env(self, info, screen: ScreenInfo, placement: Placement) -> Env:
+        fullscreen = False
+        if self._pills and not self._cfg_get("show_in_fullscreen", False) and (info is not None or self._is_floating()):
+            fullscreen = taskbar.is_fullscreen_on_monitor(screen.name)
+        centered = taskbar.taskbar_icons_centered() if (placement.mode == "taskbar"
+                                                        and placement.anchor == "left") else True
         return Env(info=info, fullscreen=fullscreen, has_pills=bool(self._pills),
-                   screen_name=screen.name(), screen_origin=(g.x(), g.y()),
-                   dpr=screen.devicePixelRatio() or 1.0, size=(self.width(), self.height()))
+                   screen_name=screen.name, screen_origin=screen.geometry[:2], dpr=screen.dpr or 1.0,
+                   size=(self.width(), self.height()), available=screen.available, icons_centered=centered)
+
+    def _apply_screen(self, qscreen) -> None:
+        """Bind the window to `qscreen` before moving it (per-monitor DPI)."""
+        if qscreen is None or qscreen == self._cur_qscreen:
+            return
+        self._cur_qscreen = qscreen
+        wh = self.windowHandle()
+        if wh is not None:
+            if wh.screen() != qscreen:
+                wh.setScreen(qscreen)
+        elif self.screen() != qscreen:
+            self.setScreen(qscreen)
 
     def update_position(self) -> None:
-        info = taskbar.get_taskbar_info()
-        if info is None or not self._pills:
+        if self._dragging:
+            return
+        pairs = self._screens()
+        choice = self._cfg_get("placement_monitor", "primary")
+        choice = choice if isinstance(choice, str) and choice else "primary"
+        sinfo = resolve_screen(choice, [p[0] for p in pairs])   # missing monitor -> primary (config untouched)
+        if sinfo is None or not self._pills:
             self._set_visible(False)
             return
-        fullscreen = taskbar.is_fullscreen_foreground(info.monitor_rect)
-        placement = Placement()
-        res = compute_placement(self._build_env(info, fullscreen), placement)
+        qscreen = next(q for i, q in pairs if i is sinfo)
+        self._cur_screen = sinfo
+        floating = self._is_floating()
+        infos = [] if floating else taskbar.get_taskbar_infos()
+        tinfo = None if floating else taskbar_for_screen(sinfo, infos)
+        placement = self._build_placement(choice, sinfo)
+        res = compute_placement(self._build_env(tinfo, sinfo, placement), placement)
+        self._note_reason(res.reason)
         if not res.visible:
+            self._floating = floating
             self._set_visible(False)
             return
-        self._edge = info.edge
+        self._apply_screen(qscreen)
+        self._edge = (tinfo.edge if tinfo is not None
+                      else taskbar.EDGE_TOP if placement.float_anchor.startswith("top") else taskbar.EDGE_BOTTOM)
+        if self._floating != floating:
+            self._floating = floating
+            self.update()
         if res.pill_h != self._pill_h or res.vertical != self._vertical or res.max_extent != self._max_extent:
             self._pill_h, self._vertical, self._max_extent = res.pill_h, res.vertical, res.max_extent
             self._relayout()
-            res = compute_placement(self._build_env(info, fullscreen), placement)   # size changed
+            res = compute_placement(self._build_env(tinfo, sinfo, placement), placement)   # size changed
         x, y = res.rect[0], res.rect[1]
-        if self._last_geom != (x, y):
-            self._last_geom = (x, y)
+        key = (x, y, self.width(), self.height(), sinfo.name, placement.mode)
+        if self._last_geom != key:
+            self._last_geom = key
             self.move(x, y)
         self._set_visible(True)
         if self.isVisible():
             _assert_topmost(int(self.winId()))
             if self._popup is not None and self._popup.isVisible():
                 self._popup.raise_topmost()
+
+    def _note_reason(self, reason: str) -> None:
+        """Emit placement_warning once each time the placement starts needing a fallback."""
+        if reason == REASON_LEFT_NEEDS_CENTERED and self._last_reason != reason:
+            self.placement_warning.emit(reason)
+        self._last_reason = reason
 
     def _set_visible(self, vis: bool) -> None:
         if vis and not self.isVisible():
@@ -502,6 +621,13 @@ class TaskbarWidget(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         dark = not self._light
         fg = self._colors()
+        if self._floating:      # backdrop so the pills read over any wallpaper
+            bg = QColor(*TASKBAR_BASE[dark])
+            bg.setAlpha(FLOATING_BG_ALPHA)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(bg)
+            rad = min(self.height() / 2, self._pill_h / 2 + MARGIN)
+            p.drawRoundedRect(QRectF(self.rect()), rad, rad)
         p.setFont(self._font())
         icon = self._icon_size()
         for i, (pill, (x, y, w, h)) in enumerate(zip(self._pills, self._rects)):
@@ -574,6 +700,17 @@ class TaskbarWidget(QWidget):
 
     # ------------------------------------------------------------------ interaction
     def mouseMoveEvent(self, e) -> None:
+        if (self._press_global is not None and self._floating
+                and e.buttons() & Qt.MouseButton.LeftButton):
+            delta = e.globalPosition().toPoint() - self._press_global
+            if not self._dragging and math.hypot(delta.x(), delta.y()) > DRAG_THRESHOLD:
+                self._dragging = True
+                self._hide_popup()
+                self._hover = -1
+                self.update()
+            if self._dragging:
+                self.move(self._press_origin + delta)
+                return
         idx = pill_index_at(self._rects, e.position().x(), e.position().y())
         if idx != self._hover:
             self._hover = idx
@@ -591,6 +728,9 @@ class TaskbarWidget(QWidget):
     def mousePressEvent(self, e) -> None:
         self._hide_popup()
         if e.button() == Qt.MouseButton.LeftButton:     # touch / click: show the card right away
+            self._press_global = e.globalPosition().toPoint()
+            self._press_origin = self.pos()
+            self._dragging = False
             idx = pill_index_at(self._rects, e.position().x(), e.position().y())
             if idx >= 0:
                 self._hover = idx
@@ -602,6 +742,44 @@ class TaskbarWidget(QWidget):
                 self.update()
         if e.button() == Qt.MouseButton.RightButton:
             self._open_menu(e.globalPosition().toPoint())
+
+    def mouseReleaseEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton and self._press_global is not None:
+            dragged = self._dragging
+            self._press_global, self._dragging = None, False
+            if dragged:
+                self._finish_drag()
+                return
+        super().mouseReleaseEvent(e)
+
+    def _finish_drag(self) -> None:
+        """Snap the dropped widget to the nearest anchor of the monitor under it and remember it."""
+        pairs = self._screens()
+        centre = self.geometry().center()
+        target = None
+        for info, _q in pairs:
+            gx, gy, gw, gh = info.geometry
+            if gx <= centre.x() < gx + gw and gy <= centre.y() < gy + gh:
+                target = info
+                break
+        if target is None:
+            target = self._cur_screen or resolve_screen("primary", [i for i, _ in pairs])
+        if target is None:
+            return
+        anchor, dx, dy = snap_anchor((self.x(), self.y(), self.width(), self.height()), target.available)
+        positions = self._cfg_get("floating_positions", {})
+        positions = dict(positions) if isinstance(positions, dict) else {}
+        positions[target.key] = {"anchor": anchor, "dx": dx, "dy": dy}
+        choice = self._cfg_get("placement_monitor", "primary")
+        new_choice = "primary" if (choice == "primary" and target.primary) else target.key
+        try:
+            self._cfg.set("floating_positions", positions)
+            if new_choice != choice:
+                self._cfg.set("placement_monitor", new_choice)
+        except Exception:
+            pass        # a config that refuses (or is absent): the position still applies for this run
+        self._last_geom = None
+        self.update_position()
 
     def _open_panel(self, idx: int) -> None:
         x, y, w, h = self._rects[idx]

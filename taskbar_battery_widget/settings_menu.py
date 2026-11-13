@@ -22,6 +22,10 @@ class SettingsCallbacks:
     open_logs_folder: Callable[[], None]
     startup_enabled: Callable[[], bool]           # real state of the Windows startup entry
     open_detail_folder: Callable[[], None] = lambda: None
+    set_placement: Callable[[str], None] = lambda choice: None      # "right" | "left" | "floating"
+    set_monitor: Callable[[str], None] = lambda key: None           # "primary" or a monitor key
+    reset_position: Callable[[], None] = lambda: None
+    list_screens: Callable[[], list] = lambda: []                   # [(key, label)]
 
 
 @dataclass
@@ -30,6 +34,10 @@ class SettingsMenu:
     actions: dict[str, QAction] = field(default_factory=dict)
     thr_actions: list = field(default_factory=list)
     syncs: list = field(default_factory=list)
+    pos_actions: dict = field(default_factory=dict)         # "right" | "left" | "floating" -> action
+    monitor_actions: dict = field(default_factory=dict)     # monitor key -> action
+    position_menu: object = None
+    monitor_menu: object = None
 
     def sync(self) -> None:
         """Refresh every checkmark from the config / system state (signals blocked)."""
@@ -112,4 +120,72 @@ def build_settings_menu(parent: QMenu, cfg, cb: SettingsCallbacks) -> SettingsMe
     pers = root.addMenu(tr("menu_personalization"))
     _toggle(sm, pers, tr("color_levels"), "color_mode",
             lambda: cfg.get("color_mode") != "mono", cb.set_color_mode)
+    _build_position_menu(sm, pers, cfg, cb)
     return sm
+
+
+def _placement_choice(cfg) -> str:
+    if cfg.get("placement_mode") == "floating":
+        return "floating"
+    return "left" if cfg.get("taskbar_anchor") == "left" else "right"
+
+
+def _build_position_menu(sm: SettingsMenu, pers: QMenu, cfg, cb: SettingsCallbacks) -> None:
+    pos = pers.addMenu(tr("menu_position"))
+    sm.position_menu = pos
+    group = QActionGroup(pos)
+    group.setExclusive(True)
+    for choice, label_key, tip_key in (("right", "pos_taskbar_right", None),
+                                       ("left", "pos_taskbar_left", "pos_left_tip"),
+                                       ("floating", "pos_floating", "pos_floating_tip")):
+        a = pos.addAction(tr(label_key))
+        a.setCheckable(True)
+        group.addAction(a)
+        if tip_key:
+            a.setToolTip(tr(tip_key))
+            a.setStatusTip(tr(tip_key))
+        a.triggered.connect(lambda _c=False, ch=choice: cb.set_placement(ch))
+        sm.pos_actions[choice] = a
+
+    def sync_position():
+        cur = _placement_choice(cfg)
+        for ch, act in sm.pos_actions.items():
+            was = act.blockSignals(True)
+            act.setChecked(ch == cur)
+            act.blockSignals(was)
+    sync_position()
+    sm.syncs.append(sync_position)
+
+    mon = pos.addMenu(tr("menu_monitor"))
+    sm.monitor_menu = mon
+    mgroup = QActionGroup(mon)
+    mgroup.setExclusive(True)
+
+    def rebuild_monitors():
+        for act in list(sm.monitor_actions.values()):
+            mon.removeAction(act)
+            mgroup.removeAction(act)
+            act.deleteLater()
+        sm.monitor_actions.clear()
+        try:
+            screens = [(str(k), str(lbl)) for k, lbl in cb.list_screens()]
+        except Exception:  # noqa: BLE001 - a broken lister must not break the menu
+            screens = []
+        cur = str(cfg.get("placement_monitor"))
+        for key, label in [("primary", tr("monitor_primary"))] + [s for s in screens if s[0] != "primary"]:
+            a = mon.addAction(label)
+            a.setCheckable(True)
+            mgroup.addAction(a)
+            was = a.blockSignals(True)
+            a.setChecked(key == cur)
+            a.blockSignals(was)
+            a.triggered.connect(lambda _c=False, k=key: cb.set_monitor(k))
+            sm.monitor_actions[key] = a
+    rebuild_monitors()
+    mon.aboutToShow.connect(rebuild_monitors)
+    sm.syncs.append(rebuild_monitors)
+
+    _toggle(sm, pos, tr("show_in_fullscreen"), "show_in_fullscreen",
+            lambda: bool(cfg.get("show_in_fullscreen")), lambda v: cb.set_bool("show_in_fullscreen", v))
+    pos.addSeparator()
+    pos.addAction(tr("reset_position")).triggered.connect(lambda _c=False: cb.reset_position())

@@ -63,6 +63,8 @@ class TrayController(QObject):
         self._panel = None
         self._about = None
         self._release = None            # newer release found by the automatic check, if any
+        self._screen_lister = None      # () -> [(monitor key, label)], set by the app
+        self._warned_placement = set()  # warning reasons already shown this session
         self._build_menu()
         self._tray.activated.connect(self._on_activated)
         self._tray.setToolTip(tr("app_name"))
@@ -104,7 +106,9 @@ class TrayController(QObject):
             set_color_mode=self._set_color_mode, set_startup=self._set_startup,
             open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
             open_detail_folder=self.open_detail_folder_requested.emit,
-            startup_enabled=lambda: startup.is_enabled()))
+            startup_enabled=lambda: startup.is_enabled(),
+            set_placement=self._set_placement, set_monitor=self._set_monitor,
+            reset_position=self._reset_position, list_screens=self._list_screens))
         acts = self._settings.actions
         self._act_wireless = acts["wireless_enabled"]
         self._act_bluetooth = acts["bluetooth_enabled"]
@@ -314,6 +318,41 @@ class TrayController(QObject):
     def _set_threshold(self, value: int) -> None:
         self._cfg.set("low_threshold", int(value))
         self.settings_changed.emit()
+
+    # ---- widget position
+    def set_screen_lister(self, fn) -> None:
+        """`fn() -> [(monitor key, label)]`, used to fill Position > Monitor when the menu opens."""
+        self._screen_lister = fn
+
+    def _list_screens(self) -> list:
+        fn = self._screen_lister
+        return list(fn()) if fn is not None else []
+
+    def _set_placement(self, choice: str) -> None:
+        if choice == "floating":
+            self._cfg.set("placement_mode", "floating")
+        else:
+            self._cfg.set("placement_mode", "taskbar")
+            self._cfg.set("taskbar_anchor", "left" if choice == "left" else "right")
+        self.settings_changed.emit()
+
+    def _set_monitor(self, key: str) -> None:
+        self._cfg.set("placement_monitor", str(key))
+        self.settings_changed.emit()
+
+    def _reset_position(self) -> None:
+        """Back to the default floating offset (bottom-right, no offset) on the current monitor only."""
+        positions = dict(self._cfg.get("floating_positions") or {})
+        positions[str(self._cfg.get("placement_monitor"))] = {"anchor": "bottom-right", "dx": 0, "dy": 0}
+        self._cfg.set("floating_positions", positions)
+        self.settings_changed.emit()
+
+    def show_placement_warning(self, reason: str) -> None:
+        """Tell the user, once per session and reason, why the chosen position is not in use."""
+        if reason != "left_needs_centered_icons" or reason in self._warned_placement:
+            return
+        self._warned_placement.add(reason)
+        self.notify(tr("app_name"), tr("warn_left_needs_centered"))
 
     def _set_startup(self, enabled: bool) -> None:
         try:

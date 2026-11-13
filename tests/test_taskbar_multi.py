@@ -251,12 +251,23 @@ def _fake_winreg(monkeypatch, value=None, missing=False, open_fails=False):
 
 
 @pytest.mark.parametrize("value,expected", [(0, False), (1, True), (2, True)])
-def test_taskbar_icons_centered_values(monkeypatch, value, expected):
+def test_taskbar_icons_centered_values(monkeypatch, win11, value, expected):
     _fake_winreg(monkeypatch, value=value)
     assert tb.taskbar_icons_centered() is expected
 
 
-def test_taskbar_icons_centered_missing_value_is_centred(monkeypatch):
+@pytest.fixture(autouse=False)
+def win11(monkeypatch):
+    monkeypatch.setattr(tb, "_is_windows_11", lambda: True)
+
+
+def test_taskbar_icons_never_centred_on_windows_10(monkeypatch):
+    monkeypatch.setattr(tb, "_is_windows_11", lambda: False)
+    _fake_winreg(monkeypatch, value=1)
+    assert tb.taskbar_icons_centered() is False
+
+
+def test_taskbar_icons_centered_missing_value_is_centred(monkeypatch, win11):
     _fake_winreg(monkeypatch, missing=True)
     assert tb.taskbar_icons_centered() is True
 

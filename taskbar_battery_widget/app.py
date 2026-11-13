@@ -110,6 +110,17 @@ def run_shutdown(theme_timer, widget, tray, monitor, history, lock, detail=None)
 _BETA_KEYS: set[str] = set()     # visibility keys of devices that only a beta reader produced
 
 
+def screen_menu_entries() -> list[tuple[str, str]]:
+    """(monitor key, label) for Settings ▸ Personalization ▸ Position ▸ Monitor."""
+    from .i18n import tr
+    from .widget import screen_keys
+    out = []
+    for i, (key, screen) in enumerate(screen_keys(), start=1):
+        g = screen.geometry()
+        out.append((key, f"{tr('monitor_label', n=i)} — {g.width()}×{g.height()}"))
+    return out
+
+
 def widget_anchor(widget) -> QRect:
     """Global rect of the taskbar widget, used to anchor the device panel above (or beside) the pills."""
     tl = widget.mapToGlobal(QPoint(0, 0))
@@ -304,6 +315,8 @@ def main() -> int:
     tray.ui_settings_changed.connect(lambda: apply_ui_settings(widget, cfg, raw, on_devices))
     tray.quit_requested.connect(app.quit)
     widget.panel_requested.connect(tray.open_panel)
+    widget.placement_warning.connect(tray.show_placement_warning)
+    tray.set_screen_lister(screen_menu_entries)
     tray.open_detail_log_requested.connect(
         lambda _key: open_detail_folder())     # "…" on a recording row opens the detailed logs folder
     # first sample right away when recording starts (then one per minute)

@@ -265,7 +265,7 @@ def test_tray_menu_structure(qapp, tmp_path):
     assert _texts(s2["Registros"]) == ["Abrir registro de dispositivos", "Abrir carpeta de registros",
                                        "Registro detallado (cada minuto)",
                                        "Abrir carpeta de registros detallados"]
-    assert _texts(s2["Personalización"]) == ["Color según el nivel"]
+    assert _texts(s2["Personalización"]) == ["Color según el nivel", "Posición"]
 
 
 def test_tray_hidden_device_not_in_icon(qapp, tmp_path):
