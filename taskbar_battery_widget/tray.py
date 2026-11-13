@@ -5,7 +5,7 @@ import logging
 import os
 import time
 
-from PySide6.QtCore import QObject, QPoint, QRect, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, QTimer, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
@@ -21,6 +21,7 @@ from .settings_menu import SettingsCallbacks, build_settings_menu
 log = logging.getLogger(__name__)
 
 PANEL_REOPEN_GRACE_S = 0.3
+SETTINGS_MENU_DELAY_MS = 60       # let the panel finish closing before the Settings menu pops up
 
 
 class TrayController(QObject):
@@ -204,7 +205,9 @@ class TrayController(QObject):
             screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
             top = screen.availableGeometry().top() if screen is not None else 0
             pos = QPoint(rect.left(), rect.top() - h) if rect.top() - h >= top else rect.bottomLeft()
-        popup_menu_foreground(menu, pos)
+        # Defer: popping the menu up while the Qt.Popup panel is still closing (same click) makes Qt's
+        # popup stack close the new menu immediately, so it never appears on screen.
+        QTimer.singleShot(SETTINGS_MENU_DELAY_MS, lambda: popup_menu_foreground(menu, pos))
 
     def _on_activated(self, reason) -> None:
         # on Windows the right click arrives as Context (no context menu is set): same as a left click
