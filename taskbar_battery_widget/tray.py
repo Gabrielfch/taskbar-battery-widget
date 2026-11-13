@@ -14,10 +14,9 @@ from .i18n import tr
 from .icons import make_tray_icon
 from .models import visibility_key
 from .naming import sanitize_name
+from .settings_menu import SettingsCallbacks, build_settings_menu
 
 log = logging.getLogger(__name__)
-
-THRESHOLDS = (10, 15, 20, 25, 30)
 
 
 class TrayController(QObject):
@@ -75,45 +74,23 @@ class TrayController(QObject):
         m = self._menu
         # device lines are inserted before this separator every time the menu opens
         self._devices_sep = m.addSeparator()
-        m.addAction(tr("refresh")).triggered.connect(self.refresh_requested.emit)
-        m.addSeparator()
+        # TODO(item 3): the Show submenu is replaced by the device panel
         show = m.addMenu(tr("menu_show"))
         self._act_disc = self._toggle(tr("show_disconnected"), "show_disconnected", menu=show)
         self._visible_menu = show.addMenu(tr("visible_devices"))
-        self._act_colors = self._toggle(tr("color_levels"), "color_mode",
-                                        getter=lambda: self._cfg.get("color_mode") != "mono",
-                                        setter=self._set_color_mode, menu=show)
-        sources = m.addMenu(tr("menu_sources"))
-        self._act_wireless = self._toggle(tr("wireless_devices"), "wireless_enabled", menu=sources)
-        self._act_exp = self._toggle(tr("experimental_readers"), "experimental_readers",
-                                     menu=sources)
-        self._act_ds_bt = self._toggle(tr("dualsense_bt_extended"), "dualsense_bt_extended",
-                                       menu=sources)
-        alerts = m.addMenu(tr("menu_alerts"))
-        self._act_notif = self._toggle(tr("notifications"), "notifications_enabled", menu=alerts)
-        sub = alerts.addMenu(tr("low_threshold"))
-        group = QActionGroup(sub)
-        group.setExclusive(True)
-        current = int(self._cfg.get("low_threshold"))
-        self._thr_actions = []
-        for v in THRESHOLDS:
-            a = sub.addAction(f"{v} %")
-            a.setCheckable(True)
-            a.setChecked(v == current)
-            group.addAction(a)
-            a.triggered.connect(lambda _c=False, val=v: self._set_threshold(val))
-            self._thr_actions.append((v, a))
-        m.addSeparator()
-        m.addAction(tr("open_device_log")).triggered.connect(self.open_device_log)
-        m.addAction(tr("open_logs_folder")).triggered.connect(self.open_logs_folder)
-        m.addSeparator()
-        self._act_start = m.addAction(tr("start_with_windows"))
-        self._act_start.setCheckable(True)
-        try:
-            self._act_start.setChecked(bool(startup.is_enabled()))
-        except Exception:
-            self._act_start.setChecked(bool(self._cfg.get("start_with_windows")))
-        self._act_start.toggled.connect(self._set_startup)
+        m.addAction(tr("refresh")).triggered.connect(self.refresh_requested.emit)
+        self._settings = build_settings_menu(m, self._cfg, SettingsCallbacks(
+            set_bool=self._set_bool, set_threshold=self._set_threshold,
+            set_color_mode=self._set_color_mode, set_startup=self._set_startup,
+            open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
+            startup_enabled=lambda: startup.is_enabled()))
+        acts = self._settings.actions
+        self._act_wireless = acts["wireless_enabled"]
+        self._act_bluetooth = acts["bluetooth_enabled"]
+        self._act_notif = acts["notifications_enabled"]
+        self._act_colors = acts["color_mode"]
+        self._act_start = acts["start_with_windows"]
+        self._thr_actions = self._settings.thr_actions
         m.addSeparator()
         self._act_about = m.addAction(tr("menu_about"))
         self._act_about.triggered.connect(self.show_about)
@@ -237,9 +214,7 @@ class TrayController(QObject):
         self.settings_changed.emit()
 
     def _set_start_checked(self, value: bool) -> None:
-        self._act_start.blockSignals(True)
-        self._act_start.setChecked(bool(value))
-        self._act_start.blockSignals(False)
+        self._settings.set_startup_checked(value)
 
     def _sync_menu(self) -> None:
         """Refresh the read-only device list and checkmarks every time the menu opens."""
@@ -264,22 +239,12 @@ class TrayController(QObject):
             a.setEnabled(False)
             self._menu.insertAction(self._devices_sep, a)
             self._dev_actions.append(a)
-        for key, act in (("show_disconnected", self._act_disc), ("notifications_enabled", self._act_notif),
-                         ("wireless_enabled", self._act_wireless),
-                         ("dualsense_bt_extended", self._act_ds_bt),
-                         ("experimental_readers", self._act_exp),
-                         ("color_mode", self._act_colors)):
-            act.blockSignals(True)
-            act.setChecked(bool(self._getters[key]()))
-            act.blockSignals(False)
+        act = self._act_disc
+        act.blockSignals(True)
+        act.setChecked(bool(self._getters["show_disconnected"]()))
+        act.blockSignals(False)
         self._rebuild_visible_menu()
-        try:
-            self._set_start_checked(startup.is_enabled())
-        except Exception:
-            pass
-        cur = int(self._cfg.get("low_threshold"))
-        for v, a in self._thr_actions:
-            a.setChecked(v == cur)
+        self._settings.sync()
 
     def _device_color(self, d):
         """Colour of the level dot in the menu (None when colours are off or no reading)."""

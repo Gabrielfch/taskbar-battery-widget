@@ -101,6 +101,16 @@ def run_shutdown(theme_timer, widget, tray, monitor, history, lock) -> None:
         lock.unlock()
 
 
+def full_device_list(history, devices, cfg, now: float) -> list:
+    """History update that always keeps hidden and disconnected devices in the list.
+
+    The device panel needs the complete list; the widget and the tray filter by `show_disconnected`
+    and `hidden_devices` themselves and the alerts ignore hidden/stale/disconnected devices.
+    """
+    return history.update(devices, now, show_disconnected=True, hidden=(),
+                          threshold=int(cfg.get("low_threshold")))
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -121,7 +131,7 @@ def main() -> int:
     from .device_history import DeviceHistory
     from .monitor import DeviceMonitor
     from .tray import TrayController
-    from .visibility import hidden_keys, visible_devices
+    from .visibility import visible_devices
     from .widget import TaskbarWidget
 
     from . import startup
@@ -153,10 +163,7 @@ def main() -> int:
 
     def on_devices(devices) -> None:
         raw[:] = devices
-        devices = history.update(devices, time.time(),
-                                 show_disconnected=bool(cfg.get("show_disconnected")),
-                                 hidden=hidden_keys(cfg),
-                                 threshold=int(cfg.get("low_threshold")))
+        devices = full_device_list(history, devices, cfg, time.time())
         widget.set_devices(devices)
         tray.set_devices(devices)
         try:

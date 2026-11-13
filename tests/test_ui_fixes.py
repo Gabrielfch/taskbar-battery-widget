@@ -255,14 +255,17 @@ def test_tray_menu_structure(qapp, tmp_path):
     tray._sync_menu()
     top = _texts(tray.menu)
     assert top[0] == "Raton: 97 % · Cargando"
-    assert top[1:] == ["Actualizar", "Mostrar", "Fuentes", "Alertas",
-                    "Abrir registro de dispositivos", "Abrir carpeta de registros", "Iniciar con Windows",
-                       "Acerca de Taskbar Battery Widget…", "Salir"]
+    assert top[1:] == ["Mostrar", "Actualizar", "Configuración", "Acerca de Taskbar Battery Widget…", "Salir"]
     sub = {a.text(): a.menu() for a in tray.menu.actions() if a.menu()}
-    assert _texts(sub["Mostrar"]) == ["Desconectados", "Dispositivos visibles", "Color según el nivel"]
-    assert len(_texts(sub["Fuentes"])) == 3
-    alerts = sub["Alertas"]
+    assert _texts(sub["Mostrar"]) == ["Desconectados", "Dispositivos visibles"]
+    st = sub["Configuración"]
+    assert _texts(st) == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]
+    s2 = {a.text(): a.menu() for a in st.actions() if a.menu()}
+    assert _texts(s2["Fuentes"]) == ["2.4 GHz y USB", "Bluetooth"]
+    alerts = s2["Alertas"]
     assert _texts(alerts)[0].startswith("Avisar") and alerts.actions()[1].menu() is not None
+    assert _texts(s2["Registros"]) == ["Abrir registro de dispositivos", "Abrir carpeta de registros"]
+    assert _texts(s2["Personalización"]) == ["Color según el nivel"]
 
 
 def test_tray_hidden_device_not_in_list_or_icon(qapp, tmp_path):

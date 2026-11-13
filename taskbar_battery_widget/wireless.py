@@ -71,9 +71,6 @@ def set_beta_readers(enabled: bool) -> None:
             _purge_beta()
 
 
-set_experimental_readers = set_beta_readers     # TODO(T05): drop once tray.py uses set_beta_readers
-
-
 def is_beta_device(dev: Device) -> bool:
     """True for a device that only a beta reader produces (per-model flag, see the reader tables)."""
     key = dongle_key(dev.id)
