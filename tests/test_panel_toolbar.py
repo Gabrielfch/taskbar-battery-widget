@@ -109,17 +109,17 @@ def test_state_tooltips_update_after_toggle(panel):
     panel.set_model(model([dev("a", "Mouse"), dev("c", "Gone", connected=False)]))
     btns = panel.findChildren(QToolButton)
     eye = next(b for b in btns if b.accessibleName() == "Show Mouse in the taskbar")
-    assert eye.toolTip() == "Hide Mouse from the taskbar"
+    assert eye.toolTip() == "Hide"
     eye.click()
-    assert eye.toolTip() == "Show Mouse in the taskbar"
+    assert eye.toolTip() == "Show"
     rec = next(b for b in btns if b.accessibleName() == "Record Mouse to the detailed log")
-    assert rec.toolTip() == "Start per-minute recording of Mouse"
+    assert rec.toolTip() == "Record"
     rec.click()
-    assert rec.toolTip() == "Stop per-minute recording of Mouse"
+    assert rec.toolTip() == "Stop recording"
     known = next(b for b in btns if b.accessibleName() == "Show known devices in the taskbar")
-    assert known.toolTip() == "Hide known devices from the taskbar"
+    assert known.toolTip() == "Hide known"
     known.click()
-    assert known.toolTip() == "Show known devices in the taskbar"
+    assert known.toolTip() == "Show known"
 
 
 def test_open_log_tooltip_and_spanish(qapp):
@@ -128,8 +128,7 @@ def test_open_log_tooltip_and_spanish(qapp):
     p.set_model(model([dev("a", "Raton"), dev("c", "Viejo", connected=False)], lang="es"),
                 logging_keys=[visibility_key("a")])
     tips = {b.toolTip() for b in p.findChildren(QToolButton)}
-    assert {"Ocultar Raton de la barra", "Detener el registro por minuto de Raton",
-            "Abrir el registro de Raton", "Ocultar conocidos de la barra"} <= tips
+    assert {"Ocultar", "Detener grabación", "Abrir registro", "Ocultar conocidos"} <= tips
     p.close()
 
 
@@ -194,3 +193,13 @@ def test_settings_menu_really_pops_up(qapp, tmp_path):
         assert menu.isVisible()
     finally:
         menu.hide()
+
+
+def test_tooltips_are_short(qapp):
+    """Floating labels stay short (<= 30 chars); the full text lives in the accessible name."""
+    p = dp.DevicePanel(dark=True, show_logging=True)
+    p.set_model(model([dev("a", "A very long wireless headset name"), dev("c", "Gone", connected=False)]),
+                logging_keys=[visibility_key("a")])
+    for b in p.findChildren(QToolButton):
+        assert len(b.toolTip()) <= 30, b.toolTip()
+    p.close()

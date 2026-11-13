@@ -347,8 +347,8 @@ class DevicePanel(QFrame):
             rec.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             rec.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
             label = _t("record", lang, name=row.name)
-            rec.setProperty("tip_on", _t("record_stop", lang, name=row.name))
-            rec.setProperty("tip_off", _t("record_start", lang, name=row.name))
+            rec.setProperty("tip_on", _t("tip_record_stop", lang))
+            rec.setProperty("tip_off", _t("tip_record_start", lang))
             rec.setToolTip(rec.property("tip_on") if on else rec.property("tip_off"))
             rec.setAccessibleName(label)
             rec.setAccessibleDescription(desc)
@@ -366,7 +366,7 @@ class DevicePanel(QFrame):
                 op.setAutoRaise(True)
                 op.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
                 lbl = _t("open_log", lang, name=row.name)
-                op.setToolTip(lbl)
+                op.setToolTip(_t("tip_open_log", lang))
                 op.setAccessibleName(lbl)
                 op.setAccessibleDescription(desc)
                 op.installEventFilter(self)
@@ -376,12 +376,11 @@ class DevicePanel(QFrame):
                 buttons.append(op)
 
         eye = self._eye_button(_t("show_in_bar", lang, name=row.name), row.visible, (row.key, "eye"),
-                               desc, tip_on=_t("hide_in_bar", lang, name=row.name),
-                               tip_off=_t("show_in_bar", lang, name=row.name))
+                               desc, tip_on=_t("tip_hide", lang), tip_off=_t("tip_show", lang))
         if not eye_enabled:
             hint = _t("known_eye_needed", lang)
             eye.setEnabled(False)
-            eye.setToolTip(hint)
+            eye.setToolTip(_t("tip_known_needed", lang))
             eye.setAccessibleDescription(f"{desc}. {hint}")
         eye.toggled.connect(lambda v, k=row.key, b=eye: self._on_eye(k, v, b))
         h.addWidget(eye)
@@ -438,7 +437,7 @@ class DevicePanel(QFrame):
             v.addWidget(empty)
         if model.known:
             eye = self._eye_button(_t("show_known", lang), model.show_disconnected, ("", "known"),
-                                   tip_on=_t("hide_known", lang), tip_off=_t("show_known", lang))
+                                   tip_on=_t("tip_hide_known", lang), tip_off=_t("tip_show_known", lang))
             eye.toggled.connect(lambda val, b=eye: self._on_known(val, b))
             self._add_row([eye])
             v.addWidget(self._header("known", lang, eye))

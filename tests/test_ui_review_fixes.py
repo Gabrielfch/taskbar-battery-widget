@@ -181,12 +181,12 @@ def test_known_row_eyes_disabled_without_show_known(panel):
     panel.set_model(model(devs, show_disc=False))
     eye = gone_eye()
     assert not eye.isEnabled()
-    assert eye.toolTip() == "Turn on 'Show known devices in the taskbar' first"
+    assert eye.toolTip() == "Show known devices first"
     assert tr_in("es", "panel_known_eye_needed") == "Activa «Mostrar conocidos en la barra» primero"
     assert eye not in panel._nav
     panel.set_model(model(devs, show_disc=True))
     eye = gone_eye()
-    assert eye.isEnabled() and eye.toolTip() == "Hide Gone from the taskbar"
+    assert eye.isEnabled() and eye.toolTip() == "Hide"
 
 
 # ---- 5. sizes / stylesheet
