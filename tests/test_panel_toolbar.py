@@ -171,6 +171,15 @@ def test_tray_toolbar_actions(qapp, tmp_path, monkeypatch):
     assert got[-1] == "quit" and not p.isVisible()
 
 
+def _wait_for(cond, timeout_ms: int = 3000) -> bool:
+    """Process events until cond() is true (PySide6's QTest has no qWaitFor)."""
+    waited = 0
+    while not cond() and waited < timeout_ms:
+        QTest.qWait(20)
+        waited += 20
+    return bool(cond())
+
+
 def test_tray_gear_shows_settings_menu_and_closes_panel(qapp, tmp_path, monkeypatch):
     set_language("es")
     t = make_tray(tmp_path)
@@ -180,7 +189,7 @@ def test_tray_gear_shows_settings_menu_and_closes_panel(qapp, tmp_path, monkeypa
     t._panel._toolbar["settings"].click()
     assert not t._panel.isVisible()
     assert shown == []                       # deferred until the panel has finished closing
-    assert QTest.qWaitFor(lambda: len(shown) == 1, 3000)     # deferred popup; generous under load and shown[0][0] is t._settings.menu
+    assert _wait_for(lambda: len(shown) == 1)     # deferred popup; generous timeout under load and shown[0][0] is t._settings.menu
     texts = [a.text() for a in shown[0][0].actions() if not a.isSeparator()]
     assert texts == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]
 
@@ -190,7 +199,7 @@ def test_settings_menu_really_pops_up(qapp, tmp_path):
     t.open_panel()
     t._panel._toolbar["settings"].click()
     menu = t._settings.menu
-    QTest.qWaitFor(menu.isVisible, 3000)
+    _wait_for(menu.isVisible)
     try:
         assert menu.isVisible()
     finally:
