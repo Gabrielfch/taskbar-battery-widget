@@ -254,7 +254,7 @@ def test_tray_menu_structure(qapp, tmp_path):
     tray.set_devices([Device("a", "Raton", "mouse", 97, True, charging=True)])
     tray._sync_menu()
     top = _texts(tray.menu)
-    assert top == ["Dispositivos", "Actualizar", "Configuración", "Acerca de Taskbar Battery Widget…", "Salir"]
+    assert top == ["Actualizar", "Configuración", "Acerca de Taskbar Battery Widget…", "Salir"]
     sub = {a.text(): a.menu() for a in tray.menu.actions() if a.menu()}
     st = sub["Configuración"]
     assert _texts(st) == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]

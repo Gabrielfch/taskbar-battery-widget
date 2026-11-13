@@ -103,7 +103,7 @@ def test_long_status_buttons_inside_row_and_viewport(panel):
 def test_button_descriptions_and_panel_name(panel):
     panel.set_model(model([dev("a", "Mouse", 10)]), logging_keys=[visibility_key("a")])
     assert panel.accessibleName() == "Devices"
-    btns = panel.findChildren(QToolButton)
+    btns = [b for b in panel.findChildren(QToolButton) if b not in panel._toolbar_buttons()]
     assert len(btns) == 3
     for b in btns:
         assert b.accessibleDescription().startswith("Mouse, ")
@@ -186,7 +186,7 @@ def test_known_row_eyes_disabled_without_show_known(panel):
     assert eye not in panel._nav
     panel.set_model(model(devs, show_disc=True))
     eye = gone_eye()
-    assert eye.isEnabled() and eye.toolTip() == "Show Gone in the taskbar"
+    assert eye.isEnabled() and eye.toolTip() == "Hide Gone from the taskbar"
 
 
 # ---- 5. sizes / stylesheet

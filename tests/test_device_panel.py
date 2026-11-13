@@ -23,7 +23,9 @@ def model(devs, hidden=(), show_disc=True):
 
 
 def eyes(p):
-    return [b for b in p.findChildren(QToolButton) if b.accessibleName().startswith("Show ")]
+    bar = p._toolbar_buttons()
+    return [b for b in p.findChildren(QToolButton)
+            if b.accessibleName().startswith("Show ") and b not in bar]
 
 
 def row_eye(p, name):
@@ -71,7 +73,7 @@ def test_spanish_accessible_name(qapp):
     p = dp.DevicePanel(dark=True)
     p.set_model(build_panel_model([dev("a", "Raton")], (), True, 20, True, lang="es"))
     assert any(b.accessibleName() == "Mostrar Raton en la barra" for b in p.findChildren(QToolButton))
-    assert p._footer.text() == "Mostrar todos en la barra"
+    assert p._toolbar["show_all"].accessibleName() == "Mostrar todos en la barra"
 
 
 def test_eye_emits_visibility_toggled(panel):
@@ -98,10 +100,10 @@ def test_show_all_button(panel):
     got = []
     panel.show_all_requested.connect(lambda: got.append(1))
     panel.set_model(model([dev("a")]))
-    assert not panel._footer.isEnabled()
+    assert not panel._toolbar["show_all"].isEnabled()
     panel.set_model(model([dev("a")], hidden=[visibility_key("a")]))
-    assert panel._footer.isEnabled()
-    panel._footer.click()
+    assert panel._toolbar["show_all"].isEnabled()
+    panel._toolbar["show_all"].click()
     assert got == [1]
 
 
@@ -199,7 +201,7 @@ def test_space_toggles_focused_eye(panel):
     assert got == [False]
 
 
-def test_tab_order_follows_rows_then_footer(panel):
+def test_tab_order_follows_rows_then_toolbar(panel):
     panel.set_model(model([dev("a", "A"), dev("b", "B")], hidden=[visibility_key("b")]))
     panel.show_at(QPoint(300, 300))
     chain, w = [], row_eye(panel, "A")
@@ -208,8 +210,8 @@ def test_tab_order_follows_rows_then_footer(panel):
         w = w.nextInFocusChain()
         if w is chain[0]:
             break
-    order = [x for x in chain if x in eyes(panel) or x is panel._footer]
-    assert order[:3] == [row_eye(panel, "A"), row_eye(panel, "B"), panel._footer]
+    order = [x for x in chain if x in eyes(panel) or x in panel._toolbar_buttons()]
+    assert order[:4] == [row_eye(panel, "A"), row_eye(panel, "B"), *panel._toolbar_buttons()[:2]]
 
 
 def test_hostile_name_is_plain_text(panel):

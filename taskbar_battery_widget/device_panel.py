@@ -6,12 +6,13 @@ import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixmap
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea,
                                QToolButton, QVBoxLayout, QWidget)
 
 from . import i18n, taskbar
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
-from .icons import draw_kind_icon, eye_icon, record_icon
+from .icons import (about_icon, draw_kind_icon, eye_icon, gear_icon, power_icon, record_icon,
+                    refresh_icon, show_all_icon)
 from .panel_model import PanelModel, PanelRow, section_title
 from .popup import place_popup
 
@@ -69,6 +70,10 @@ class DevicePanel(QFrame):
     show_all_requested = Signal()
     logging_toggled = Signal(str, bool)
     open_log_requested = Signal(str)
+    refresh_requested = Signal()
+    settings_requested = Signal(QRect)      # global rect of the gear button
+    about_requested = Signal()
+    quit_requested = Signal()
 
     def __init__(self, parent=None, dark: bool | None = None, show_logging: bool = False):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
@@ -96,14 +101,14 @@ class DevicePanel(QFrame):
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._scroll.viewport().setAutoFillBackground(False)
-        self._footer = QPushButton(self)
-        self._footer.clicked.connect(self.show_all_requested)
-        self._footer.installEventFilter(self)
+        self._show_all_enabled = False
+        self._toolbar: dict[str, QToolButton] = {}
+        self._toolbar_widget = self._build_toolbar()
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(4)
         lay.addWidget(self._scroll)
-        lay.addWidget(self._footer)
+        lay.addWidget(self._toolbar_widget)
         self._apply_style()
 
     # ------------------------------------------------------------------ public API
@@ -171,11 +176,7 @@ class DevicePanel(QFrame):
             f"QToolButton {{ background: transparent; border: 2px solid transparent; "
             f"border-radius: 5px; padding: 2px; }}"
             f"QToolButton:hover {{ background: {hover}; }}"
-            f"QToolButton:focus, QPushButton:focus {{ border: 2px solid {focus}; }}"
-            f"QPushButton {{ background: transparent; color: {_hex(text)}; border: 2px solid "
-            f"transparent; border-radius: 5px; padding: 4px 8px; }}"
-            f"QPushButton:hover {{ background: {hover}; }}"
-            f"QPushButton:disabled {{ color: {_hex(band_color('grey', dark))}; }}"
+            f"QToolButton:focus {{ border: 2px solid {focus}; }}"
             f"QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}"
             f"QScrollBar::handle:vertical {{ background: {handle}; min-height: 24px; "
             f"border-radius: 4px; margin: 1px; }}"
@@ -183,13 +184,64 @@ class DevicePanel(QFrame):
             f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}"
             f"QToolTip {{ background: {_hex(base)}; color: {_hex(text)}; "
             f"border: 1px solid {_hex(edge)}; padding: 3px; }}")
+        self._refresh_toolbar(i18n.get_language())
+
+    # ------------------------------------------------------------------ toolbar
+    def _build_toolbar(self) -> QWidget:
+        w = QWidget(self)
+        h = QHBoxLayout(w)
+        h.setContentsMargins(2, 0, 2, 0)
+        h.setSpacing(4)
+        specs = (("refresh", self.refresh_requested.emit),
+                 ("show_all", self.show_all_requested.emit),
+                 ("settings", self._emit_settings),
+                 ("about", self.about_requested.emit),
+                 ("quit", self.quit_requested.emit))
+        for name, slot in specs:
+            b = QToolButton(w)
+            self._size_button(b)
+            b.setAutoRaise(True)
+            b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            b.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            b.installEventFilter(self)
+            b.clicked.connect(lambda _c=False, f=slot: f())
+            self._toolbar[name] = b
+            if name == "quit":
+                h.addStretch(1)
+            h.addWidget(b)
+        return w
+
+    def _emit_settings(self) -> None:
+        b = self._toolbar["settings"]
+        self.settings_requested.emit(QRect(b.mapToGlobal(QPoint(0, 0)), b.size()))
+
+    def _refresh_toolbar(self, lang: str) -> None:
+        grey = band_color("grey", self._dark)
+        labels = {"refresh": i18n.tr_in(lang, "refresh"), "show_all": i18n.tr_in(lang, "show_all"),
+                  "settings": i18n.tr_in(lang, "menu_settings"),
+                  "about": i18n.tr_in(lang, "panel_about"), "quit": i18n.tr_in(lang, "quit")}
+        for name, b in self._toolbar.items():
+            b.setToolTip(labels[name])
+            b.setAccessibleName(labels[name])
+        t = self._toolbar
+        t["show_all"].setEnabled(self._show_all_enabled)
+        t["refresh"].setIcon(refresh_icon(BTN_ICON_PX, self._text))
+        t["show_all"].setIcon(show_all_icon(BTN_ICON_PX, self._text if self._show_all_enabled else grey))
+        t["settings"].setIcon(gear_icon(BTN_ICON_PX, self._text))
+        t["about"].setIcon(about_icon(BTN_ICON_PX, self._text))
+        t["quit"].setIcon(power_icon(BTN_ICON_PX, self._text))
+
+    def _toolbar_buttons(self) -> list[QToolButton]:
+        return list(self._toolbar.values())
 
     @staticmethod
     def _size_button(b: QToolButton) -> None:
         b.setFixedSize(BTN_PX, BTN_PX)
 
     def _eye_button(self, name_text: str, checked: bool, tracked_key: tuple[str, str],
-                    description: str = "") -> QToolButton:
+                    description: str = "", tip_on: str = "", tip_off: str = "") -> QToolButton:
         b = QToolButton(self)
         self._size_button(b)
         b.setCheckable(True)
@@ -197,7 +249,9 @@ class DevicePanel(QFrame):
         b.setAutoRaise(True)
         b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         b.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
-        b.setToolTip(name_text)
+        b.setProperty("tip_on", tip_on or name_text)
+        b.setProperty("tip_off", tip_off or name_text)
+        b.setToolTip(b.property("tip_on") if checked else b.property("tip_off"))
         b.setAccessibleName(name_text)
         if description:
             b.setAccessibleDescription(description)
@@ -293,7 +347,9 @@ class DevicePanel(QFrame):
             rec.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             rec.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
             label = _t("record", lang, name=row.name)
-            rec.setToolTip(label)
+            rec.setProperty("tip_on", _t("record_stop", lang, name=row.name))
+            rec.setProperty("tip_off", _t("record_start", lang, name=row.name))
+            rec.setToolTip(rec.property("tip_on") if on else rec.property("tip_off"))
             rec.setAccessibleName(label)
             rec.setAccessibleDescription(desc)
             rec.setIcon(record_icon(BTN_ICON_PX, on, band_color("red", self._dark) if on
@@ -320,7 +376,8 @@ class DevicePanel(QFrame):
                 buttons.append(op)
 
         eye = self._eye_button(_t("show_in_bar", lang, name=row.name), row.visible, (row.key, "eye"),
-                               desc)
+                               desc, tip_on=_t("hide_in_bar", lang, name=row.name),
+                               tip_off=_t("show_in_bar", lang, name=row.name))
         if not eye_enabled:
             hint = _t("known_eye_needed", lang)
             eye.setEnabled(False)
@@ -380,7 +437,8 @@ class DevicePanel(QFrame):
                                 f"background: transparent;")
             v.addWidget(empty)
         if model.known:
-            eye = self._eye_button(_t("show_known", lang), model.show_disconnected, ("", "known"))
+            eye = self._eye_button(_t("show_known", lang), model.show_disconnected, ("", "known"),
+                                   tip_on=_t("hide_known", lang), tip_off=_t("show_known", lang))
             eye.toggled.connect(lambda val, b=eye: self._on_known(val, b))
             self._add_row([eye])
             v.addWidget(self._header("known", lang, eye))
@@ -392,9 +450,8 @@ class DevicePanel(QFrame):
         self._scroll.setWidget(content)
         self.setAccessibleName(i18n.tr("devices"))
 
-        self._footer.setText(_t("show_all", lang))
-        self._footer.setAccessibleName(_t("show_all", lang))
-        self._footer.setEnabled(any(not r.visible for r in model.connected + model.known))
+        self._show_all_enabled = any(not r.visible for r in model.connected + model.known)
+        self._refresh_toolbar(lang)
         self._chain_tab_order()
         self._fit(self._screen_avail or self._primary_avail())
         bar.setValue(scroll_pos)
@@ -403,7 +460,7 @@ class DevicePanel(QFrame):
 
     def _chain_tab_order(self) -> None:
         order = list(self._buttons.values())      # creation order == visual order
-        order.append(self._footer)
+        order.extend(self._toolbar_buttons())
         for x, y in zip(order, order[1:]):
             QWidget.setTabOrder(x, y)
 
@@ -420,7 +477,7 @@ class DevicePanel(QFrame):
         want = self._content.sizeHint().height()
         margins = self.layout().contentsMargins()
         extra = (margins.top() + margins.bottom() + self.layout().spacing()
-                 + self._footer.sizeHint().height() + 2)
+                 + self._toolbar_widget.sizeHint().height() + 2)
         cap = max(80, int(avail.height() * MAX_HEIGHT_FRACTION) - extra)
         height = min(want, cap)
         sb = self._scroll.verticalScrollBar().sizeHint().width() if want > cap else 0
@@ -434,15 +491,23 @@ class DevicePanel(QFrame):
                 self.move(x, y)
 
     # ------------------------------------------------------------------ slots
+    @staticmethod
+    def _set_state_tip(b: QToolButton, on: bool) -> None:
+        if b.isEnabled():
+            b.setToolTip(b.property("tip_on") if on else b.property("tip_off"))
+
     def _on_eye(self, key: str, visible: bool, b: QToolButton) -> None:
         self._set_eye_icon(b, visible)
+        self._set_state_tip(b, visible)
         self.visibility_toggled.emit(key, visible)
 
     def _on_known(self, value: bool, b: QToolButton) -> None:
         self._set_eye_icon(b, value)
+        self._set_state_tip(b, value)
         self.show_disconnected_toggled.emit(value)
 
     def _on_record(self, key: str, on: bool, b: QToolButton) -> None:
+        self._set_state_tip(b, on)
         b.setIcon(record_icon(BTN_ICON_PX, on, band_color("red", self._dark) if on
                               else band_color("grey", self._dark)))
         self.logging_toggled.emit(key, on)
@@ -454,6 +519,23 @@ class DevicePanel(QFrame):
             if key == Qt.Key.Key_Escape:
                 self.close()
                 return True
+            tb = self._toolbar_buttons()
+            if (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and isinstance(obj, QToolButton)
+                    and obj.isEnabled()):
+                obj.click()
+                return True
+            if obj in tb:
+                if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                    live = [b for b in tb if b.isEnabled()]
+                    j = max(0, min(len(live) - 1, live.index(obj) + (-1 if key == Qt.Key.Key_Left else 1)))
+                    live[j].setFocus(Qt.FocusReason.TabFocusReason)
+                    return True
+                if key == Qt.Key.Key_Up and self._nav:
+                    self._nav[-1].setFocus(Qt.FocusReason.TabFocusReason)
+                    self._scroll.ensureWidgetVisible(self._nav[-1])
+                    return True
+                if key == Qt.Key.Key_Down:
+                    return True
             if key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and self._nav:
                 self._move_focus(obj, -1 if key == Qt.Key.Key_Up else 1)
                 return True

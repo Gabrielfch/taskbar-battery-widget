@@ -1,6 +1,8 @@
 """Original vector icons drawn with QPainter (24x24 design grid, stroked outlines)."""
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 
@@ -305,3 +307,96 @@ def eye_icon(size: int, open: bool, color: QColor) -> QIcon:
 def record_icon(size: int, active: bool, color: QColor) -> QIcon:
     """QIcon with 1x and 2x pixmaps of the record marker (filled when active)."""
     return _icon_from(draw_record, size, color, active)
+
+
+def _stroked(painter: QPainter, rect: QRectF, color: QColor):
+    """Common set-up of the 24x24 stroked toolbar glyphs (caller must painter.restore())."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    side = min(rect.width(), rect.height())
+    painter.translate(rect.center().x() - side / 2, rect.center().y() - side / 2)
+    painter.scale(side / 24.0, side / 24.0)
+    painter.setPen(_stroke_pen(color))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+
+
+def draw_refresh(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Circular arrow: a 270 degree arc with an arrow head at its end."""
+    _stroked(painter, rect, color)
+    path = QPainterPath()
+    path.arcMoveTo(QRectF(4, 4, 16, 16), 50)
+    path.arcTo(QRectF(4, 4, 16, 16), 50, 270)
+    painter.drawPath(path)
+    end = path.currentPosition()
+    tang = (-math.sin(math.radians(320)), -math.cos(math.radians(320)))     # travel direction (y down)
+    for sign in (-1, 1):
+        a = math.radians(sign * 38)
+        bx = -(tang[0] * math.cos(a) - tang[1] * math.sin(a))
+        by = -(tang[0] * math.sin(a) + tang[1] * math.cos(a))
+        _poly(painter, [(end.x(), end.y()), (end.x() + 4.5 * bx, end.y() + 4.5 * by)])
+    painter.restore()
+
+
+def draw_show_all(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Open eye with a small plus in the top right corner."""
+    painter.save()
+    draw_eye(painter, rect, color, True)
+    painter.restore()
+    _stroked(painter, rect, color)
+    _poly(painter, [(20, 1.8), (20, 6.2)])
+    _poly(painter, [(17.8, 4), (22.2, 4)])
+    painter.restore()
+
+
+def draw_gear(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Cog: eight trapezoid teeth around a ring with a centre hole."""
+    _stroked(painter, rect, color)
+    pts = []
+    for i in range(8):
+        base = i * 45.0
+        for off, r in ((-11, 6.6), (-7, 9.6), (7, 9.6), (11, 6.6)):
+            a = math.radians(base + off)
+            pts.append((12 + r * math.cos(a), 12 + r * math.sin(a)))
+    _poly(painter, pts, close=True)
+    painter.drawEllipse(_P(12, 12), 3, 3)
+    painter.restore()
+
+
+def draw_about(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Circled 'i'."""
+    _stroked(painter, rect, color)
+    painter.drawEllipse(_P(12, 12), 9, 9)
+    _poly(painter, [(12, 11), (12, 16.5)])
+    painter.drawPoint(_P(12, 7.7))
+    painter.restore()
+
+
+def draw_power(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Power symbol: open ring with a bar."""
+    _stroked(painter, rect, color)
+    path = QPainterPath()
+    path.arcMoveTo(QRectF(4.5, 5, 15, 15), 120)
+    path.arcTo(QRectF(4.5, 5, 15, 15), 120, 300)
+    painter.drawPath(path)
+    _poly(painter, [(12, 2.8), (12, 11)])
+    painter.restore()
+
+
+def refresh_icon(size: int, color: QColor) -> QIcon:
+    return _icon_from(draw_refresh, size, color, True)
+
+
+def show_all_icon(size: int, color: QColor) -> QIcon:
+    return _icon_from(draw_show_all, size, color, True)
+
+
+def gear_icon(size: int, color: QColor) -> QIcon:
+    return _icon_from(draw_gear, size, color, True)
+
+
+def about_icon(size: int, color: QColor) -> QIcon:
+    return _icon_from(draw_about, size, color, True)
+
+
+def power_icon(size: int, color: QColor) -> QIcon:
+    return _icon_from(draw_power, size, color, True)

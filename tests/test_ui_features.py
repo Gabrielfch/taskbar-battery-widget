@@ -154,7 +154,7 @@ def test_tray_has_no_show_submenu(qapp, tmp_path):
     tray = TrayController(Config(tmp_path / "c.json"))
     assert not hasattr(tray, "_visible_menu")
     assert all(a.text() != "Show" for a in tray.menu.actions())
-    assert tray.menu.actions()[0].text() == "Devices"
+    assert tray.menu.actions()[0].text() == "Refresh"
 
 
 def test_tray_panel_eye_persists_and_show_all(qapp, tmp_path):
@@ -180,19 +180,23 @@ def test_tray_panel_eye_persists_and_show_all(qapp, tmp_path):
     p.close()
 
 
-def test_tray_left_click_and_menu_entry_open_panel(qapp, tmp_path):
+def test_tray_left_and_right_click_toggle_panel(qapp, tmp_path):
     from PySide6.QtWidgets import QSystemTrayIcon
+    R = QSystemTrayIcon.ActivationReason
     tray = TrayController(Config(tmp_path / "c.json"))
     tray.set_devices([Device("a", "A", "mouse", 80, True)])
-    tray._on_activated(QSystemTrayIcon.ActivationReason.Context)
+    assert not hasattr(tray, "_act_devices")
+    tray._on_activated(R.DoubleClick)
     assert tray._panel is None or not tray._panel.isVisible()
-    tray._on_activated(QSystemTrayIcon.ActivationReason.Trigger)
+    tray._on_activated(R.Context)           # right click opens the panel
+    assert tray._panel.isVisible()
+    tray._on_activated(R.Context)           # a second one closes it
+    assert not tray._panel.isVisible()
+    tray._panel.hidden_at = None
+    tray._on_activated(R.Trigger)
     assert tray._panel.isVisible()
     tray._panel.close()
     assert not tray._panel.isVisible()
-    tray._act_devices.trigger()
-    assert tray._panel.isVisible()
-    tray._panel.close()
 
 
 def test_tray_panel_follows_device_changes(qapp, tmp_path):

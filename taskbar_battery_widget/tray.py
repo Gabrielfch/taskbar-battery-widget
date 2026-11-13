@@ -5,8 +5,8 @@ import logging
 import os
 import time
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QCursor
+from PySide6.QtCore import QObject, QPoint, QRect, Signal
+from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from . import startup
@@ -15,6 +15,7 @@ from .colors import battery_color
 from .i18n import tr
 from .icons import make_tray_icon
 from .panel_model import build_panel_model
+from .widget import popup_menu_foreground
 from .settings_menu import SettingsCallbacks, build_settings_menu
 
 log = logging.getLogger(__name__)
@@ -42,7 +43,6 @@ class TrayController(QObject):
         self._about = None
         self._release = None            # newer release found by the automatic check, if any
         self._build_menu()
-        self._tray.setContextMenu(self._menu)
         self._tray.activated.connect(self._on_activated)
         self._tray.setToolTip(tr("app_name"))
         self._update_icon()
@@ -77,8 +77,6 @@ class TrayController(QObject):
     # ------------------------------------------------------------------ menu
     def _build_menu(self) -> None:
         m = self._menu
-        self._act_devices = m.addAction(tr("menu_devices"))
-        self._act_devices.triggered.connect(lambda _c=False: self.open_panel())
         m.addAction(tr("refresh")).triggered.connect(self.refresh_requested.emit)
         self._settings = build_settings_menu(m, self._cfg, SettingsCallbacks(
             set_bool=self._set_bool, set_threshold=self._set_threshold,
@@ -150,6 +148,10 @@ class TrayController(QObject):
             self._panel.show_all_requested.connect(self._on_show_all)
             self._panel.logging_toggled.connect(self._on_logging)
             self._panel.open_log_requested.connect(self.open_detail_log_requested)
+            self._panel.refresh_requested.connect(self.refresh_requested)
+            self._panel.settings_requested.connect(self.show_settings_menu)
+            self._panel.about_requested.connect(self._on_panel_about)
+            self._panel.quit_requested.connect(self._on_panel_quit)
         return self._panel
 
     def _refresh_panel(self) -> None:
@@ -174,8 +176,39 @@ class TrayController(QObject):
             anchor = g if g.isValid() and not g.isEmpty() else QCursor.pos()
         p.show_at(anchor)
 
+    def _on_panel_about(self) -> None:
+        if self._panel is not None:
+            self._panel.hide()
+        self.show_about()
+
+    def _on_panel_quit(self) -> None:
+        if self._panel is not None:
+            self._panel.hide()
+        self.quit_requested.emit()
+
+    def show_settings_menu(self, anchor=None) -> None:
+        """Close the panel and open the Settings menu where the gear button was (above it if it fits).
+
+        A QMenu popped up from inside a Qt.Popup panel competes with it for the popup grab, so the
+        panel is closed first and the menu is opened as the only popup (same as the old tray menu).
+        """
+        if self._panel is not None:
+            self._panel.hide()
+        menu = self._settings.menu
+        self._sync_menu()
+        if anchor is None:
+            pos = QCursor.pos()
+        else:
+            rect = QRect(anchor)
+            h = menu.sizeHint().height()
+            screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
+            top = screen.availableGeometry().top() if screen is not None else 0
+            pos = QPoint(rect.left(), rect.top() - h) if rect.top() - h >= top else rect.bottomLeft()
+        popup_menu_foreground(menu, pos)
+
     def _on_activated(self, reason) -> None:
-        if reason != QSystemTrayIcon.ActivationReason.Trigger:
+        # on Windows the right click arrives as Context (no context menu is set): same as a left click
+        if reason not in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.Context):
             return
         p = self._panel
         if p is not None:
