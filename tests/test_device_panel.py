@@ -120,7 +120,7 @@ def test_logging_buttons_hidden_by_default_and_emit(qapp):
     rec.click()
     assert got == [(visibility_key("a"), True)]
     p2.set_model(model([dev("a", "Mouse")]), logging_keys=[visibility_key("a")])
-    op = next(b for b in p2.findChildren(QToolButton) if b.accessibleName().startswith("Open the log"))
+    op = next(b for b in p2.findChildren(QToolButton) if b.accessibleName().startswith("Open the detailed logs folder"))
     op.click()
     assert opened == [visibility_key("a")]
 

@@ -305,7 +305,7 @@ def main() -> int:
     tray.quit_requested.connect(app.quit)
     widget.panel_requested.connect(tray.open_panel)
     tray.open_detail_log_requested.connect(
-        lambda key: open_detail_log(detail_logger, latest, key, tray.open_path, tray.open_text_file))
+        lambda _key: open_detail_folder())     # "…" on a recording row opens the detailed logs folder
     # first sample right away when recording starts (then one per minute)
     tray.detail_log_started.connect(lambda key: detail_logger.tick(latest, {key}))
 

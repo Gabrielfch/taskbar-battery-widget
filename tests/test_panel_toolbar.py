@@ -128,7 +128,7 @@ def test_open_log_tooltip_and_spanish(qapp):
     p.set_model(model([dev("a", "Raton"), dev("c", "Viejo", connected=False)], lang="es"),
                 logging_keys=[visibility_key("a")])
     tips = {b.toolTip() for b in p.findChildren(QToolButton)}
-    assert {"Ocultar", "Detener grabación", "Abrir registro", "Ocultar conocidos"} <= tips
+    assert {"Ocultar", "Detener grabación", "Abrir carpeta", "Ocultar conocidos"} <= tips
     p.close()
 
 
