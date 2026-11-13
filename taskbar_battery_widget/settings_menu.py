@@ -21,6 +21,7 @@ class SettingsCallbacks:
     open_device_log: Callable[[], None]
     open_logs_folder: Callable[[], None]
     startup_enabled: Callable[[], bool]           # real state of the Windows startup entry
+    open_detail_folder: Callable[[], None] = lambda: None
 
 
 @dataclass
@@ -97,6 +98,9 @@ def build_settings_menu(parent: QMenu, cfg, cb: SettingsCallbacks) -> SettingsMe
     logs = root.addMenu(tr("menu_logs"))
     logs.addAction(tr("open_device_log")).triggered.connect(lambda _c=False: cb.open_device_log())
     logs.addAction(tr("open_logs_folder")).triggered.connect(lambda _c=False: cb.open_logs_folder())
+    _toggle(sm, logs, tr("detail_log"), "detail_log_enabled",
+            cfg_bool("detail_log_enabled"), cfg_setter("detail_log_enabled"))
+    logs.addAction(tr("open_detail_folder")).triggered.connect(lambda _c=False: cb.open_detail_folder())
 
     def startup_state():
         try:

@@ -254,30 +254,40 @@ def test_tray_menu_structure(qapp, tmp_path):
     tray.set_devices([Device("a", "Raton", "mouse", 97, True, charging=True)])
     tray._sync_menu()
     top = _texts(tray.menu)
-    assert top[0] == "Raton: 97 % · Cargando"
-    assert top[1:] == ["Mostrar", "Actualizar", "Configuración", "Acerca de Taskbar Battery Widget…", "Salir"]
+    assert top == ["Dispositivos…", "Actualizar", "Configuración", "Acerca de Taskbar Battery Widget…", "Salir"]
     sub = {a.text(): a.menu() for a in tray.menu.actions() if a.menu()}
-    assert _texts(sub["Mostrar"]) == ["Desconectados", "Dispositivos visibles"]
     st = sub["Configuración"]
     assert _texts(st) == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]
     s2 = {a.text(): a.menu() for a in st.actions() if a.menu()}
     assert _texts(s2["Fuentes"]) == ["2.4 GHz y USB", "Bluetooth"]
     alerts = s2["Alertas"]
     assert _texts(alerts)[0].startswith("Avisar") and alerts.actions()[1].menu() is not None
-    assert _texts(s2["Registros"]) == ["Abrir registro de dispositivos", "Abrir carpeta de registros"]
+    assert _texts(s2["Registros"]) == ["Abrir registro de dispositivos", "Abrir carpeta de registros",
+                                       "Registro detallado (cada minuto)",
+                                       "Abrir carpeta de registros detallados"]
     assert _texts(s2["Personalización"]) == ["Color según el nivel"]
 
 
-def test_tray_hidden_device_not_in_list_or_icon(qapp, tmp_path):
+def test_tray_hidden_device_not_in_icon(qapp, tmp_path):
     cfg = Config(tmp_path / "c.json")
     tray = TrayController(cfg)
     tray.set_devices([Device("a", "Low", "mouse", 5, True), Device("b", "High", "mouse", 90, True)])
     tip = lambda: tray._tray.toolTip()
     assert tip().endswith("5%")
-    tray.set_device_visible("a", False)
+    tray._on_visibility(visibility_key("a"), False)
     assert cfg.get("hidden_devices") == [visibility_key("a")]
     assert tip().endswith("90%")
-    tray._sync_menu()
-    assert not any(t.startswith("Low") for t in _texts(tray.menu))
-    tray.show_all_devices()
+    tray._on_show_all()
     assert tip().endswith("5%")
+
+
+def test_tray_icon_ignores_disconnected_unless_shown(qapp, tmp_path):
+    cfg = Config(tmp_path / "c.json")
+    tray = TrayController(cfg)
+    tray.set_devices([Device("a", "Gone", "mouse", 5, False), Device("b", "High", "mouse", 90, True)])
+    assert tray._tray.toolTip().endswith("90%")
+    cfg.set("show_disconnected", True)
+    tray._update_icon()
+    assert tray._tray.toolTip().endswith("90%")      # disconnected never has a live level
+
+

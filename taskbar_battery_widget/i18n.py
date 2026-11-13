@@ -18,6 +18,15 @@ import sys
 
 EN = {
     "app_name": "Taskbar Battery Widget",
+    "menu_devices": "Devices…",
+    "panel_connected": "Connected", "panel_known": "Known devices",
+    "panel_show_in_bar": "Show {name} in the taskbar",
+    "panel_show_known": "Show disconnected devices in the taskbar",
+    "panel_record": "Record {name} to the detailed log",
+    "panel_open_log": "Open the log of {name}",
+    "panel_empty": "No devices",
+    "detail_log": "Detailed log (every minute)",
+    "open_detail_folder": "Open detailed logs folder",
     "bluetooth_off": "Bluetooth off",
     "pill_off": "OFF",
     "pill_none": "--",
@@ -114,6 +123,15 @@ EN = {
 }
 
 ES = {
+    "menu_devices": "Dispositivos…",
+    "panel_connected": "Conectados", "panel_known": "Dispositivos conocidos",
+    "panel_show_in_bar": "Mostrar {name} en la barra",
+    "panel_show_known": "Mostrar desconectados en la barra",
+    "panel_record": "Registrar {name} en el log detallado",
+    "panel_open_log": "Abrir el log de {name}",
+    "panel_empty": "Sin dispositivos",
+    "detail_log": "Registro detallado (cada minuto)",
+    "open_detail_folder": "Abrir carpeta de registros detallados",
     "app_name": "Taskbar Battery Widget",
     "bluetooth_off": "Bluetooth apagado",
     "pill_off": "OFF",
@@ -245,6 +263,17 @@ def get_language() -> str:
 
 def tr(key: str, **kw) -> str:
     text = _TABLES[_lang].get(key) or EN.get(key) or key
+    if kw:
+        try:
+            return text.format(**kw)
+        except (KeyError, IndexError, ValueError):
+            return text
+    return text
+
+
+def tr_in(lang: str, key: str, **kw) -> str:
+    """Like tr() but for an explicit language ("es" or anything else = English)."""
+    text = (ES if lang == "es" else EN).get(key) or EN.get(key) or key
     if kw:
         try:
             return text.format(**kw)

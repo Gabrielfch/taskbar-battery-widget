@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QTimer
+from PySide6.QtCore import QLockFile, QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
 log = logging.getLogger(__name__)
@@ -85,10 +85,16 @@ def install_excepthooks() -> None:
     threading.excepthook = thread_hook
 
 
-def run_shutdown(theme_timer, widget, tray, monitor, history, lock) -> None:
+def run_shutdown(theme_timer, widget, tray, monitor, history, lock, detail=None) -> None:
     """Stop everything; the single-instance lock is released whatever fails along the way."""
     try:
         theme_timer.stop()
+        if detail is not None:
+            try:
+                detail[0].stop()
+                detail[1].close()
+            except Exception:
+                log.exception("detail log close failed")
         widget.stop()
         tray.hide()
         try:
@@ -111,6 +117,77 @@ def full_device_list(history, devices, cfg, now: float) -> list:
                           threshold=int(cfg.get("low_threshold")))
 
 
+DETAIL_LOG_INTERVAL_MS = 60_000
+
+
+def ms_to_next_minute(now: float) -> int:
+    """Milliseconds from `now` (epoch seconds) to the next minute boundary (1..60000)."""
+    ms = int(round((60.0 - (now % 60.0)) * 1000))
+    return max(1, min(DETAIL_LOG_INTERVAL_MS, ms))
+
+
+class DetailLogDriver(QObject):
+    """Feeds the detailed logger once per minute, aligned to the minute boundary."""
+
+    def __init__(self, logger, cfg, clock=time.time, parent=None):
+        super().__init__(parent)
+        self._logger = logger
+        self._cfg = cfg
+        self._clock = clock
+        self._devices: list = []
+        self._first = QTimer(self)
+        self._first.setSingleShot(True)
+        self._first.timeout.connect(self._on_first)
+        self._periodic = QTimer(self)
+        self._periodic.setInterval(DETAIL_LOG_INTERVAL_MS)
+        self._periodic.timeout.connect(self.tick)
+
+    def set_devices(self, devices) -> None:
+        self._devices = list(devices)
+
+    def start(self) -> None:
+        self._first.setInterval(ms_to_next_minute(self._clock()))
+        self._first.start()
+
+    def stop(self) -> None:
+        self._first.stop()
+        self._periodic.stop()
+
+    def _on_first(self) -> None:
+        self.tick()
+        self._periodic.start()
+
+    def enabled_keys(self) -> set:
+        if not self._cfg.get("detail_log_enabled"):
+            return set()
+        v = self._cfg.get("detail_log_devices")
+        return {k for k in v if isinstance(k, str)} if isinstance(v, list) else set()
+
+    def tick(self) -> None:
+        try:
+            self._logger.tick(self._devices, self.enabled_keys())
+        except Exception:
+            log.exception("detail log tick failed")
+
+
+def open_detail_log(logger, devices, key: str, open_path) -> None:
+    """Open the CSV of the device with visibility key `key` (its folder if it was not written yet)."""
+    from .models import visibility_key
+    dev = next((d for d in devices if visibility_key(d.id) == key), None)
+    if dev is None:
+        return
+    path = logger.path_for(dev)
+    if path.exists():
+        open_path(path)
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        log.exception("could not create the detailed logs folder")
+        return
+    open_path(path.parent)
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -128,6 +205,7 @@ def main() -> int:
     from . import taskbar
     from .alerts import AlertManager
     from .config import Config
+    from .detail_log import DetailLogger
     from .device_history import DeviceHistory
     from .monitor import DeviceMonitor
     from .tray import TrayController
@@ -160,10 +238,15 @@ def main() -> int:
         log.exception("device history unavailable; starting with an empty store")
         history = DeviceHistory(load=False)
     raw: list = []
+    latest: list = []
+    detail_logger = DetailLogger()
+    detail_driver = DetailLogDriver(detail_logger, cfg)
 
     def on_devices(devices) -> None:
         raw[:] = devices
         devices = full_device_list(history, devices, cfg, time.time())
+        latest[:] = devices
+        detail_driver.set_devices(devices)
         widget.set_devices(devices)
         tray.set_devices(devices)
         try:
@@ -192,13 +275,25 @@ def main() -> int:
     tray.refresh_requested.connect(monitor.refresh)
     tray.settings_changed.connect(on_settings)
     tray.quit_requested.connect(app.quit)
+    widget.panel_requested.connect(tray.open_panel)
+    tray.open_detail_log_requested.connect(
+        lambda key: open_detail_log(detail_logger, latest, key, tray.open_path))
+
+    def open_detail_folder() -> None:
+        try:
+            detail_logger.base.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            log.exception("could not create the detailed logs folder")
+            return
+        tray.open_path(detail_logger.base)
+    tray.open_detail_folder_requested.connect(open_detail_folder)
 
     theme_timer = QTimer()
     theme_timer.setInterval(THEME_REFRESH_MS)
     theme_timer.timeout.connect(refresh_theme)
 
     def shutdown() -> None:
-        run_shutdown(theme_timer, widget, tray, monitor, history, lock)
+        run_shutdown(theme_timer, widget, tray, monitor, history, lock, (detail_driver, detail_logger))
 
     app.aboutToQuit.connect(shutdown)
 
@@ -209,6 +304,7 @@ def main() -> int:
     tray.show()
     widget.start()
     theme_timer.start()
+    detail_driver.start()
     monitor.start()
     auto_updates.start()
     return app.exec()

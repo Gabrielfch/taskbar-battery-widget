@@ -5,15 +5,15 @@ import logging
 import os
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from . import startup
-from .colors import battery_color, color_dot_icon
+from . import visibility
+from .colors import battery_color
 from .i18n import tr
 from .icons import make_tray_icon
-from .models import visibility_key
-from .naming import sanitize_name
+from .panel_model import build_panel_model
 from .settings_menu import SettingsCallbacks, build_settings_menu
 
 log = logging.getLogger(__name__)
@@ -23,22 +23,23 @@ class TrayController(QObject):
     refresh_requested = Signal()
     quit_requested = Signal()
     settings_changed = Signal()
+    open_detail_log_requested = Signal(str)     # visibility key of the device whose log to open
+    open_detail_folder_requested = Signal()
 
     def __init__(self, cfg, parent=None):
         super().__init__(parent)
         self._cfg = cfg
-        self._getters: dict = {}
         self._devices = []
         self._radio_on = True
         self._dark = True
         self._tray = QSystemTrayIcon(self)
         self._menu = QMenu()
-        self._dev_actions: list[QAction] = []
-        self._visible_actions: list[QAction] = []
+        self._panel = None
         self._about = None
         self._release = None            # newer release found by the automatic check, if any
         self._build_menu()
         self._tray.setContextMenu(self._menu)
+        self._tray.activated.connect(self._on_activated)
         self._tray.setToolTip(tr("app_name"))
         self._update_icon()
 
@@ -72,17 +73,14 @@ class TrayController(QObject):
     # ------------------------------------------------------------------ menu
     def _build_menu(self) -> None:
         m = self._menu
-        # device lines are inserted before this separator every time the menu opens
-        self._devices_sep = m.addSeparator()
-        # TODO(item 3): the Show submenu is replaced by the device panel
-        show = m.addMenu(tr("menu_show"))
-        self._act_disc = self._toggle(tr("show_disconnected"), "show_disconnected", menu=show)
-        self._visible_menu = show.addMenu(tr("visible_devices"))
+        self._act_devices = m.addAction(tr("menu_devices"))
+        self._act_devices.triggered.connect(lambda _c=False: self.open_panel())
         m.addAction(tr("refresh")).triggered.connect(self.refresh_requested.emit)
         self._settings = build_settings_menu(m, self._cfg, SettingsCallbacks(
             set_bool=self._set_bool, set_threshold=self._set_threshold,
             set_color_mode=self._set_color_mode, set_startup=self._set_startup,
             open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
+            open_detail_folder=self.open_detail_folder_requested.emit,
             startup_enabled=lambda: startup.is_enabled()))
         acts = self._settings.actions
         self._act_wireless = acts["wireless_enabled"]
@@ -98,7 +96,7 @@ class TrayController(QObject):
         m.aboutToShow.connect(self._sync_menu)
 
     # ---- logs
-    def _open_path(self, path) -> None:
+    def open_path(self, path) -> None:
         try:
             os.startfile(str(path))
         except (OSError, AttributeError):
@@ -114,7 +112,7 @@ class TrayController(QObject):
         except OSError:
             log.exception("could not create the device log")
             return
-        self._open_path(path)
+        self.open_path(path)
 
     def open_logs_folder(self) -> None:
         from . import device_history
@@ -124,76 +122,87 @@ class TrayController(QObject):
         except OSError:
             log.exception("could not create the logs folder")
             return
-        self._open_path(path)
-
-    def _toggle(self, label: str, key: str, getter=None, setter=None, menu=None) -> QAction:
-        a = (menu or self._menu).addAction(label)
-        a.setCheckable(True)
-        self._getters[key] = getter or (lambda k=key: bool(self._cfg.get(k)))
-        a.setChecked(bool(self._getters[key]()))
-        a.toggled.connect(setter or (lambda checked, k=key: self._set_bool(k, checked)))
-        return a
+        self.open_path(path)
 
     def _set_color_mode(self, levels: bool) -> None:
         self._cfg.set("color_mode", "levels" if levels else "mono")
         self._update_icon()
         self.settings_changed.emit()
 
-    # ---- visible devices submenu
-    @staticmethod
-    def _menu_text(name: str) -> str:
-        """Device names are untrusted: sanitize, then escape '&' so it is not a mnemonic."""
-        return (sanitize_name(name) or "?").replace("&", "&&")
-
+    # ---- device panel
     def hidden_ids(self) -> list[str]:
-        v = self._cfg.get("hidden_devices")
+        return sorted(visibility.hidden_keys(self._cfg))
+
+    def _detail_keys(self) -> list[str]:
+        v = self._cfg.get("detail_log_devices")
         return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
 
-    def set_device_visible(self, device_id: str, visible: bool) -> None:
-        key = visibility_key(device_id)
-        hidden = [x for x in self.hidden_ids() if x != key]
-        if not visible:
-            hidden.append(key)
-        self._save_hidden(hidden)
+    def _ensure_panel(self):
+        if self._panel is None:
+            from .device_panel import DevicePanel
+            self._panel = DevicePanel(dark=self._dark, show_logging=True)
+            self._panel.visibility_toggled.connect(self._on_visibility)
+            self._panel.show_disconnected_toggled.connect(self._on_show_disconnected)
+            self._panel.show_all_requested.connect(self._on_show_all)
+            self._panel.logging_toggled.connect(self._on_logging)
+            self._panel.open_log_requested.connect(self.open_detail_log_requested)
+        return self._panel
 
-    def show_all_devices(self) -> None:
-        self._save_hidden([])
-
-    def _save_hidden(self, hidden: list[str]) -> None:
-        try:
-            self._cfg.set("hidden_devices", hidden[-200:])
-        except ValueError:
-            log.exception("could not save hidden devices")
+    def _refresh_panel(self) -> None:
+        p = self._panel
+        if p is None or not p.isVisible():
             return
+        self._push_model(p)
+
+    def _push_model(self, p) -> None:
+        model = build_panel_model(
+            self._devices, visibility.hidden_keys(self._cfg), bool(self._cfg.get("show_disconnected")),
+            int(self._cfg.get("low_threshold")), self._dark, self._cfg.get("color_mode") != "mono")
+        p.set_model(model, self._detail_keys())
+
+    def open_panel(self, anchor=None) -> None:
+        """Open the device panel at `anchor` (QRect/QPoint); default: the tray icon, else the cursor."""
+        p = self._ensure_panel()
+        p.set_dark(self._dark)
+        self._push_model(p)
+        if anchor is None:
+            g = self._tray.geometry()
+            anchor = g if g.isValid() and not g.isEmpty() else QCursor.pos()
+        p.show_at(anchor)
+
+    def _on_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.open_panel()
+
+    def _on_visibility(self, key: str, visible: bool) -> None:
+        visibility.set_hidden(self._cfg, key, not visible)
+        self._changed()
+
+    def _on_show_disconnected(self, value: bool) -> None:
+        self._cfg.set("show_disconnected", bool(value))
+        self._changed()
+
+    def _on_show_all(self) -> None:
+        visibility.show_all(self._cfg)
+        self._changed()
+
+    def _on_logging(self, key: str, on: bool) -> None:
+        keys = [k for k in self._detail_keys() if k != key]
+        if on:
+            keys.append(key)
+        try:
+            self._cfg.set("detail_log_devices", keys)
+            if on:
+                self._cfg.set("detail_log_enabled", True)
+        except ValueError:
+            log.exception("could not save the detailed log devices")
+            return
+        self._changed()
+
+    def _changed(self) -> None:
         self._update_icon()
         self.settings_changed.emit()
-
-    def _rebuild_visible_menu(self) -> None:
-        sub = self._visible_menu
-        for a in self._visible_actions:
-            sub.removeAction(a)
-            a.deleteLater()
-        self._visible_actions = []
-        sub.clear()
-        hidden = set(self.hidden_ids())
-        seen: set[str] = set()
-        for d in self._devices:
-            if d.id in seen:
-                continue
-            seen.add(d.id)
-            a = sub.addAction(self._menu_text(d.name))
-            a.setCheckable(True)
-            a.setChecked(visibility_key(d.id) not in hidden)
-            a.triggered.connect(lambda checked=False, i=d.id: self.set_device_visible(i, checked))
-            self._visible_actions.append(a)
-        if not self._visible_actions:
-            a = sub.addAction(tr("no_devices"))
-            a.setEnabled(False)
-            self._visible_actions.append(a)
-        sub.addSeparator()
-        show_all = sub.addAction(tr("show_all"))
-        show_all.setEnabled(bool(hidden))
-        show_all.triggered.connect(lambda _c=False: self.show_all_devices())
+        self._refresh_panel()
 
     def _set_bool(self, key: str, value: bool) -> None:
         self._cfg.set(key, bool(value))
@@ -217,77 +226,31 @@ class TrayController(QObject):
         self._settings.set_startup_checked(value)
 
     def _sync_menu(self) -> None:
-        """Refresh the read-only device list and checkmarks every time the menu opens."""
-        for a in self._dev_actions:
-            self._menu.removeAction(a)
-            a.deleteLater()
-        self._dev_actions = []
-        hidden = set(self.hidden_ids())
-        shown = [d for d in self._devices
-                 if visibility_key(d.id) not in hidden
-                 and (d.connected or self._cfg.get("show_disconnected"))
-                 and (self._radio_on or d.link != "bluetooth")]
-        lines = [(self._device_line(d), self._device_color(d)) for d in shown]
-        if not self._radio_on:
-            lines.insert(0, (tr("bluetooth_off"), None))
-        elif not lines:
-            lines = [(tr("no_devices"), None)]
-        for text, color in lines:
-            a = QAction(text.replace("&", "&&"), self._menu)
-            if color is not None:
-                a.setIcon(color_dot_icon(color))
-            a.setEnabled(False)
-            self._menu.insertAction(self._devices_sep, a)
-            self._dev_actions.append(a)
-        act = self._act_disc
-        act.blockSignals(True)
-        act.setChecked(bool(self._getters["show_disconnected"]()))
-        act.blockSignals(False)
-        self._rebuild_visible_menu()
+        """Refresh the checkmarks every time the menu opens."""
         self._settings.sync()
-
-    def _device_color(self, d):
-        """Colour of the level dot in the menu (None when colours are off or no reading)."""
-        if (self._cfg.get("color_mode") == "mono" or not d.connected or d.battery is None
-                or getattr(d, "stale", False)):
-            return None
-        return battery_color(d.battery, bool(d.charging), int(self._cfg.get("low_threshold")), self._dark)
-
-    @staticmethod
-    def _device_line(d) -> str:
-        """'Name: 97 % · Charging' - parts joined with a middle dot."""
-        if getattr(d, "stale", False) and d.battery is not None:
-            parts = [tr("disconnected") if not d.connected else tr("battery_unknown"),
-                     f"{d.battery} %"]
-        elif not d.connected:
-            parts = [tr("disconnected")]
-        elif d.battery is None:
-            parts = [tr("battery_unknown")]
-        else:
-            parts = [f"{d.battery} %"]
-            if d.charging:
-                parts.append(tr("charging"))
-            if getattr(d, "idle", False):
-                parts.append(tr("idle"))
-        return f"{sanitize_name(d.name) or '?'}: " + " \u00b7 ".join(parts)
 
     # ------------------------------------------------------------------ state
     def set_devices(self, devices) -> None:
         self._devices = list(devices)
         self._update_icon()
+        self._refresh_panel()
 
     def set_radio(self, on: bool) -> None:
         self._radio_on = bool(on)
         self._update_icon()
+        self._refresh_panel()
 
     def set_dark(self, dark: bool) -> None:
         if dark != self._dark:
             self._dark = dark
             self._update_icon()
+            if self._panel is not None:
+                self._panel.set_dark(dark)
+                self._refresh_panel()
 
     def _update_icon(self) -> None:
-        hidden = set(self.hidden_ids())
-        vis = [d for d in self._devices if visibility_key(d.id) not in hidden]
+        vis = [d for d in visibility.visible_devices(self._devices, self._cfg)
+               if d.connected or self._cfg.get("show_disconnected")]
         levels = [d.battery for d in vis
                   if d.connected and d.battery is not None and not getattr(d, "stale", False)]
         lowest = min(levels) if levels else None

@@ -377,7 +377,8 @@ def test_tray_menu_entries(qapp, tmp_path, monkeypatch):
     t = tray_mod.TrayController(Config(tmp_path / "c.json"))
     logs = [a.menu() for a in t._settings.menu.actions() if a.text() == "Logs"][0]
     texts = [a.text() for a in logs.actions()]
-    assert texts == ["Open device log", "Open logs folder"]
+    assert texts == ["Open device log", "Open logs folder", "Detailed log (every minute)",
+                     "Open detailed logs folder"]
     t.open_device_log()
     t.open_logs_folder()
     assert opened[0].endswith("devices.log") and opened[1].endswith("logs")
@@ -563,8 +564,6 @@ def test_visibility_key_idempotent():
 def test_tray_device_line_and_icon_with_stale(qapp, tmp_path):
     from taskbar_battery_widget import tray as tray_mod
     stale = dev(30, connected=False, stale=True, last_seen=T0)
-    assert tray_mod.TrayController._device_line(stale) == "MX Keys: Disconnected \u00b7 30 %" \
-        or "30 %" in tray_mod.TrayController._device_line(stale)
     t = tray_mod.TrayController(Config(tmp_path / "c.json"))
     t._devices = [stale, dev(55, id="other")]
     t._update_icon()                                  # stale must not count as the lowest level

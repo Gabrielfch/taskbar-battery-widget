@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
 from taskbar_battery_widget import widget as w
-from taskbar_battery_widget.colors import battery_color, color_dot_icon, contrast_ratio, level_band
+from taskbar_battery_widget.colors import battery_color, contrast_ratio, level_band
 from taskbar_battery_widget.config import Config
 from taskbar_battery_widget.i18n import set_language
 from taskbar_battery_widget.models import Device, visibility_key
@@ -61,11 +61,6 @@ def test_colors_are_distinct_and_readable():
         for c in cols.values():
             assert contrast_ratio(c, bg) >= 3.0, (dark, c.name())
         assert contrast_ratio(battery_color(None, False, 20, dark), bg) >= 3.0
-
-
-def test_dot_icon_not_empty(qapp):
-    pm = color_dot_icon(QColor(255, 0, 0)).pixmap(16, 16)
-    assert not pm.isNull() and pm.toImage().pixelColor(8, 8).red() > 200
 
 
 def _render(wd) -> QImage:
@@ -154,27 +149,59 @@ def test_widget_filters_hidden(qapp):
     assert wd.pill_texts() == ["80%", "50%"]
 
 
-def test_tray_visible_menu(qapp, tmp_path):
+def test_tray_has_no_show_submenu(qapp, tmp_path):
+    set_language("en")
+    tray = TrayController(Config(tmp_path / "c.json"))
+    assert not hasattr(tray, "_visible_menu")
+    assert all(a.text() != "Show" for a in tray.menu.actions())
+    assert tray.menu.actions()[0].text() == "Devices…"
+
+
+def test_tray_panel_eye_persists_and_show_all(qapp, tmp_path):
     cfg = Config(tmp_path / "c.json")
     tray = TrayController(cfg)
     changes = []
     tray.settings_changed.connect(lambda: changes.append(1))
     tray.set_devices([Device("a", "Mouse & Co <b>", "mouse", 80, True),
                       Device("b", "Gone", "keyboard", None, False)])
-    tray._sync_menu()
-    acts = [a for a in tray._visible_menu.actions() if a.isCheckable()]
-    assert len(acts) == 2 and all(a.isChecked() for a in acts)       # connected or not
-    assert "&" not in acts[0].text().replace("&&", "")               # no stray mnemonic
-    assert "<" not in acts[0].text()
-    acts[1].trigger()
+    tray.open_panel()
+    p = tray._panel
+    assert p.isVisible()
+    assert len(p._model.connected) == 1 and len(p._model.known) == 1
+    p.visibility_toggled.emit(visibility_key("b"), False)
     assert cfg.get("hidden_devices") == [visibility_key("b")] and changes
-    tray._sync_menu()
-    acts = [a for a in tray._visible_menu.actions() if a.isCheckable()]
-    assert [a.isChecked() for a in acts] == [True, False]
-    show_all = [a for a in tray._visible_menu.actions() if a.text() == "Show all"][0]
-    assert show_all.isEnabled()
-    show_all.trigger()
+    assert [r.visible for r in p._model.known] == [False]          # panel refreshed
+    p.show_all_requested.emit()
     assert cfg.get("hidden_devices") == []
+    assert [r.visible for r in p._model.known] == [True]
+    p.show_disconnected_toggled.emit(True)
+    assert cfg.get("show_disconnected") is True and p._model.show_disconnected
+    p.close()
+
+
+def test_tray_left_click_and_menu_entry_open_panel(qapp, tmp_path):
+    from PySide6.QtWidgets import QSystemTrayIcon
+    tray = TrayController(Config(tmp_path / "c.json"))
+    tray.set_devices([Device("a", "A", "mouse", 80, True)])
+    tray._on_activated(QSystemTrayIcon.ActivationReason.Context)
+    assert tray._panel is None or not tray._panel.isVisible()
+    tray._on_activated(QSystemTrayIcon.ActivationReason.Trigger)
+    assert tray._panel.isVisible()
+    tray._panel.close()
+    assert not tray._panel.isVisible()
+    tray._act_devices.trigger()
+    assert tray._panel.isVisible()
+    tray._panel.close()
+
+
+def test_tray_panel_follows_device_changes(qapp, tmp_path):
+    tray = TrayController(Config(tmp_path / "c.json"))
+    tray.set_devices([Device("a", "A", "mouse", 80, True)])
+    tray.open_panel()
+    assert [r.battery for r in tray._panel._model.connected] == [80]
+    tray.set_devices([Device("a", "A", "mouse", 55, True)])
+    assert [r.battery for r in tray._panel._model.connected] == [55]
+    tray._panel.close()
 
 
 def test_tray_toggles_persist(qapp, tmp_path):

@@ -22,29 +22,8 @@ ICON_PX = 20
 BTN_ICON_PX = 18
 NAME_MAX_PX = 150
 
-_STR = {
-    "en": {
-        "show_in_bar": "Show {name} in the taskbar",
-        "show_known": "Show disconnected devices in the taskbar",
-        "show_all": "Show all",
-        "record": "Record {name} to the detailed log",
-        "open_log": "Open the log of {name}",
-        "empty": "No devices",
-    },
-    "es": {
-        "show_in_bar": "Mostrar {name} en la barra",
-        "show_known": "Mostrar desconectados en la barra",
-        "show_all": "Mostrar todos",
-        "record": "Registrar {name} en el log detallado",
-        "open_log": "Abrir el log de {name}",
-        "empty": "Sin dispositivos",
-    },
-}
-
-
 def _t(key: str, lang: str, **kw) -> str:
-    text = _STR["es" if lang == "es" else "en"][key]
-    return text.format(**kw) if kw else text
+    return i18n.tr_in(lang, "panel_" + key if key != "show_all" else key, **kw)
 
 
 def _hex(c: QColor) -> str:

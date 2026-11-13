@@ -8,13 +8,13 @@ import time
 from dataclasses import dataclass
 from ctypes import wintypes as wt
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QAccessible, QAccessibleEvent, QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter,
                            QPainterPath, QPen)
 from PySide6.QtWidgets import QMenu, QWidget
 
 from . import taskbar
-from .colors import band_color, battery_color, level_band, pill_tint
+from .colors import band_color, battery_color, pill_tint, row_style
 from .i18n import kind_name as _kind_name, tr
 from .icons import draw_bolt, draw_kind_icon
 from .models import Device, visibility_key
@@ -264,6 +264,7 @@ class _Pill:
 
 class TaskbarWidget(QWidget):
     context_menu_requested = Signal(QPoint)
+    panel_requested = Signal(QRect)         # the "+N" pill was activated (global pill rect)
 
     def __init__(self, cfg=None, parent=None):
         super().__init__(parent)
@@ -401,14 +402,14 @@ class TaskbarWidget(QWidget):
                     tip += f" ({tr('idle')})"
                     spoken += f" {tr('idle')}"
                 tip += f"\n{kind_name}"
-                band = level_band(d.battery, bool(d.charging), threshold)
-                alert = band == "red"
+                st = row_style(d, threshold, not self._light, self._color_mode() == "levels")
+                alert = st.alert
                 if alert:
                     spoken += f" {tr('low_warning')}"
                 pills.append(_Pill(d.kind, f"{d.battery}%", tip,
                                    low=d.battery <= threshold, charging=bool(d.charging),
                                    level=d.battery, device=d, idle=idle,
-                                   warn=band in ("orange", "red"), alert=alert, a11y=spoken))
+                                   warn="warn" in st.cues, alert=alert, a11y=spoken))
         if not pills and self._cfg_get("show_when_empty", False):
             pills.append(_Pill("bluetooth", tr("pill_none"), tr("no_devices"), dim=True,
                                 a11y=tr("no_devices")))
@@ -737,10 +738,19 @@ class TaskbarWidget(QWidget):
             idx = pill_index_at(self._rects, e.position().x(), e.position().y())
             if idx >= 0:
                 self._hover = idx
+                if self._pills[idx].members is not None:
+                    self._open_panel(idx)
+                    self.update()
+                    return
                 self._show_popup()
                 self.update()
         if e.button() == Qt.MouseButton.RightButton:
             self._open_menu(e.globalPosition().toPoint())
+
+    def _open_panel(self, idx: int) -> None:
+        x, y, w, h = self._rects[idx]
+        tl = self.mapToGlobal(QPoint(int(x), int(y)))
+        self.panel_requested.emit(QRect(tl.x(), tl.y(), int(w), int(h)))
 
     def _open_menu(self, gp: QPoint) -> None:
         self.context_menu_requested.emit(gp)
@@ -798,7 +808,11 @@ class TaskbarWidget(QWidget):
             self._set_kfocus(n - 1)
         elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space) and 0 <= self._kfocus < n:
             self._hover = self._kfocus
-            self._show_popup()
+            if self._pills[self._kfocus].members is not None:
+                self._hide_popup()
+                self._open_panel(self._kfocus)
+            else:
+                self._show_popup()
         elif key == Qt.Key.Key_Escape:
             self._hide_popup()
         elif key == Qt.Key.Key_Menu or (key == Qt.Key.Key_F10

@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor
 
 HIGH_MIN = 60
 MEDIUM_MIN = 30
@@ -84,20 +83,6 @@ def luminance(c: QColor) -> float:
 def contrast_ratio(a: QColor, b: QColor) -> float:
     la, lb = sorted((luminance(a), luminance(b)), reverse=True)
     return (la + 0.05) / (lb + 0.05)
-
-
-def color_dot_icon(color: QColor, size: int = 16) -> QIcon:
-    """Small filled circle used as the menu icon of a device."""
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(color)
-    m = size * 0.2
-    p.drawEllipse(int(m), int(m), int(size - 2 * m), int(size - 2 * m))
-    p.end()
-    return QIcon(pm)
 
 
 # ---------------------------------------------------------------------------- per-row style

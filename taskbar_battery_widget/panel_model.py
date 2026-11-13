@@ -9,29 +9,17 @@ from .colors import RowStyle, row_style
 from .models import Device, visibility_key
 from .naming import sanitize_name
 
-# Strings not (yet) in i18n.py.
-_LOCAL = {
-    "en": {"section_connected": "Connected", "section_known": "Known devices"},
-    "es": {"section_connected": "Conectados", "section_known": "Dispositivos conocidos"},
-}
-
-
 def _lang(lang: str | None) -> str:
     return i18n.get_language() if lang is None else ("es" if lang.lower().startswith("es") else "en")
 
 
 def _t(key: str, lang: str, **kw) -> str:
-    table = i18n.ES if lang == "es" else i18n.EN
-    text = table.get(key) or i18n.EN.get(key) or key
-    try:
-        return text.format(**kw) if kw else text
-    except (KeyError, IndexError, ValueError):
-        return text
+    return i18n.tr_in(lang, key, **kw)
 
 
 def section_title(kind: str, lang: str | None = None) -> str:
     """Localised header text: kind is "connected" or "known"."""
-    return _LOCAL[_lang(lang)]["section_connected" if kind == "connected" else "section_known"]
+    return _t("panel_connected" if kind == "connected" else "panel_known", _lang(lang))
 
 
 @dataclass(frozen=True)
