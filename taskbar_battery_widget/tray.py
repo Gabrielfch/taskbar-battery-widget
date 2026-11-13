@@ -120,11 +120,17 @@ class TrayController(QObject):
 
     # ---- logs
     def open_path(self, path) -> None:
+        """Open a file or folder with the shell. Folders go through explorer.exe directly: a
+        ShellExecute from inside the popup's click handler can silently do nothing."""
+        log.info("opening %s", getattr(path, "name", "path"))
         try:
-            os.startfile(str(path))
+            if os.path.isdir(str(path)):
+                subprocess.Popen(["explorer.exe", str(path)], close_fds=True)
+            else:
+                os.startfile(str(path))
         except (OSError, AttributeError):
-            log.exception("could not open %s", path.name)
-            self.notify(tr("app_name"), str(path))
+            log.exception("could not open %s", getattr(path, "name", "path"))
+            self.notify(tr("app_name"), getattr(path, "name", str(path)))
 
     def open_text_file(self, path) -> None:
         """Open a text/CSV file with its associated program, or Notepad when none is associated

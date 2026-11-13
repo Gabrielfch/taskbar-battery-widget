@@ -373,6 +373,7 @@ def test_tray_menu_entries(qapp, tmp_path, monkeypatch):
     from taskbar_battery_widget import tray as tray_mod
     opened = []
     monkeypatch.setattr(tray_mod.os, "startfile", lambda p: opened.append(p), raising=False)
+    monkeypatch.setattr(tray_mod.subprocess, "Popen", lambda args, **kw: opened.append(args[-1]))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     t = tray_mod.TrayController(Config(tmp_path / "c.json"))
     logs = [a.menu() for a in t._settings.menu.actions() if a.text() == "Logs"][0]

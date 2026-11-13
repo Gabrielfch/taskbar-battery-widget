@@ -199,3 +199,12 @@ def test_recording_on_emits_detail_log_started(qapp, tmp_path):
     t._on_logging("h:abc", True)
     t._on_logging("h:abc", False)
     assert got == ["h:abc"]
+
+
+def test_open_path_uses_explorer_for_folders(qapp, tmp_path, monkeypatch):
+    from taskbar_battery_widget import tray as tray_mod
+    calls = []
+    monkeypatch.setattr(tray_mod.subprocess, "Popen", lambda args, **kw: calls.append(args))
+    t = tray_mod.TrayController.__new__(tray_mod.TrayController)
+    tray_mod.TrayController.open_path(t, tmp_path)
+    assert calls == [["explorer.exe", str(tmp_path)]]

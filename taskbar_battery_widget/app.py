@@ -310,6 +310,7 @@ def main() -> int:
     tray.detail_log_started.connect(lambda key: detail_logger.tick(latest, {key}))
 
     def open_detail_folder() -> None:
+        log.info("open detailed logs folder requested")
         try:
             detail_logger.base.mkdir(parents=True, exist_ok=True)
         except OSError:
