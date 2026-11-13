@@ -154,14 +154,15 @@ def test_tray_has_no_show_submenu(qapp, tmp_path):
     tray = TrayController(Config(tmp_path / "c.json"))
     assert not hasattr(tray, "_visible_menu")
     assert all(a.text() != "Show" for a in tray.menu.actions())
-    assert tray.menu.actions()[0].text() == "Devices…"
+    assert tray.menu.actions()[0].text() == "Devices"
 
 
 def test_tray_panel_eye_persists_and_show_all(qapp, tmp_path):
     cfg = Config(tmp_path / "c.json")
     tray = TrayController(cfg)
-    changes = []
-    tray.settings_changed.connect(lambda: changes.append(1))
+    changes, real = [], []
+    tray.ui_settings_changed.connect(lambda: changes.append(1))
+    tray.settings_changed.connect(lambda: real.append(1))
     tray.set_devices([Device("a", "Mouse & Co <b>", "mouse", 80, True),
                       Device("b", "Gone", "keyboard", None, False)])
     tray.open_panel()
@@ -169,7 +170,7 @@ def test_tray_panel_eye_persists_and_show_all(qapp, tmp_path):
     assert p.isVisible()
     assert len(p._model.connected) == 1 and len(p._model.known) == 1
     p.visibility_toggled.emit(visibility_key("b"), False)
-    assert cfg.get("hidden_devices") == [visibility_key("b")] and changes
+    assert cfg.get("hidden_devices") == [visibility_key("b")] and changes and not real
     assert [r.visible for r in p._model.known] == [False]          # panel refreshed
     p.show_all_requested.emit()
     assert cfg.get("hidden_devices") == []

@@ -35,7 +35,7 @@ def test_minute_dedupe_and_header_once(tmp_path):
     lines = f.read_text().splitlines()
     assert lines[0] == detail_log.HEADER
     assert len(lines) == 3
-    assert lines[1].split(",")[1:] == ["80", "0", "1", "bluetooth", "0"]
+    assert lines[1].split(",")[1:] == ["80", "0", "1", "bluetooth", "0", "0"]
 
 
 def test_not_enabled_writes_nothing_and_unknown_fields_empty(tmp_path):
@@ -67,9 +67,9 @@ def test_salt_persisted_and_names_clean(tmp_path):
     lg = make(tmp_path)
     d = dev()
     p1 = lg.path_for(d)
-    assert not lg.base.exists()                     # path_for creates nothing... except the salt dir
-    salt = tmp_path / "logs" / ".detail_salt"
-    assert salt.exists()
+    assert not lg.base.exists()                     # path_for creates nothing... except the salt
+    assert (tmp_path / ".detail_salt").exists()     # app data dir, not the logs folder
+    assert not (tmp_path / "logs" / ".detail_salt").exists()
     lg2 = make(tmp_path)
     assert lg2.path_for(d) == p1
     assert lg2.path_for(dev(id_="other")) != p1

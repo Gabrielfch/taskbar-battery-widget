@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QCursor
@@ -18,11 +19,14 @@ from .settings_menu import SettingsCallbacks, build_settings_menu
 
 log = logging.getLogger(__name__)
 
+PANEL_REOPEN_GRACE_S = 0.3
+
 
 class TrayController(QObject):
     refresh_requested = Signal()
     quit_requested = Signal()
     settings_changed = Signal()
+    ui_settings_changed = Signal()      # visibility / recording only: re-filter, no device rescan
     open_detail_log_requested = Signal(str)     # visibility key of the device whose log to open
     open_detail_folder_requested = Signal()
 
@@ -157,7 +161,7 @@ class TrayController(QObject):
     def _push_model(self, p) -> None:
         model = build_panel_model(
             self._devices, visibility.hidden_keys(self._cfg), bool(self._cfg.get("show_disconnected")),
-            int(self._cfg.get("low_threshold")), self._dark, self._cfg.get("color_mode") != "mono")
+            int(self._cfg.get("low_threshold")), self._dark, self._cfg.get("color_mode") != "mono", radio_on=self._radio_on)
         p.set_model(model, self._detail_keys())
 
     def open_panel(self, anchor=None) -> None:
@@ -171,37 +175,60 @@ class TrayController(QObject):
         p.show_at(anchor)
 
     def _on_activated(self, reason) -> None:
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            self.open_panel()
+        if reason != QSystemTrayIcon.ActivationReason.Trigger:
+            return
+        p = self._panel
+        if p is not None:
+            if p.isVisible():
+                p.hide()
+                return
+            hidden_at = getattr(p, "hidden_at", None)
+            if hidden_at is not None and 0 <= time.monotonic() - hidden_at < PANEL_REOPEN_GRACE_S:
+                return      # this click is the one that just closed the popup
+        self.open_panel()
 
     def _on_visibility(self, key: str, visible: bool) -> None:
         visibility.set_hidden(self._cfg, key, not visible)
-        self._changed()
+        self._changed(ui_only=True)
 
     def _on_show_disconnected(self, value: bool) -> None:
         self._cfg.set("show_disconnected", bool(value))
-        self._changed()
+        self._changed(ui_only=True)
 
     def _on_show_all(self) -> None:
         visibility.show_all(self._cfg)
-        self._changed()
+        self._changed(ui_only=True)
 
     def _on_logging(self, key: str, on: bool) -> None:
+        """Record / stop recording one device; the global switch follows the device list."""
         keys = [k for k in self._detail_keys() if k != key]
         if on:
             keys.append(key)
         try:
             self._cfg.set("detail_log_devices", keys)
-            if on:
-                self._cfg.set("detail_log_enabled", True)
         except ValueError:
             log.exception("could not save the detailed log devices")
+            self._refresh_panel_force()
             return
-        self._changed()
+        # enabling a device turns the global switch on; removing the last one turns it off
+        enabled = True if on else (False if not keys else bool(self._cfg.get("detail_log_enabled")))
+        try:
+            if bool(self._cfg.get("detail_log_enabled")) != enabled:
+                self._cfg.set("detail_log_enabled", enabled)
+        except ValueError:
+            log.exception("could not save the detailed log switch")
+        self._changed(ui_only=True)
 
-    def _changed(self) -> None:
+    def _refresh_panel_force(self) -> None:
+        """Redraw the panel from the config (a failed save must not leave the toggle out of step)."""
+        p = self._panel
+        if p is not None and p.isVisible():
+            p._sig = None
+            self._push_model(p)
+
+    def _changed(self, ui_only: bool = False) -> None:
         self._update_icon()
-        self.settings_changed.emit()
+        (self.ui_settings_changed if ui_only else self.settings_changed).emit()
         self._refresh_panel()
 
     def _set_bool(self, key: str, value: bool) -> None:

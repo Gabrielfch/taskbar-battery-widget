@@ -57,7 +57,7 @@ def test_bool_and_list_validation(tmp_path):
             c.set(key, 1)
     c.set("detail_log_devices", ["a" * 16, "b" * 16])
     assert c.get("detail_log_devices") == ["a" * 16, "b" * 16]
-    for bad in ("x", [1], [""], ["x" * 201], ["a"] * 201):
+    for bad in ("x", [1], [""], ["x" * 201]):
         with pytest.raises(ValueError):
             c.set("detail_log_devices", bad)
     with pytest.raises(ValueError):

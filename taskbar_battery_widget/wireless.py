@@ -71,8 +71,13 @@ def set_beta_readers(enabled: bool) -> None:
             _purge_beta()
 
 
+_BETA_PREFIXES = frozenset({"logi", "corsair", "steelseries", "hyperx", "sony"})
+
+
 def is_beta_device(dev: Device) -> bool:
     """True for a device that only a beta reader produces (per-model flag, see the reader tables)."""
+    if str(dev.id).split(":")[0] not in _BETA_PREFIXES:
+        return False
     key = dongle_key(dev.id)
     if key is None:
         return False
@@ -425,7 +430,22 @@ def _scan_locked() -> list[Device]:
         from .hyperx import read_hyperx
         return read_hyperx(sel, t_end, cancel, beta=beta) if sel else []
 
+    def gate(sel, transport_of):
+        """Drop HID infos of a disabled source BEFORE any device I/O (unknown transport: readers skip it)."""
+        out = []
+        for i in sel:
+            try:
+                tr = transport_of(i)
+            except Exception:
+                tr = None
+            if tr == "bluetooth" and not bluetooth or tr not in (None, "bluetooth") and not dongles:
+                continue
+            out.append(i)
+        return out
+
     def xinput(_sel):
+        if not dongles:                     # XInput = USB / wireless dongle: "2.4 GHz and USB"
+            return []
         from . import xinput as xi
         devs = xi.read([], t_end, cancel)
         return [d for d in devs if not (d.battery is None and d.link == "usb")]
@@ -443,19 +463,22 @@ def _scan_locked() -> list[Device]:
         return list(scan_logitech(sel, cancel=cancel) or [])
 
     def dualsense(sel):
-        from .dualsense import read_dualsense
-        return read_dualsense(sel, t_end, cancel, enable_bt_extended=bt_ext)
+        from .dualsense import _transport, read_dualsense
+        sel = gate(sel, _transport)
+        return read_dualsense(sel, t_end, cancel, enable_bt_extended=bt_ext) if sel else []
 
     def sony_read(sel):
-        from .sony import read as read_sony
-        return read_sony(sel, t_end, cancel, enable_bt_extended=bt_ext, beta=beta)
+        from .sony import _transport, read as read_sony
+        sel = gate(sel, _transport)
+        return read_sony(sel, t_end, cancel, enable_bt_extended=bt_ext, beta=beta) if sel else []
 
     if dongles:
         add("logitech", None, logitech, infos)
         add("razer", None, razer, infos)
         add("odessa", None, odessa, infos)
         add("hyperx", (0x0951,), hyperx_read, infos)
-    # readers with a Bluetooth transport run for either source; their output is filtered by link
+    # readers with a Bluetooth transport run for either source; infos of a disabled source are
+    # dropped before reading (no device I/O), and the output is filtered by link as a safety net
     add("dualsense", None, dualsense, infos)
     add("sony", (0x054C,), sony_read, infos)
     add("xinput", None, xinput, infos)

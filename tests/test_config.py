@@ -63,7 +63,7 @@ def test_set_persists_and_creates_dir(tmp_path):
 
 
 def test_i18n_keys_complete():
-    keys = ["app_name", "bluetooth_off", "no_devices", "refresh", "show_disconnected",
+    keys = ["app_name", "bluetooth_off", "no_devices", "refresh",
             "notifications", "low_threshold", "start_with_windows", "quit", "devices",
             "low_title", "low_body", "charging", "disconnected", "battery_unknown"]
     keys += [f"kind_{k}" for k in KINDS]

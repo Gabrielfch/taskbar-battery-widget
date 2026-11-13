@@ -506,15 +506,19 @@ class TaskbarWidget(QWidget):
         allp = self._all_pills
         widths = [self._pill_width(p, fm, icon, bolt) for p in allp]
         extents = [self._pill_h] * len(allp) if self._vertical else widths
-        ow_text = f"+{len(allp)}"
+        ow_text = ("!" if any(p.warn for p in allp) else "") + f"+{len(allp)}"
         ow_w = 2 * PAD + fm.horizontalAdvance(ow_text)
         k = fit_count(extents, self._max_extent, self._pill_h if self._vertical else ow_w)
         pills, widths = list(allp[:k]), widths[:k]
         if k < len(allp):
             rest = allp[k:]
-            pills.append(_Pill("overflow", f"+{len(rest)}", "\n".join(r.a11y for r in rest),
-                               a11y=f"+{len(rest)}", members=rest))
-            widths.append(2 * PAD + fm.horizontalAdvance(f"+{len(rest)}"))
+            warn = any(r.warn or r.alert for r in rest)
+            alert = any(r.alert for r in rest)
+            n = len(rest)
+            more = tr("panel_more_one" if n == 1 else "panel_more_other", n=n)
+            pills.append(_Pill("overflow", f"+{n}", "\n".join(r.a11y for r in rest),
+                               a11y=more, members=rest, warn=warn, alert=alert))
+            widths.append(2 * PAD + fm.horizontalAdvance(("!" if warn else "") + f"+{n}"))
         self._pills = pills
         if self._kfocus >= len(pills):
             self._set_kfocus(len(pills) - 1)
@@ -674,7 +678,7 @@ class TaskbarWidget(QWidget):
                 p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), h / 2.5, h / 2.5)
             if pill.kind == "overflow":
                 p.setPen(color)
-                p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), pill.text)
+                p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), ("!" if pill.warn else "") + pill.text)
                 continue
             ir = QRectF(x + PAD, y + (h - icon) / 2, icon, icon)
             icon_color = fg if level_color is not None else color

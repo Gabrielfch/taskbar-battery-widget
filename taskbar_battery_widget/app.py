@@ -107,14 +107,33 @@ def run_shutdown(theme_timer, widget, tray, monitor, history, lock, detail=None)
         lock.unlock()
 
 
+_BETA_KEYS: set[str] = set()     # visibility keys of devices that only a beta reader produced
+
+
 def full_device_list(history, devices, cfg, now: float) -> list:
     """History update that always keeps hidden and disconnected devices in the list.
 
     The device panel needs the complete list; the widget and the tray filter by `show_disconnected`
     and `hidden_devices` themselves and the alerts ignore hidden/stale/disconnected devices.
     """
-    return history.update(devices, now, show_disconnected=True, hidden=(),
-                          threshold=int(cfg.get("low_threshold")))
+    from . import wireless
+    from .models import visibility_key
+    for d in devices:                   # remember which keys belong to beta readers: devices rebuilt
+        if wireless.is_beta_device(d):  # from last_known only carry their hashed key as id
+            _BETA_KEYS.add(visibility_key(d.id))
+    out = history.update(devices, now, show_disconnected=True, hidden=(),
+                         threshold=int(cfg.get("low_threshold")))
+    if not cfg.get("beta_readers"):     # last_known must not bring beta devices back as Known
+        out = [d for d in out if visibility_key(d.id) not in _BETA_KEYS and not wireless.is_beta_device(d)]
+    return out
+
+
+def apply_ui_settings(widget, cfg, raw, on_devices) -> None:
+    """Visibility / recording changed: re-filter and redraw from the last scan, no device rescan."""
+    if raw:
+        on_devices(list(raw))
+    else:
+        widget.set_config(cfg)
 
 
 DETAIL_LOG_INTERVAL_MS = 60_000
@@ -274,6 +293,7 @@ def main() -> int:
     monitor.radio_changed.connect(on_radio)
     tray.refresh_requested.connect(monitor.refresh)
     tray.settings_changed.connect(on_settings)
+    tray.ui_settings_changed.connect(lambda: apply_ui_settings(widget, cfg, raw, on_devices))
     tray.quit_requested.connect(app.quit)
     widget.panel_requested.connect(tray.open_panel)
     tray.open_detail_log_requested.connect(

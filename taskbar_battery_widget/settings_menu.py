@@ -38,9 +38,9 @@ class SettingsMenu:
 
     def set_startup_checked(self, value: bool) -> None:
         a = self.actions["start_with_windows"]
-        a.blockSignals(True)
+        was = a.blockSignals(True)
         a.setChecked(bool(value))
-        a.blockSignals(False)
+        a.blockSignals(was)
 
 
 def _toggle(sm: SettingsMenu, menu: QMenu, label: str, name: str, getter, setter) -> QAction:
@@ -51,9 +51,9 @@ def _toggle(sm: SettingsMenu, menu: QMenu, label: str, name: str, getter, setter
     sm.actions[name] = a
 
     def sync(act=a, get=getter):
-        act.blockSignals(True)
+        was = act.blockSignals(True)
         act.setChecked(bool(get()))
-        act.blockSignals(False)
+        act.blockSignals(was)
     sm.syncs.append(sync)
     return a
 

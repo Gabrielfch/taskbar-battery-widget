@@ -71,7 +71,7 @@ def test_spanish_accessible_name(qapp):
     p = dp.DevicePanel(dark=True)
     p.set_model(build_panel_model([dev("a", "Raton")], (), True, 20, True, lang="es"))
     assert any(b.accessibleName() == "Mostrar Raton en la barra" for b in p.findChildren(QToolButton))
-    assert p._footer.text() == "Mostrar todos"
+    assert p._footer.text() == "Mostrar todos en la barra"
 
 
 def test_eye_emits_visibility_toggled(panel):
@@ -88,7 +88,7 @@ def test_known_header_eye_emits(panel):
     got = []
     panel.show_disconnected_toggled.connect(got.append)
     panel.set_model(model([dev("a"), dev("c", connected=False)], show_disc=True))
-    eye = next(b for b in eyes(panel) if b.accessibleName() == "Show disconnected devices in the taskbar")
+    eye = next(b for b in eyes(panel) if b.accessibleName() == "Show known devices in the taskbar")
     assert eye.isChecked()
     eye.click()
     assert got == [False]

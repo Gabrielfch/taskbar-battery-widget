@@ -30,10 +30,19 @@ locally. It stores only:
 - Settings: `%APPDATA%\TaskbarBatteryWidget\config.json`
 - Logs: `%LOCALAPPDATA%\TaskbarBatteryWidget\logs` (`app.log`, `devices.log`), rotated at 1 MB x 3
 - Optional detailed device logs: `%LOCALAPPDATA%\TaskbarBatteryWidget\logs\devices\`, one CSV file per device
-  with one row per minute, capped at 4 MB per device. File names use a random salt generated per install.
+  with one row per minute, capped at 4 MB per device (older rotated files are deleted after 90 days). Each
+  file name is a sanitized device name followed by a salted hash of the device. The device name may be one
+  you gave the device (for example its Bluetooth name), so check the file names before sharing them. The
+  random per-install salt is stored outside the logs folder (`%LOCALAPPDATA%\TaskbarBatteryWidget\.detail_salt`),
+  so the logs folder can be shared without it. This makes the hash hard to link back to a device, but
+  it is not a guarantee that the hash cannot be guessed by someone who also has the salt and a candidate device id.
 - Last known battery values: `%LOCALAPPDATA%\TaskbarBatteryWidget\last_known.json`
 
-Logs, including the detailed device logs, never contain MAC addresses, serial numbers or your user name.
+The contents of the logs, including the detailed device logs, never contain MAC addresses, serial numbers or
+your user name.
+
+Turning a source off in *Settings > Sources* (*2.4 GHz and USB* or *Bluetooth*) means the devices of that
+source are not queried at all: they are not opened or read, not just hidden.
 
 ## Safety
 Device readers send only read/query commands from a fixed whitelist; they never change device settings or

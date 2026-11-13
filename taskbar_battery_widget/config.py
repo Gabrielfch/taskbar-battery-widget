@@ -30,6 +30,7 @@ DEFAULTS = {
 }
 
 MAX_HIDDEN = 200
+MAX_DETAIL_DEVICES = 50
 MAX_TIMESTAMP = 4_102_444_800       # year 2100
 COLOR_MODES = ("levels", "mono")
 
@@ -65,7 +66,8 @@ def _valid(key, value) -> bool:
     if key == "color_mode":
         return isinstance(value, str) and value in COLOR_MODES
     if key in ("hidden_devices", "detail_log_devices"):
-        return (isinstance(value, list) and len(value) <= MAX_HIDDEN
+        limit = MAX_HIDDEN if key == "hidden_devices" else MAX_DETAIL_DEVICES
+        return (isinstance(value, list) and len(value) <= limit
                 and all(isinstance(v, str) and 0 < len(v) <= 200 for v in value))
     if isinstance(default, bool):
         return isinstance(value, bool)
@@ -99,6 +101,8 @@ class Config:
             return
         if not isinstance(raw, dict):
             return
+        if isinstance(raw.get("detail_log_devices"), list):
+            raw["detail_log_devices"] = raw["detail_log_devices"][:MAX_DETAIL_DEVICES]
         for key in DEFAULTS:
             if key in raw and _valid(key, raw[key]):
                 self._data[key] = raw[key]
@@ -108,16 +112,17 @@ class Config:
             migrated_beta = True
         if "experimental_readers" in raw:
             migrated_beta = True                # drop the obsolete key from the file
-        hidden = self._data["hidden_devices"]
-        if any(not is_visibility_key(v) for v in hidden):
-            # migrate raw device ids (may contain MAC addresses) to hashed keys and scrub the file
-            migrated = []
-            for v in hidden:
-                k = v if is_visibility_key(v) else visibility_key(v)
-                if k not in migrated:
-                    migrated.append(k)
-            self._data["hidden_devices"] = migrated
-            migrated_beta = True
+        for lkey in ("hidden_devices", "detail_log_devices"):
+            items = self._data[lkey]
+            if any(not is_visibility_key(v) for v in items):
+                # migrate raw device ids (may contain MAC addresses) to hashed keys and scrub the file
+                migrated = []
+                for v in items:
+                    k = v if is_visibility_key(v) else visibility_key(v)
+                    if k not in migrated:
+                        migrated.append(k)
+                self._data[lkey] = migrated
+                migrated_beta = True
         if migrated_beta:
             self.save()
 
@@ -128,6 +133,8 @@ class Config:
     def set(self, key, value):
         if key not in DEFAULTS:
             raise ValueError(f"unknown config key: {key!r}")
+        if key == "detail_log_devices" and isinstance(value, list):
+            value = value[:MAX_DETAIL_DEVICES]      # over the limit: truncate instead of raising into the UI
         if not _valid(key, value):
             raise ValueError(f"invalid value for {key!r}: {value!r}")
         self._data[key] = list(value) if isinstance(value, list) else value

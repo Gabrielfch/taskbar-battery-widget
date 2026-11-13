@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import i18n
 from .colors import RowStyle, row_style
@@ -45,6 +45,7 @@ class PanelModel:
     known: tuple[PanelRow, ...]
     show_disconnected: bool
     signature: tuple
+    radio_on: bool = True
 
 
 def _status(d: Device, threshold: int, lang: str) -> str:
@@ -69,14 +70,19 @@ def _status(d: Device, threshold: int, lang: str) -> str:
     return _t("status_ok", lang)
 
 
-def _row(d: Device, hidden: set, threshold: int, dark: bool, by_level: bool, lang: str) -> PanelRow:
+def _row(d: Device, hidden: set, threshold: int, dark: bool, by_level: bool, lang: str,
+         radio_on: bool = True) -> PanelRow:
     key = visibility_key(d.id)
+    radio_off = not radio_on and getattr(d, "link", "bluetooth") == "bluetooth"
+    if radio_off:       # a Bluetooth device cannot be connected while the radio is off
+        d = replace(d, connected=False)
     return PanelRow(
         key=key, device_id=d.id, name=sanitize_name(d.name) or "?", kind=d.kind,
         link=getattr(d, "link", "bluetooth"), battery=d.battery, charging=bool(d.charging),
         idle=bool(getattr(d, "idle", False)), stale=bool(getattr(d, "stale", False)),
         connected=bool(d.connected), style=row_style(d, threshold, dark, by_level),
-        visible=key not in hidden, status_text=_status(d, threshold, lang))
+        visible=key not in hidden,
+        status_text=_t("bluetooth_off", lang) if radio_off else _status(d, threshold, lang))
 
 
 def _row_sig(r: PanelRow) -> tuple:
@@ -86,14 +92,16 @@ def _row_sig(r: PanelRow) -> tuple:
 
 
 def build_panel_model(devices, hidden_keys, show_disconnected: bool, threshold: int, dark: bool,
-                      color_by_level: bool = True, lang: str | None = None) -> PanelModel:
+                      color_by_level: bool = True, lang: str | None = None,
+                      radio_on: bool = True) -> PanelModel:
     """Group devices into Connected / Known. Order inside each group is the input order (the
     widget and tray also show devices in the order the monitor delivers them)."""
     lg = _lang(lang)
     hidden = {x for x in (hidden_keys or ()) if isinstance(x, str)}
-    rows = [_row(d, hidden, int(threshold), bool(dark), bool(color_by_level), lg) for d in devices]
+    rows = [_row(d, hidden, int(threshold), bool(dark), bool(color_by_level), lg, bool(radio_on))
+            for d in devices]
     connected = tuple(r for r in rows if r.connected)
     known = tuple(r for r in rows if not r.connected)
-    sig = (bool(show_disconnected), bool(dark), lg,
+    sig = (bool(show_disconnected), bool(dark), lg, bool(radio_on),
            tuple(_row_sig(r) for r in connected), tuple(_row_sig(r) for r in known))
-    return PanelModel(connected, known, bool(show_disconnected), sig)
+    return PanelModel(connected, known, bool(show_disconnected), sig, bool(radio_on))

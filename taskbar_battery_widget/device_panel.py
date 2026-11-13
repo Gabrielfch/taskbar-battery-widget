@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixmap
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QToolButton, QVBoxLayout, QWidget)
 
 from . import i18n, taskbar
@@ -20,7 +21,9 @@ MAX_HEIGHT_FRACTION = 0.6
 PANEL_WIDTH = 320          # content width, without the scrollbar
 ICON_PX = 20
 BTN_ICON_PX = 18
-NAME_MAX_PX = 150
+BTN_PX = 32               # minimum touch/click target of every button (logical px)
+ROW_MARGIN_L, ROW_MARGIN_R, ROW_SPACING, ROW_BORDER = 8, 4, 8, 2
+HIDE_GRACE_S = 0.3         # a tray click this soon after the panel closed is the click that closed it
 
 def _t(key: str, lang: str, **kw) -> str:
     return i18n.tr_in(lang, "panel_" + key if key != "show_all" else key, **kw)
@@ -71,12 +74,16 @@ class DevicePanel(QFrame):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("DevicePanel")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(i18n.tr("devices"))
         self._dark = (not taskbar.taskbar_uses_light_theme()) if dark is None else bool(dark)
         self.show_logging = bool(show_logging)
         self._model: PanelModel | None = None
         self._logging_keys: frozenset[str] = frozenset()
         self._sig: tuple | None = None
         self._nav: list[QToolButton] = []        # buttons reached with Up/Down (one per row)
+        self._rows: list[list[QToolButton]] = [] # enabled buttons of each row (Left/Right)
+        self.hidden_at: float | None = None      # time.monotonic() of the last hide
+        self._screen_hooked = False
         self._buttons: dict[tuple[str, str], QToolButton] = {}
         self._content: QWidget | None = None
         self._screen_avail: QRect | None = None
@@ -116,6 +123,7 @@ class DevicePanel(QFrame):
                logging_keys if self.show_logging else frozenset())
         self._model = model
         self._logging_keys = logging_keys
+        self.setAccessibleName(i18n.tr("devices"))
         if sig == self._sig:
             return
         self._sig = sig
@@ -124,7 +132,8 @@ class DevicePanel(QFrame):
     def show_at(self, anchor) -> None:
         """Open the panel next to `anchor` (QPoint or QRect, global coordinates)."""
         rect = QRect(anchor, QSize(1, 1)) if isinstance(anchor, QPoint) else QRect(anchor)
-        screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
+        point = QPoint(anchor) if isinstance(anchor, QPoint) else rect.center()
+        screen = QGuiApplication.screenAt(point) or QGuiApplication.primaryScreen()
         geo = screen.geometry()
         avail = screen.availableGeometry()
         self._screen_avail = avail
@@ -142,7 +151,7 @@ class DevicePanel(QFrame):
         self.raise_()
         self.activateWindow()
         self._foreground()
-        first = self._nav[0] if self._nav else self._footer
+        first = self._nav[0] if self._nav else self
         first.setFocus(Qt.FocusReason.PopupFocusReason)
 
     # ------------------------------------------------------------------ appearance
@@ -154,6 +163,7 @@ class DevicePanel(QFrame):
         hover = "rgba(255,255,255,40)" if dark else "rgba(0,0,0,30)"
         focus = band_color("amber", dark).name()
         self._text = text
+        handle = "rgba(255,255,255,90)" if dark else "rgba(0,0,0,90)"
         self.setStyleSheet(
             f"QFrame#DevicePanel {{ background: {_hex(base)}; border: 1px solid {_hex(edge)}; "
             f"border-radius: 6px; }}"
@@ -165,10 +175,23 @@ class DevicePanel(QFrame):
             f"QPushButton {{ background: transparent; color: {_hex(text)}; border: 2px solid "
             f"transparent; border-radius: 5px; padding: 4px 8px; }}"
             f"QPushButton:hover {{ background: {hover}; }}"
-            f"QPushButton:disabled {{ color: {_hex(band_color('grey', dark))}; }}")
+            f"QPushButton:disabled {{ color: {_hex(band_color('grey', dark))}; }}"
+            f"QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}"
+            f"QScrollBar::handle:vertical {{ background: {handle}; min-height: 24px; "
+            f"border-radius: 4px; margin: 1px; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+            f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}"
+            f"QToolTip {{ background: {_hex(base)}; color: {_hex(text)}; "
+            f"border: 1px solid {_hex(edge)}; padding: 3px; }}")
 
-    def _eye_button(self, name_text: str, checked: bool, tracked_key: tuple[str, str]) -> QToolButton:
+    @staticmethod
+    def _size_button(b: QToolButton) -> None:
+        b.setFixedSize(BTN_PX, BTN_PX)
+
+    def _eye_button(self, name_text: str, checked: bool, tracked_key: tuple[str, str],
+                    description: str = "") -> QToolButton:
         b = QToolButton(self)
+        self._size_button(b)
         b.setCheckable(True)
         b.setChecked(checked)
         b.setAutoRaise(True)
@@ -176,6 +199,8 @@ class DevicePanel(QFrame):
         b.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
         b.setToolTip(name_text)
         b.setAccessibleName(name_text)
+        if description:
+            b.setAccessibleDescription(description)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         self._set_eye_icon(b, checked)
         b.installEventFilter(self)
@@ -203,17 +228,17 @@ class DevicePanel(QFrame):
             h.addWidget(eye)
         return w
 
-    def _row_widget(self, row: PanelRow, lang: str) -> QWidget:
+    def _row_widget(self, row: PanelRow, lang: str, eye_enabled: bool = True) -> QWidget:
         st = row.style
         w = QFrame()
         w.setObjectName("row")
-        border = f"2px solid {_hex(st.fg)}" if st.alert else "2px solid transparent"
+        border = f"{ROW_BORDER}px solid {_hex(st.fg)}" if st.alert else f"{ROW_BORDER}px solid transparent"
         w.setStyleSheet(f"QFrame#row {{ background: {_hex(st.bg)}; border: {border}; "
                         f"border-radius: 6px; }}")
-        w.setAccessibleName(f"{row.name}, {level_text(row)}")
+        desc = f"{row.name}, {level_text(row)}"
         h = QHBoxLayout(w)
-        h.setContentsMargins(8, 4, 4, 4)
-        h.setSpacing(8)
+        h.setContentsMargins(ROW_MARGIN_L, 4, ROW_MARGIN_R, 4)
+        h.setSpacing(ROW_SPACING)
 
         icon_color = QColor(st.fg)
         if row.idle:
@@ -226,27 +251,42 @@ class DevicePanel(QFrame):
         icon.setFixedSize(ICON_PX, ICON_PX)
         h.addWidget(icon)
 
+        n_btns = (1 + (1 if self.show_logging else 0)
+                  + (1 if self.show_logging and row.key in self._logging_keys else 0))
+        avail = (PANEL_WIDTH - 2 * ROW_BORDER - ROW_MARGIN_L - ROW_MARGIN_R - ICON_PX
+                 - BTN_PX * n_btns - ROW_SPACING * (n_btns + 1) - 2)
+
+        cell = QWidget()
+        cell.setFixedWidth(avail)
+        cv = QVBoxLayout(cell)
+        cv.setContentsMargins(0, 0, 0, 0)
+        cv.setSpacing(0)
         name = QLabel()
         name.setTextFormat(Qt.TextFormat.PlainText)
-        fm = QFontMetrics(name.font())
-        name.setText(fm.elidedText(row.name, Qt.TextElideMode.ElideRight, NAME_MAX_PX))
+        name.setFixedWidth(avail)
+        name.setText(QFontMetrics(name.font()).elidedText(row.name, Qt.TextElideMode.ElideRight, avail))
         name.setToolTip(row.name)
-        name.setMinimumWidth(NAME_MAX_PX // 2)
-        h.addWidget(name, 1)
-
+        cv.addWidget(name)
         status = QLabel(level_text(row))
         status.setTextFormat(Qt.TextFormat.PlainText)
+        status.setWordWrap(True)
         status.setStyleSheet(f"color: {_hex(st.fg)}; background: transparent;")
         if st.dimmed:
             f = status.font()
             f.setItalic(True)
             status.setFont(f)
-        status.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        h.addWidget(status)
+        status.setFixedWidth(avail)
+        need = QFontMetrics(status.font()).boundingRect(
+            0, 0, avail, 10000, int(Qt.TextFlag.TextWordWrap), status.text()).height()
+        status.setFixedHeight(need + 2)
+        cv.addWidget(status)
+        h.addWidget(cell)
 
+        buttons: list[QToolButton] = []
         if self.show_logging:
             on = row.key in self._logging_keys
             rec = QToolButton(self)
+            self._size_button(rec)
             rec.setCheckable(True)
             rec.setChecked(on)
             rec.setAutoRaise(True)
@@ -255,29 +295,49 @@ class DevicePanel(QFrame):
             label = _t("record", lang, name=row.name)
             rec.setToolTip(label)
             rec.setAccessibleName(label)
+            rec.setAccessibleDescription(desc)
             rec.setIcon(record_icon(BTN_ICON_PX, on, band_color("red", self._dark) if on
                                     else band_color("grey", self._dark)))
             rec.installEventFilter(self)
             self._buttons[(row.key, "rec")] = rec
             rec.toggled.connect(lambda v, k=row.key, b=rec: self._on_record(k, v, b))
             h.addWidget(rec)
+            buttons.append(rec)
             if on:
                 op = QToolButton(self)
+                self._size_button(op)
                 op.setText("…")
                 op.setAutoRaise(True)
+                op.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
                 lbl = _t("open_log", lang, name=row.name)
                 op.setToolTip(lbl)
                 op.setAccessibleName(lbl)
+                op.setAccessibleDescription(desc)
                 op.installEventFilter(self)
                 op.clicked.connect(lambda _=False, k=row.key: self.open_log_requested.emit(k))
                 self._buttons[(row.key, "open")] = op
                 h.addWidget(op)
+                buttons.append(op)
 
-        eye = self._eye_button(_t("show_in_bar", lang, name=row.name), row.visible, (row.key, "eye"))
+        eye = self._eye_button(_t("show_in_bar", lang, name=row.name), row.visible, (row.key, "eye"),
+                               desc)
+        if not eye_enabled:
+            hint = _t("known_eye_needed", lang)
+            eye.setEnabled(False)
+            eye.setToolTip(hint)
+            eye.setAccessibleDescription(f"{desc}. {hint}")
         eye.toggled.connect(lambda v, k=row.key, b=eye: self._on_eye(k, v, b))
         h.addWidget(eye)
-        self._nav.append(eye)
+        buttons.append(eye)
+        self._add_row([b for b in buttons if b.isEnabled()], primary=eye if eye_enabled else None)
         return w
+
+    def _add_row(self, buttons: list[QToolButton], primary: QToolButton | None = None) -> None:
+        """Register the focusable buttons of one row (Left/Right inside it, Up/Down between rows)."""
+        if not buttons:
+            return
+        self._rows.append(buttons)
+        self._nav.append(primary if primary in buttons else buttons[0])
 
     # ------------------------------------------------------------------ build
     def _rebuild(self, model: PanelModel, lang: str) -> None:
@@ -293,12 +353,22 @@ class DevicePanel(QFrame):
             b.deleteLater()
         self._buttons = {}
         self._nav = []
+        self._rows = []
 
         content = QWidget()
         content.setStyleSheet("background: transparent;")
         v = QVBoxLayout(content)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(4)
+        if not model.radio_on:
+            off = QLabel(_t("radio_off", lang))
+            off.setTextFormat(Qt.TextFormat.PlainText)
+            off.setWordWrap(True)
+            off.setContentsMargins(8, 4, 8, 2)
+            off.setStyleSheet(f"color: {_hex(band_color('amber', self._dark))}; "
+                              f"background: transparent;")
+            off.setAccessibleName(_t("radio_off", lang))
+            v.addWidget(off)
         v.addWidget(self._header("connected", lang, None))
         if model.connected:
             for r in model.connected:
@@ -312,14 +382,15 @@ class DevicePanel(QFrame):
         if model.known:
             eye = self._eye_button(_t("show_known", lang), model.show_disconnected, ("", "known"))
             eye.toggled.connect(lambda val, b=eye: self._on_known(val, b))
-            self._nav.append(eye)
+            self._add_row([eye])
             v.addWidget(self._header("known", lang, eye))
             for r in model.known:
-                v.addWidget(self._row_widget(r, lang))
+                v.addWidget(self._row_widget(r, lang, eye_enabled=model.show_disconnected))
         v.addStretch(1)
         content.setFixedWidth(PANEL_WIDTH)
         self._content = content
         self._scroll.setWidget(content)
+        self.setAccessibleName(i18n.tr("devices"))
 
         self._footer.setText(_t("show_all", lang))
         self._footer.setAccessibleName(_t("show_all", lang))
@@ -386,6 +457,9 @@ class DevicePanel(QFrame):
             if key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and self._nav:
                 self._move_focus(obj, -1 if key == Qt.Key.Key_Up else 1)
                 return True
+            if key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and self._rows:
+                self._move_in_row(obj, -1 if key == Qt.Key.Key_Left else 1)
+                return True
         return super().eventFilter(obj, ev)
 
     def _move_focus(self, obj: QObject, step: int) -> None:
@@ -395,14 +469,30 @@ class DevicePanel(QFrame):
         target.setFocus(Qt.FocusReason.TabFocusReason)
         self._scroll.ensureWidgetVisible(target)
 
-    def _row_index(self, obj: QObject) -> int | None:
-        if obj in self._nav:
-            return self._nav.index(obj)
-        for (key, kind), b in self._buttons.items():          # record / open buttons -> same row
-            if b is obj:
-                eye = self._buttons.get((key, "eye"))
-                return self._nav.index(eye) if eye in self._nav else None
+    def _row_of(self, obj: QObject) -> int | None:
+        for i, buttons in enumerate(self._rows):
+            if obj in buttons:
+                return i
         return None
+
+    def _row_index(self, obj: QObject) -> int | None:
+        """Index into `_nav` of the row that holds `obj` (any of its buttons)."""
+        i = self._row_of(obj)
+        if i is None:
+            return None
+        target = self._rows[i]
+        for n, b in enumerate(self._nav):
+            if b in target:
+                return n
+        return None
+
+    def _move_in_row(self, obj: QObject, step: int) -> None:
+        i = self._row_of(obj)
+        if i is None:
+            return
+        buttons = self._rows[i]
+        j = max(0, min(len(buttons) - 1, buttons.index(obj) + step))
+        buttons[j].setFocus(Qt.FocusReason.TabFocusReason)
 
     def keyPressEvent(self, ev) -> None:
         if ev.key() == Qt.Key.Key_Escape:
@@ -422,8 +512,23 @@ class DevicePanel(QFrame):
         except Exception:
             log.debug("could not foreground the device panel", exc_info=True)
 
+    def showEvent(self, ev) -> None:
+        super().showEvent(ev)
+        wh = self.windowHandle()
+        if wh is not None and not self._screen_hooked:
+            self._screen_hooked = True
+            wh.screenChanged.connect(self._on_screen_changed)
+        self._on_screen_changed()       # icons are drawn for the screen the panel is on now
+
+    def _on_screen_changed(self, *_a) -> None:
+        """Icons are pixmaps at the current devicePixelRatio: drop the cached signature and rebuild."""
+        self._sig = None
+        if self._model is not None:
+            self.set_model(self._model, self._logging_keys)
+
     def hideEvent(self, ev) -> None:
         super().hideEvent(ev)
+        self.hidden_at = time.monotonic()
         hwnd, self._posted_hwnd = self._posted_hwnd, 0
         if hwnd:
             try:
