@@ -1,12 +1,9 @@
 """Frameless, always-on-top, non-activating pill bar docked to the Windows taskbar."""
 from __future__ import annotations
 
-import ctypes
 import html
-import sys
-import time
+import sys  # noqa: F401  (tests read widget.sys.platform)
 from dataclasses import dataclass
-from ctypes import wintypes as wt
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QAccessible, QAccessibleEvent, QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter,
@@ -20,25 +17,23 @@ from .icons import draw_bolt, draw_kind_icon
 from .models import Device, visibility_key
 from .naming import sanitize_name
 from .popup import HOVER_DELAY_MS, HoverPopup, PopupContent, build_popup_content, place_popup, stale_text
+from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, Env, Placement, center_rect_y,  # noqa: F401
+                        compute_placement, pill_height_for)
+from .win_window import (_ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
+                         popup_menu_foreground)
 
 MARGIN = 2           # outer margin around the pills (logical px)
 SPACING = 4          # gap between pills
 PAD = 8              # horizontal padding inside a pill
 ICON_GAP = 5         # gap between icon and text
-MIN_PILL_H, MAX_PILL_H = 20, 32
 MIN_FONT_PX = 12
 BAR_MIN_PILL_H = 24   # below this height the level bar is dropped
 BAR_H = 3.0
 MOON_W = 7
-FREE_SPACE_SHARE = 0.4   # share of the taskbar run left of the tray the pills may use
 TICK_MS = 500
 
 
 # --------------------------------------------------------------------------- pure layout
-def pill_height_for(taskbar_logical_thickness: float) -> int:
-    return int(max(MIN_PILL_H, min(MAX_PILL_H, round(taskbar_logical_thickness) - 14)))
-
-
 def pill_width(text_w: int, icon: int, extra: int = 0, pad: int = PAD, gap: int = ICON_GAP) -> int:
     return pad + icon + gap + text_w + extra + pad
 
@@ -85,13 +80,6 @@ def fit_count(extents: list[int], limit: int | None, overflow_extent: int,
     return 1
 
 
-def center_rect_y(rect: tuple, cy: int) -> tuple:
-    """Shift a (l, t, r, b) rect vertically so its centre is `cy`."""
-    h = rect[3] - rect[1]
-    top = cy - h // 2
-    return (rect[0], top, rect[2], top + h)
-
-
 def pill_index_at(rects: list[tuple], x: float, y: float) -> int:
     for i, (rx, ry, rw, rh) in enumerate(rects):
         if rx <= x < rx + rw and ry <= y < ry + rh:
@@ -105,139 +93,7 @@ def tooltip_html(text: str) -> str:
     return f"<p style='white-space:pre'>{body}</p>"
 
 
-# --------------------------------------------------------------------------- win32
-if sys.platform == "win32":
-    _u32 = ctypes.WinDLL("user32", use_last_error=True)
-    _u32.GetWindowLongPtrW.argtypes = [wt.HWND, ctypes.c_int]
-    _u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
-    _u32.SetWindowLongPtrW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_ssize_t]
-    _u32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
-    _u32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                                  ctypes.c_int, wt.UINT]
-    _u32.SetWindowPos.restype = wt.BOOL
-    _u32.SetForegroundWindow.argtypes = [wt.HWND]
-    _u32.SetForegroundWindow.restype = wt.BOOL
-    _u32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
-    _u32.PostMessageW.restype = wt.BOOL
 
-GWL_EXSTYLE = -20
-WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x80, 0x08000000
-HWND_TOPMOST = -1
-SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x1, 0x2, 0x10
-
-
-def _apply_ex_styles(hwnd: int) -> None:
-    if sys.platform != "win32":
-        return
-    h = wt.HWND(hwnd)
-    cur = _u32.GetWindowLongPtrW(h, GWL_EXSTYLE)
-    _u32.SetWindowLongPtrW(h, GWL_EXSTYLE, cur | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
-
-
-WM_NULL = 0x0000
-
-
-def _foreground(hwnd: int) -> None:
-    """SetForegroundWindow on one of our own windows (needed so a popup menu closes on outside clicks)."""
-    if sys.platform != "win32" or not hwnd:
-        return
-    _u32.SetForegroundWindow(wt.HWND(hwnd))
-
-
-def _post_null(hwnd: int) -> None:
-    """Classic tray-menu companion: WM_NULL after the menu ends so the menu loop does not linger."""
-    if sys.platform != "win32" or not hwnd:
-        return
-    _u32.PostMessageW(wt.HWND(hwnd), WM_NULL, 0, 0)
-
-
-def popup_menu_foreground(menu, pos, owner_hwnd: int = 0) -> None:
-    """Show `menu` at `pos` from a non-activating window so it dismisses on any outside click.
-
-    The menu's window is made foreground right after it appears; when it hides, WM_NULL is posted to the
-    owner window (or the menu's own window when no owner is given).
-    """
-    menu.popup(pos)
-    try:
-        mh = int(menu.winId())
-        _foreground(mh)
-        target = owner_hwnd or mh
-
-        def _closed() -> None:
-            try:
-                menu.aboutToHide.disconnect(_closed)
-            except (RuntimeError, TypeError):
-                pass
-            _post_null(target)
-        menu.aboutToHide.connect(_closed)
-    except Exception:
-        pass
-
-
-def _assert_topmost(hwnd: int) -> None:
-    if sys.platform != "win32":
-        return
-    _u32.SetWindowPos(wt.HWND(hwnd), wt.HWND(HWND_TOPMOST), 0, 0, 0, 0,
-                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
-
-
-EVENT_OBJECT_REORDER = 0x8004
-WINEVENT_OUTOFCONTEXT = 0x0000
-_ZGUARD_MIN_INTERVAL = 0.015  # seconds; avoids a raise storm if something else keeps reordering
-
-
-class _ZGuard:
-    """Re-raises our window the instant the shell reorders windows.
-
-    On Windows 11 explorer pushes the taskbar back above ordinary topmost windows within ~50 ms,
-    so a periodic SetWindowPos alone loses. A WinEvent hook on EVENT_OBJECT_REORDER (delivered in
-    this thread's message loop) lets us win the race without a busy timer.
-    """
-
-    def __init__(self, hwnd_getter, extra_getter=None):
-        self._get = hwnd_getter
-        self._extra = extra_getter      # hwnd of a companion window kept just above ours
-        self._hook = None
-        self._last = 0.0
-        self._proc = None
-
-    def start(self) -> None:
-        if sys.platform != "win32" or self._hook:
-            return
-        proto = ctypes.WINFUNCTYPE(None, wt.HANDLE, wt.DWORD, wt.HWND, wt.LONG, wt.LONG,
-                                   wt.DWORD, wt.DWORD)
-        self._proc = proto(self._on_event)
-        _u32.UnhookWinEvent.argtypes = [wt.HANDLE]
-        _u32.UnhookWinEvent.restype = wt.BOOL
-        _u32.SetWinEventHook.restype = wt.HANDLE
-        _u32.SetWinEventHook.argtypes = [wt.DWORD, wt.DWORD, wt.HMODULE, proto, wt.DWORD,
-                                         wt.DWORD, wt.DWORD]
-        self._hook = _u32.SetWinEventHook(EVENT_OBJECT_REORDER, EVENT_OBJECT_REORDER, None,
-                                          self._proc, 0, 0, WINEVENT_OUTOFCONTEXT)
-
-    def stop(self) -> None:
-        if self._hook:
-            try:
-                _u32.UnhookWinEvent(self._hook)
-            finally:
-                self._hook = None
-                self._proc = None
-
-    def _on_event(self, _hook, _event, hwnd, _idobj, _idchild, _thread, _time) -> None:
-        try:
-            mine = self._get()
-            if not mine or (hwnd or 0) == mine:
-                return       # our own reorder: re-raising would feed back into itself
-            now = time.monotonic()
-            if now - self._last < _ZGUARD_MIN_INTERVAL:
-                return
-            self._last = now
-            _assert_topmost(mine)
-            extra = self._extra() if self._extra else 0
-            if extra:
-                _assert_topmost(extra)
-        except Exception:
-            pass
 
 
 IDLE_ALPHA = 153     # ~60 % opacity of the icon and bar of sleeping devices (never of the text)
@@ -535,34 +391,30 @@ class TaskbarWidget(QWidget):
                 return s
         return QGuiApplication.primaryScreen()
 
+    def _build_env(self, info, fullscreen: bool) -> Env:
+        screen = self._pick_screen(info.monitor_rect)
+        g = screen.geometry()
+        return Env(info=info, fullscreen=fullscreen, has_pills=bool(self._pills),
+                   screen_name=screen.name(), screen_origin=(g.x(), g.y()),
+                   dpr=screen.devicePixelRatio() or 1.0, size=(self.width(), self.height()))
+
     def update_position(self) -> None:
         info = taskbar.get_taskbar_info()
         if info is None or not self._pills:
             self._set_visible(False)
             return
-        if taskbar.is_tucked(info.rect, info.monitor_rect, info.edge, info.autohide) \
-                or taskbar.is_fullscreen_foreground(info.monitor_rect):
+        fullscreen = taskbar.is_fullscreen_foreground(info.monitor_rect)
+        placement = Placement()
+        res = compute_placement(self._build_env(info, fullscreen), placement)
+        if not res.visible:
             self._set_visible(False)
             return
-        screen = self._pick_screen(info.monitor_rect)
-        dpr = screen.devicePixelRatio() or 1.0
         self._edge = info.edge
-        vertical = info.edge in (taskbar.EDGE_LEFT, taskbar.EDGE_RIGHT)
-        thickness = (taskbar.rect_w(info.rect) if vertical else taskbar.rect_h(info.rect)) / dpr
-        ph = pill_height_for(thickness)
-        run = (info.tray_rect[1] - info.rect[1]) if vertical else (info.tray_rect[0] - info.rect[0])
-        limit = max(120, int(run / dpr * FREE_SPACE_SHARE))
-        if ph != self._pill_h or vertical != self._vertical or limit != self._max_extent:
-            self._pill_h, self._vertical, self._max_extent = ph, vertical, limit
+        if res.pill_h != self._pill_h or res.vertical != self._vertical or res.max_extent != self._max_extent:
+            self._pill_h, self._vertical, self._max_extent = res.pill_h, res.vertical, res.max_extent
             self._relayout()
-        w_phys, h_phys = round(self.width() * dpr), round(self.height() * dpr)
-        prect = taskbar.anchor_widget_rect(info, w_phys, h_phys, gap=round(4 * dpr))
-        if not vertical:    # centre on the notification area's icon row, not just the bar
-            ty = (info.tray_rect[1] + info.tray_rect[3]) // 2
-            if info.rect[1] <= ty <= info.rect[3]:
-                prect = center_rect_y(prect, ty)
-        x, y, _w, _h = taskbar.physical_to_logical_rect(
-            prect, info.monitor_rect[:2], (screen.geometry().x(), screen.geometry().y()), dpr)
+            res = compute_placement(self._build_env(info, fullscreen), placement)   # size changed
+        x, y = res.rect[0], res.rect[1]
         if self._last_geom != (x, y):
             self._last_geom = (x, y)
             self.move(x, y)

@@ -9,6 +9,7 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QMenu
 
 from taskbar_battery_widget import widget as w
+from taskbar_battery_widget import win_window
 from taskbar_battery_widget.i18n import set_language
 from taskbar_battery_widget.models import Device
 
@@ -116,7 +117,7 @@ class FakeU32:
 @pytest.mark.skipif(not w.sys.platform == "win32", reason="win32 only")
 def test_popup_menu_foreground_sets_foreground_then_posts_wm_null(qapp, monkeypatch):
     fake = FakeU32()
-    monkeypatch.setattr(w, "_u32", fake)
+    monkeypatch.setattr(win_window, "_u32", fake)
     menu = QMenu()
     menu.addAction("x")
     w.popup_menu_foreground(menu, qapp.primaryScreen().geometry().center(), owner_hwnd=1234)
@@ -133,7 +134,7 @@ def test_popup_menu_foreground_sets_foreground_then_posts_wm_null(qapp, monkeypa
 @pytest.mark.skipif(not w.sys.platform == "win32", reason="win32 only")
 def test_helpers_ignore_null_hwnd(monkeypatch):
     fake = FakeU32()
-    monkeypatch.setattr(w, "_u32", fake)
+    monkeypatch.setattr(win_window, "_u32", fake)
     w._foreground(0)
     w._post_null(0)
     assert fake.calls == []

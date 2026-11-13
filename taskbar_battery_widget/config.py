@@ -1,8 +1,10 @@
 """JSON settings stored in %APPDATA%\\TaskbarBatteryWidget\\config.json (corrupt/missing => defaults)."""
 from __future__ import annotations
 
+import copy
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -27,12 +29,24 @@ DEFAULTS = {
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)
+    "placement_mode": "taskbar",    # "taskbar" | "floating"
+    "taskbar_anchor": "right",      # "right" | "left": side of the taskbar used in taskbar mode
+    "placement_monitor": "primary", # "primary" or a monitor key (models-style key, see MONITOR_KEY_RE)
+    "floating_positions": {},       # monitor key ("primary" or key) -> {"anchor", "dx", "dy"}
+    "show_in_fullscreen": False,    # keep the widget visible over fullscreen windows
 }
 
 MAX_HIDDEN = 200
 MAX_DETAIL_DEVICES = 50
 MAX_TIMESTAMP = 4_102_444_800       # year 2100
 COLOR_MODES = ("levels", "mono")
+PLACEMENT_MODES = ("taskbar", "floating")
+TASKBAR_ANCHORS = ("right", "left")
+FLOATING_ANCHORS = ("top-left", "top-center", "top-right", "middle-left", "middle-right",
+                    "bottom-left", "bottom-center", "bottom-right")
+MAX_FLOATING = 16                   # entries in floating_positions
+MAX_OFFSET = 10000                  # |dx| and |dy| are clamped to this
+MONITOR_KEY_RE = re.compile(r"[0-9a-f#]{1,40}")
 
 
 LEGACY_DIR = "BtBatteryBar"  # settings folder of the previous app name (migration only)
@@ -59,12 +73,55 @@ def migrate_legacy_config(new_path: Path, legacy_path: Path | None = None) -> bo
         return False
 
 
+def _valid_monitor_key(value) -> bool:
+    return isinstance(value, str) and (value == "primary" or MONITOR_KEY_RE.fullmatch(value) is not None)
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _floating_entry(mon_key, pos):
+    """Return a clean {"anchor", "dx", "dy"} (offsets clamped) or None if the entry is malformed."""
+    if not _valid_monitor_key(mon_key) or not isinstance(pos, dict):
+        return None
+    anchor, dx, dy = pos.get("anchor"), pos.get("dx"), pos.get("dy")
+    if anchor not in FLOATING_ANCHORS or not _is_int(dx) or not _is_int(dy):
+        return None
+    return {"anchor": anchor,
+            "dx": max(-MAX_OFFSET, min(MAX_OFFSET, dx)),
+            "dy": max(-MAX_OFFSET, min(MAX_OFFSET, dy))}
+
+
+def _clean_floating(value) -> dict:
+    """Keep the well-formed entries (first MAX_FLOATING of them); malformed ones are dropped."""
+    out = {}
+    for mon_key, pos in value.items():
+        entry = _floating_entry(mon_key, pos)
+        if entry is not None and len(out) < MAX_FLOATING:
+            out[mon_key] = entry
+    return out
+
+
+def _copy(value):
+    return copy.deepcopy(value) if isinstance(value, (list, dict)) else value
+
+
 def _valid(key, value) -> bool:
     if key not in DEFAULTS:
         return False
     default = DEFAULTS[key]
     if key == "color_mode":
         return isinstance(value, str) and value in COLOR_MODES
+    if key == "placement_mode":
+        return isinstance(value, str) and value in PLACEMENT_MODES
+    if key == "taskbar_anchor":
+        return isinstance(value, str) and value in TASKBAR_ANCHORS
+    if key == "placement_monitor":
+        return _valid_monitor_key(value)
+    if key == "floating_positions":
+        return (isinstance(value, dict) and len(value) <= MAX_FLOATING
+                and all(_floating_entry(k, v) is not None for k, v in value.items()))
     if key in ("hidden_devices", "detail_log_devices"):
         limit = MAX_HIDDEN if key == "hidden_devices" else MAX_DETAIL_DEVICES
         return (isinstance(value, list) and len(value) <= limit
@@ -91,7 +148,7 @@ class Config:
         else:
             self.path = default_path()
             migrate_legacy_config(self.path)
-        self._data = {k: (list(v) if isinstance(v, list) else v) for k, v in DEFAULTS.items()}
+        self._data = {k: _copy(v) for k, v in DEFAULTS.items()}
         self._load()
 
     def _load(self):
@@ -104,7 +161,9 @@ class Config:
         if isinstance(raw.get("detail_log_devices"), list):
             raw["detail_log_devices"] = raw["detail_log_devices"][:MAX_DETAIL_DEVICES]
         for key in DEFAULTS:
-            if key in raw and _valid(key, raw[key]):
+            if key == "floating_positions" and isinstance(raw.get(key), dict):
+                self._data[key] = _clean_floating(raw[key])    # bad entries dropped, the rest kept
+            elif key in raw and _valid(key, raw[key]):
                 self._data[key] = raw[key]
         migrated_beta = False
         if "beta_readers" not in raw and raw.get("experimental_readers") is True:
@@ -127,8 +186,7 @@ class Config:
             self.save()
 
     def get(self, key):
-        v = self._data.get(key, DEFAULTS.get(key))
-        return list(v) if isinstance(v, list) else v
+        return _copy(self._data.get(key, DEFAULTS.get(key)))
 
     def set(self, key, value):
         if key not in DEFAULTS:
@@ -137,7 +195,9 @@ class Config:
             value = value[:MAX_DETAIL_DEVICES]      # over the limit: truncate instead of raising into the UI
         if not _valid(key, value):
             raise ValueError(f"invalid value for {key!r}: {value!r}")
-        self._data[key] = list(value) if isinstance(value, list) else value
+        if key == "floating_positions":
+            value = _clean_floating(value)              # clamps dx/dy
+        self._data[key] = _copy(value)
         self.save()
 
     def save(self):

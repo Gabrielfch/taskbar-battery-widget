@@ -48,6 +48,7 @@ def _no_real_taskbar(request, monkeypatch):
         return
     from taskbar_battery_widget import taskbar
     monkeypatch.setattr(taskbar, "get_taskbar_info", lambda: None)
+    monkeypatch.setattr(taskbar, "get_taskbar_infos", lambda: [])
 
 
 @pytest.fixture(autouse=True)
