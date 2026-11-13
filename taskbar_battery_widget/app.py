@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QObject, QTimer
+from PySide6.QtCore import QLockFile, QObject, QPoint, QRect, QTimer
 from PySide6.QtWidgets import QApplication
 
 log = logging.getLogger(__name__)
@@ -108,6 +108,12 @@ def run_shutdown(theme_timer, widget, tray, monitor, history, lock, detail=None)
 
 
 _BETA_KEYS: set[str] = set()     # visibility keys of devices that only a beta reader produced
+
+
+def widget_anchor(widget) -> QRect:
+    """Global rect of the taskbar widget, used to anchor the device panel above (or beside) the pills."""
+    tl = widget.mapToGlobal(QPoint(0, 0))
+    return QRect(tl.x(), tl.y(), widget.width(), widget.height())
 
 
 def full_device_list(history, devices, cfg, now: float) -> list:
@@ -249,7 +255,8 @@ def main() -> int:
     monitor = DeviceMonitor(cfg=cfg)
     widget = TaskbarWidget(cfg)
     tray = TrayController(cfg)
-    widget.set_menu(tray.menu)
+    # Right-click (or the Menu key) on the pills opens the device panel, like the tray icon does.
+    widget.context_menu_requested.connect(lambda _gp: tray.open_panel(widget_anchor(widget)))
 
     try:
         history = DeviceHistory()
