@@ -140,7 +140,8 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | Device | Method | Status |
 | --- | --- | --- |
 | BlackShark V2 HyperSpeed — 2.4 GHz dongle 1532:0565 (battery + charging) | Direct dongle protocol | ✅ |
-| Basilisk V3 Pro (wired/wireless), Basilisk V3 X HyperSpeed, Basilisk X HyperSpeed, Basilisk Ultimate (+ dongle) | Classic 90-byte protocol (vendor or mouse collection) | 🟢 |
+| Basilisk V3 Pro — 2.4 GHz dongle 1532:00AB (confirmed in [#1](https://github.com/Gabrielfch/taskbar-battery-widget/issues/1)) | Classic 90-byte protocol (mouse collection) | ✅ |
+| Basilisk V3 Pro wired (1532:00AA), Basilisk V3 X HyperSpeed, Basilisk X HyperSpeed, Basilisk Ultimate (+ dongle) | Classic 90-byte protocol (vendor or mouse collection) | 🟢 |
 | DeathAdder V2 Pro (wired/wireless), DeathAdder V2 X HyperSpeed, DeathAdder V3 Pro (wired/wireless) | Classic 90-byte protocol | 🟢 |
 | Naga V2 Pro (wired/wireless), Viper V2 Pro (wired/wireless), Viper Ultimate (wired/wireless/dongle) | Classic 90-byte protocol | 🟢 |
 | Cobra Pro (wired/wireless), Mouse Dock Pro, HyperPolling Wireless Dongle | Classic 90-byte protocol | 🟢 |
