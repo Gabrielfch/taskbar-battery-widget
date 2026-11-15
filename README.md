@@ -68,7 +68,8 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   Stored in `%LOCALAPPDATA%\TaskbarBatteryWidget\last_known.json` (max. 200 devices, purged after 90 days).
 - Device panel: left or right click on the tray icon (or right click on the pills) opens a scrollable panel
   with *Connected* and *Known* devices. An eye icon per device shows or hides it on the taskbar; an icon
-  toolbar at the bottom gives *Refresh*, *Show all*, *Settings*, *About* and *Quit*.
+  toolbar at the bottom gives *Refresh*, *Show all*, *Settings*, *About* and *Quit*. The panel stays open
+  while the *Settings* menu, *About* or a statistics window is open, and closes when you click outside the app.
 - *Settings* (gear button): *Sources* (*2.4 GHz and USB* — USB dongles and wired controllers — and
   *Bluetooth*, both on by default), *Alerts*, *Logs*, *Start with Windows* and *Personalization*.
 - Placement (*Settings ▸ Personalization ▸ Position*):
@@ -84,6 +85,15 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
     shows no hover card; hold **Shift** to use it.
 - Optional detailed log per device: one CSV row per minute in `%LOCALAPPDATA%\TaskbarBatteryWidget\logs\devices\`
   (max. 4 MB per device, no MAC addresses or serial numbers).
+  - **Statistics** (the *…* button of a recording device): number of charges, equivalent charge cycles,
+    estimated runtime on a full charge, average time between charges, average drain (%/h), average charge time
+    and gain, last charge, and charts of the battery level, daily drain and daily charges (24 h / 7 days /
+    30 days / all). *Open log folder* is in the same window.
+  - **Time left**: recording devices show "≈ 6 h left" (or "full in ≈ 40 min" while charging) in the panel
+    and on the hover card, estimated from the last 7 days of their log (needs at least 6 h of discharge and a
+    10 % drop).
+- Full-charge notification (*Settings ▸ Alerts ▸ Notify when fully charged*, on by default): once per charge,
+  when a device reaches 100 % (or stops charging at 99 % or more).
 
 ## Compatibility
 
