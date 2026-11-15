@@ -80,6 +80,7 @@ def test_keyboard_toolbar(panel):
     panel.refresh_requested.connect(lambda: got.append("refresh"))
     panel.set_model(model([dev("a")], hidden=[visibility_key("a")]))
     panel.show_at(QPoint(300, 300))
+    QTest.qWaitForWindowActive(panel)
     t = panel._toolbar
     t["refresh"].setFocus()
     QTest.keyClick(t["refresh"], Qt.Key.Key_Return)         # Enter activates
@@ -100,6 +101,7 @@ def test_keyboard_toolbar(panel):
 def test_keyboard_skips_disabled_show_all(panel):
     panel.set_model(model([dev("a")]))
     panel.show_at(QPoint(300, 300))
+    QTest.qWaitForWindowActive(panel)
     panel._toolbar["refresh"].setFocus()
     QTest.keyClick(panel._toolbar["refresh"], Qt.Key.Key_Right)
     assert panel._toolbar["settings"].hasFocus()
@@ -128,7 +130,7 @@ def test_open_log_tooltip_and_spanish(qapp):
     p.set_model(model([dev("a", "Raton"), dev("c", "Viejo", connected=False)], lang="es"),
                 logging_keys=[visibility_key("a")])
     tips = {b.toolTip() for b in p.findChildren(QToolButton)}
-    assert {"Ocultar", "Detener grabación", "Abrir carpeta", "Ocultar conocidos"} <= tips
+    assert {"Ocultar", "Detener grabación", "Estadísticas", "Ocultar conocidos"} <= tips
     p.close()
 
 
@@ -165,7 +167,7 @@ def test_tray_toolbar_actions(qapp, tmp_path, monkeypatch):
     p._toolbar["refresh"].click()
     assert got == ["refresh"] and p.isVisible()             # refresh keeps the panel open
     p._toolbar["about"].click()
-    assert got[-1] == "about" and not p.isVisible()
+    assert got[-1] == "about" and p.isVisible()             # About opens above; the panel stays
     t.open_panel()
     p._toolbar["quit"].click()
     assert got[-1] == "quit" and not p.isVisible()
@@ -180,16 +182,15 @@ def _wait_for(cond, timeout_ms: int = 3000) -> bool:
     return bool(cond())
 
 
-def test_tray_gear_shows_settings_menu_and_closes_panel(qapp, tmp_path, monkeypatch):
+def test_tray_gear_shows_settings_menu_and_keeps_panel(qapp, tmp_path, monkeypatch):
     set_language("es")
     t = make_tray(tmp_path)
     shown = []
     monkeypatch.setattr(tray_mod, "popup_menu_foreground", lambda m, pos, *a: shown.append((m, pos)))
     t.open_panel()
     t._panel._toolbar["settings"].click()
-    assert not t._panel.isVisible()
-    assert shown == []                       # deferred until the panel has finished closing
-    assert _wait_for(lambda: len(shown) == 1)     # deferred popup; generous timeout under load and shown[0][0] is t._settings.menu
+    assert t._panel.isVisible()
+    assert len(shown) == 1 and shown[0][0] is t._settings.menu
     texts = [a.text() for a in shown[0][0].actions() if not a.isSeparator()]
     assert texts == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]
 
@@ -201,7 +202,7 @@ def test_settings_menu_really_pops_up(qapp, tmp_path):
     menu = t._settings.menu
     _wait_for(menu.isVisible)
     try:
-        assert menu.isVisible()
+        assert menu.isVisible() and t._panel.isVisible()
     finally:
         menu.hide()
 

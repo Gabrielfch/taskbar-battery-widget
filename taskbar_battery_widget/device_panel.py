@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import time
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixmap
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea,
                                QToolButton, QVBoxLayout, QWidget)
@@ -24,7 +24,9 @@ ICON_PX = 20
 BTN_ICON_PX = 18
 BTN_PX = 32               # minimum touch/click target of every button (logical px)
 ROW_MARGIN_L, ROW_MARGIN_R, ROW_SPACING, ROW_BORDER = 8, 4, 8, 2
-HIDE_GRACE_S = 0.3         # a tray click this soon after the panel closed is the click that closed it
+ARM_FALLBACK_MS = 800      # if the panel is still not armed this long after show_at, retry activation
+HIDE_CHECK_MS = 50        # re-check the application state this long after the focus window changed
+HIDE_GRACE_S = 0.3        # a tray click this soon after the panel closed is the click that closed it
 
 def _t(key: str, lang: str, **kw) -> str:
     return i18n.tr_in(lang, "panel_" + key if key != "show_all" else key, **kw)
@@ -76,8 +78,13 @@ class DevicePanel(QFrame):
     quit_requested = Signal()
 
     def __init__(self, parent=None, dark: bool | None = None, show_logging: bool = False):
-        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        # Not a Qt.Popup: the Settings menu and the About dialog must open above the panel without
+        # closing it. "Click outside" is emulated with the application-state check below.
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.WindowStaysOnTopHint)
         self.setObjectName("DevicePanel")
+        self._show_gen = 0                       # invalidates pending arm-fallback timers
+        self._armed = False                      # True once the panel (or the app) has really been active
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(i18n.tr("devices"))
         self._dark = (not taskbar.taskbar_uses_light_theme()) if dark is None else bool(dark)
@@ -89,6 +96,10 @@ class DevicePanel(QFrame):
         self._rows: list[list[QToolButton]] = [] # enabled buttons of each row (Left/Right)
         self.hidden_at: float | None = None      # time.monotonic() of the last hide
         self._screen_hooked = False
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.applicationStateChanged.connect(self._on_app_state_changed)
+            app.focusWindowChanged.connect(self._on_focus_window_changed)
         self._buttons: dict[tuple[str, str], QToolButton] = {}
         self._content: QWidget | None = None
         self._screen_avail: QRect | None = None
@@ -154,9 +165,13 @@ class DevicePanel(QFrame):
         self.move(x, y)
         self.show()
         self.raise_()
+        self._set_topmost(True)
         self.activateWindow()
         self._foreground()
-        first = self._nav[0] if self._nav else self
+        self._show_gen += 1
+        gen = self._show_gen
+        QTimer.singleShot(ARM_FALLBACK_MS, lambda: self._arm_fallback(gen, 0))
+        first =self._nav[0] if self._nav else self
         first.setFocus(Qt.FocusReason.PopupFocusReason)
 
     # ------------------------------------------------------------------ appearance
@@ -593,7 +608,79 @@ class DevicePanel(QFrame):
         except Exception:
             log.debug("could not foreground the device panel", exc_info=True)
 
+    # The panel closes when the whole application stops being active (click on the desktop, the
+    # taskbar or another program). Focus moving to another window of this app (About dialog, stats
+    # window) keeps the application Active: the panel stays open but loses its topmost band so that
+    # window is drawn in front of it; it becomes topmost again when the panel is re-shown/re-activated.
+    def _app_active(self) -> bool:
+        return QGuiApplication.applicationState() == Qt.ApplicationState.ApplicationActive
+
+    def _set_topmost(self, on: bool) -> None:
+        """Toggle the Win32 topmost band without touching Qt flags (that would recreate the window)."""
+        try:
+            from .win_window import _assert_topmost, _drop_topmost
+            hwnd = int(self.winId())
+            (_assert_topmost if on else _drop_topmost)(hwnd)
+        except Exception:
+            log.debug("could not change the topmost state of the device panel", exc_info=True)
+
+    def _note_deactivation(self) -> None:
+        # measured from the moment the loss of activation is seen (before HIDE_CHECK_MS), so a slightly
+        # slow click on the tray icon is still recognised as the click that closed the panel
+        self.hidden_at = time.monotonic()
+
+    def _on_app_state_changed(self, state) -> None:
+        if not self.isVisible():
+            return
+        if state == Qt.ApplicationState.ApplicationActive:
+            self._armed = True
+        elif self._armed:
+            self._note_deactivation()
+            QTimer.singleShot(0, self._hide_if_inactive)
+
+    def _on_focus_window_changed(self, w=None) -> None:
+        if not self.isVisible():
+            return
+        if self._app_active():
+            self._armed = True
+            if w is not None:
+                if w is self.windowHandle():
+                    self._set_topmost(True)
+                elif (w.flags() & Qt.WindowType.WindowType_Mask) != Qt.WindowType.Popup:
+                    # another normal window of the app (About, stats): let it be drawn above the panel
+                    self._set_topmost(False)
+        elif self._armed:
+            self._note_deactivation()
+            QTimer.singleShot(HIDE_CHECK_MS, self._hide_if_inactive)
+
+    def _arm_fallback(self, gen: int, stage: int) -> None:
+        """If SetForegroundWindow was denied the activation never arrives: retry, then arm anyway."""
+        if gen != self._show_gen or not self.isVisible() or self._armed:
+            return
+        if stage == 0:
+            self.activateWindow()
+            self._foreground()
+            QTimer.singleShot(ARM_FALLBACK_MS, lambda: self._arm_fallback(gen, 1))
+            return
+        self._armed = True
+        if not self._app_active():
+            self._note_deactivation()
+            self.hide()
+
+    def _hide_if_inactive(self) -> None:
+        # re-check: a focus handoff between two windows of the app can pass through "no focus window"
+        if self.isVisible() and self._armed and not self._app_active():
+            self.hide()
+
+    def changeEvent(self, ev) -> None:
+        super().changeEvent(ev)
+        if ev.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self._armed = True
+            if self.isVisible():
+                self._set_topmost(True)
+
     def showEvent(self, ev) -> None:
+        self._armed = self._app_active()       # a late activation (see _foreground) arms it afterwards
         super().showEvent(ev)
         wh = self.windowHandle()
         if wh is not None and not self._screen_hooked:

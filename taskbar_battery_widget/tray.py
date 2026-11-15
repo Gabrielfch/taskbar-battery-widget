@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 
-from PySide6.QtCore import QObject, QPoint, QRect, QTimer, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
@@ -23,7 +23,6 @@ from .settings_menu import SettingsCallbacks, build_settings_menu
 log = logging.getLogger(__name__)
 
 PANEL_REOPEN_GRACE_S = 0.3
-SETTINGS_MENU_DELAY_MS = 60       # let the panel finish closing before the Settings menu pops up
 
 
 def has_file_association(ext: str) -> bool:
@@ -227,9 +226,7 @@ class TrayController(QObject):
         p.show_at(anchor)
 
     def _on_panel_about(self) -> None:
-        if self._panel is not None:
-            self._panel.hide()
-        self.show_about()
+        self.show_about()       # the panel stays open but drops its topmost band, so the dialog is drawn in front
 
     def _on_panel_quit(self) -> None:
         if self._panel is not None:
@@ -237,13 +234,11 @@ class TrayController(QObject):
         self.quit_requested.emit()
 
     def show_settings_menu(self, anchor=None) -> None:
-        """Close the panel and open the Settings menu where the gear button was (above it if it fits).
+        """Open the Settings menu where the gear button was (above it if it fits); the panel stays open.
 
-        A QMenu popped up from inside a Qt.Popup panel competes with it for the popup grab, so the
-        panel is closed first and the menu is opened as the only popup (same as the old tray menu).
+        The panel is a plain Tool window (not a Qt.Popup), so the menu does not fight it for the
+        popup grab and the app stays active while the menu is up.
         """
-        if self._panel is not None:
-            self._panel.hide()
         menu = self._settings.menu
         self._sync_menu()
         if anchor is None:
@@ -254,9 +249,7 @@ class TrayController(QObject):
             screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
             top = screen.availableGeometry().top() if screen is not None else 0
             pos = QPoint(rect.left(), rect.top() - h) if rect.top() - h >= top else rect.bottomLeft()
-        # Defer: popping the menu up while the Qt.Popup panel is still closing (same click) makes Qt's
-        # popup stack close the new menu immediately, so it never appears on screen.
-        QTimer.singleShot(SETTINGS_MENU_DELAY_MS, lambda: popup_menu_foreground(menu, pos))
+        popup_menu_foreground(menu, pos)
 
     def _on_activated(self, reason) -> None:
         # on Windows the right click arrives as Context (no context menu is set): same as a left click

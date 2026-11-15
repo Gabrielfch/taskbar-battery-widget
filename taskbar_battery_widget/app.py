@@ -249,10 +249,30 @@ def open_detail_log(logger, devices, key: str, open_path, open_file=None) -> Non
     open_path(path.parent)
 
 
+APP_USER_MODEL_ID = "Gabrielfch.TaskbarBatteryWidget"
+
+
+def set_app_identity(app) -> None:
+    """Own taskbar identity and icon for the app's windows (statistics, About): without them Windows
+    groups the windows under python.exe / shows a generic icon."""
+    try:
+        from .icons import make_tray_icon
+        app.setWindowIcon(make_tray_icon(80, True))
+    except Exception:  # noqa: BLE001 - cosmetic
+        log.debug("could not set the window icon", exc_info=True)
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+        except Exception:  # noqa: BLE001 - cosmetic
+            log.debug("could not set the AppUserModelID", exc_info=True)
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Taskbar Battery Widget")
+    set_app_identity(app)
 
     lock = QLockFile(str(Path(tempfile.gettempdir()) / "TaskbarBatteryWidget.lock"))
     lock.setStaleLockTime(0)
@@ -269,6 +289,7 @@ def main() -> int:
     from .detail_log import DetailLogger
     from .device_history import DeviceHistory
     from .monitor import DeviceMonitor
+    from .stats_window import StatsWindows
     from .tray import TrayController
     from .visibility import visible_devices
     from .widget import TaskbarWidget
@@ -346,8 +367,17 @@ def main() -> int:
         tray.set_monitor_has_taskbar_fn(lambda: monitor_has_taskbar(widget.current_screen_key()))
     if hasattr(widget, "set_floating_anchor"):
         tray.set_floating_anchor_fn(widget.set_floating_anchor)
-    tray.open_detail_log_requested.connect(
-        lambda _key: open_detail_folder())     # "…" on a recording row opens the detailed logs folder
+    stats_windows = StatsWindows()
+
+    def open_stats(key: str) -> None:
+        """"…" on a recording row: statistics window of that device (reused if already open)."""
+        from .models import visibility_key
+        dev = next((d for d in latest if visibility_key(d.id) == key), None)
+        if dev is None:
+            return
+        stats_windows.open(key, dev.name, detail_logger.path_for(dev), open_detail_folder)
+
+    tray.open_detail_log_requested.connect(open_stats)
     # first sample right away when recording starts (then one per minute)
     tray.detail_log_started.connect(lambda key: detail_logger.tick(latest, {key}))
 
@@ -366,6 +396,7 @@ def main() -> int:
     theme_timer.timeout.connect(refresh_theme)
 
     def shutdown() -> None:
+        stats_windows.close_all()
         run_shutdown(theme_timer, widget, tray, monitor, history, lock, (detail_driver, detail_logger))
 
     app.aboutToQuit.connect(shutdown)

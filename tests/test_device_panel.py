@@ -42,7 +42,110 @@ def panel(qapp):
 
 def test_window_flags(panel):
     f = panel.windowFlags()
-    assert f & Qt.WindowType.Popup and f & Qt.WindowType.FramelessWindowHint
+    assert (f & Qt.WindowType.WindowType_Mask) == Qt.WindowType.Tool
+    assert f & Qt.WindowType.FramelessWindowHint and f & Qt.WindowType.WindowStaysOnTopHint
+
+
+def test_hides_when_app_becomes_inactive(panel, monkeypatch):
+    panel.set_model(model([dev("a")]))
+    panel.show_at(QPoint(300, 300))
+    state = {"v": Qt.ApplicationState.ApplicationActive}
+    monkeypatch.setattr(QGuiApplication, "applicationState", staticmethod(lambda: state["v"]))
+    panel._armed = True
+    state["v"] = Qt.ApplicationState.ApplicationInactive
+    panel._on_app_state_changed(state["v"])
+    QTest.qWait(80)
+    assert not panel.isVisible() and panel.hidden_at is not None
+
+
+def test_stays_when_another_app_window_takes_focus(panel, monkeypatch):
+    panel.set_model(model([dev("a")]))
+    panel.show_at(QPoint(300, 300))
+    monkeypatch.setattr(QGuiApplication, "applicationState",
+                        staticmethod(lambda: Qt.ApplicationState.ApplicationActive))
+    panel._armed = True
+    panel._on_focus_window_changed(None)       # focus handed to e.g. the About dialog: app still Active
+    panel._on_app_state_changed(Qt.ApplicationState.ApplicationActive)
+    QTest.qWait(120)
+    assert panel.isVisible()
+
+
+def test_not_hidden_before_first_activation(panel, monkeypatch):
+    panel.set_model(model([dev("a")]))
+    monkeypatch.setattr(QGuiApplication, "applicationState",
+                        staticmethod(lambda: Qt.ApplicationState.ApplicationInactive))
+    panel.show_at(QPoint(300, 300))
+    panel._armed = False
+    panel._on_app_state_changed(Qt.ApplicationState.ApplicationInactive)
+    panel._on_focus_window_changed(None)
+    panel._hide_if_inactive()
+    assert panel.isVisible()
+
+
+def test_fallback_retries_then_arms_and_hides_when_inactive(panel, monkeypatch):
+    panel.set_model(model([dev("a")]))
+    monkeypatch.setattr(QGuiApplication, "applicationState",
+                        staticmethod(lambda: Qt.ApplicationState.ApplicationInactive))
+    monkeypatch.setattr(dp, "ARM_FALLBACK_MS", 10)
+    calls = []
+    monkeypatch.setattr(panel, "_foreground", lambda: calls.append(1))
+    monkeypatch.setattr(panel, "activateWindow", lambda: None)
+    panel.show_at(QPoint(300, 300))
+    panel._armed = False
+    gen = panel._show_gen
+    panel._arm_fallback(gen, 0)
+    assert calls and not panel._armed and panel.isVisible()
+    panel._armed = False
+    panel._arm_fallback(gen, 1)                  # second attempt: arm anyway, app inactive -> hide
+    assert panel._armed and not panel.isVisible()
+
+
+def test_fallback_arms_and_stays_when_app_active(panel, monkeypatch):
+    panel.set_model(model([dev("a")]))
+    monkeypatch.setattr(QGuiApplication, "applicationState",
+                        staticmethod(lambda: Qt.ApplicationState.ApplicationActive))
+    panel.show_at(QPoint(300, 300))
+    panel._armed = False
+    panel._arm_fallback(panel._show_gen, 1)
+    assert panel._armed and panel.isVisible()
+
+
+def test_stale_fallback_is_ignored(panel):
+    panel.set_model(model([dev("a")]))
+    panel.show_at(QPoint(300, 300))
+    panel._armed = False
+    panel._arm_fallback(panel._show_gen - 1, 1)
+    assert not panel._armed
+
+
+def test_other_app_window_drops_topmost_panel_regains(panel, monkeypatch):
+    from PySide6.QtGui import QWindow
+    panel.set_model(model([dev("a")]))
+    monkeypatch.setattr(QGuiApplication, "applicationState",
+                        staticmethod(lambda: Qt.ApplicationState.ApplicationActive))
+    panel.show_at(QPoint(300, 300))
+    calls = []
+    monkeypatch.setattr(panel, "_set_topmost", lambda on: calls.append(on))
+    other = QWindow()
+    popup = QWindow()
+    popup.setFlags(Qt.WindowType.Popup)
+    panel._on_focus_window_changed(popup)        # menus keep the panel on top
+    assert calls == []
+    panel._on_focus_window_changed(other)
+    assert calls == [False]
+    panel._on_focus_window_changed(panel.windowHandle())
+    assert calls == [False, True] and panel.isVisible()
+
+
+def test_deactivation_marks_hidden_at_before_check(panel, monkeypatch):
+    panel.set_model(model([dev("a")]))
+    panel.show_at(QPoint(300, 300))
+    monkeypatch.setattr(QGuiApplication, "applicationState",
+                        staticmethod(lambda: Qt.ApplicationState.ApplicationInactive))
+    panel._armed = True
+    panel.hidden_at = None
+    panel._on_focus_window_changed(None)
+    assert panel.hidden_at is not None and panel.isVisible()
 
 
 def test_sections_and_rows(panel):
@@ -120,7 +223,7 @@ def test_logging_buttons_hidden_by_default_and_emit(qapp):
     rec.click()
     assert got == [(visibility_key("a"), True)]
     p2.set_model(model([dev("a", "Mouse")]), logging_keys=[visibility_key("a")])
-    op = next(b for b in p2.findChildren(QToolButton) if b.accessibleName().startswith("Open the detailed logs folder"))
+    op = next(b for b in p2.findChildren(QToolButton) if b.accessibleName().startswith("Show statistics"))
     op.click()
     assert opened == [visibility_key("a")]
 

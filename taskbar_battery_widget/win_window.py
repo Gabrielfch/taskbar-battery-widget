@@ -116,6 +116,17 @@ def _assert_topmost(hwnd: int) -> None:
                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
 
+HWND_NOTOPMOST = -2
+
+
+def _drop_topmost(hwnd: int) -> None:
+    """Remove the topmost z-order band from `hwnd` without moving, resizing or activating it."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    _u32.SetWindowPos(wt.HWND(hwnd), wt.HWND(HWND_NOTOPMOST), 0, 0, 0, 0,
+                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+
+
 EVENT_OBJECT_REORDER = 0x8004
 WINEVENT_OUTOFCONTEXT = 0x0000
 _ZGUARD_MIN_INTERVAL = 0.015  # seconds; avoids a raise storm if something else keeps reordering
