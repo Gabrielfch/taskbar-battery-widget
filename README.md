@@ -7,6 +7,8 @@ notification area. Spec in `docs/spec.md`.
 
 **[Download the latest release](https://github.com/Gabrielfch/taskbar-battery-widget/releases/latest)**
 
+[![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white)](https://paypal.me/GabrielFChiarello)
+
 ## Download & install
 Get one of these from the [Releases page](https://github.com/Gabrielfch/taskbar-battery-widget/releases/latest):
 - `TaskbarBatteryWidget-Setup-x.y.z.exe`: per-user installer (no admin rights), optional start with Windows.
@@ -252,6 +254,13 @@ It runs the tests, generates the icon, builds the onedir and onefile apps and th
 - The *left* position cannot know how many apps are on a centred taskbar; it keeps to the left quarter of the
   taskbar.
 - Devices must expose their battery level through one of the supported methods above.
+
+## Support the project
+Taskbar Battery Widget is free and open source. If it is useful to you and you want to support its
+development, you can make a donation via [PayPal](https://paypal.me/GabrielFChiarello). Reporting which
+devices work (or don't) with the
+[Device report](https://github.com/Gabrielfch/taskbar-battery-widget/issues/new?template=device_report.yml)
+template helps just as much.
 
 ## Acknowledgements
 Protocol facts come from public documentation; this is an independent implementation and no code was copied.
