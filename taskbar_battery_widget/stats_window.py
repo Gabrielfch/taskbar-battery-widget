@@ -102,6 +102,14 @@ def format_rate(rate: float | None) -> str:
     return DASH if rate is None else f"{rate:.1f} %/h"
 
 
+def format_cycles(cycles: float, charge_count: int, lang: str | None = None) -> str:
+    """'2.1' ('2,1' in Spanish); the dash when no charge was seen."""
+    if not charge_count:
+        return DASH
+    text = f"{cycles:.1f}"
+    return text.replace(".", ",") if _is_es(lang) else text
+
+
 def format_pct(v: float | None, signed: bool = False) -> str:
     if v is None:
         return DASH
@@ -395,7 +403,8 @@ class _Card(QFrame):
         self.detail.setVisible(bool(detail))
 
 
-CARD_KEYS = ("charges", "runtime", "between", "rate", "charge_time", "last_charge")
+CARD_KEYS = ("charges", "runtime", "between", "rate", "charge_time", "last_charge", "cycles")
+CARD_TIPS = ("runtime", "cycles")      # cards with an explanatory tooltip (stats_card_<key>_tip)
 
 _RANGE_QSS = (
     "QPushButton { padding: 4px 12px; border: 1px solid palette(mid); border-radius: 4px;"
@@ -467,7 +476,7 @@ class StatsWindow(QWidget):
         grid = QGridLayout()
         self.cards: dict[str, _Card] = {}
         for i, key in enumerate(CARD_KEYS):
-            tip = tr("stats_card_runtime_tip") if key == "runtime" else ""
+            tip = tr(f"stats_card_{key}_tip") if key in CARD_TIPS else ""
             c = _Card(tr(f"stats_card_{key}"), tip)
             self.cards[key] = c
             grid.addWidget(c, i // 3, i % 3)
@@ -632,6 +641,7 @@ class StatsWindow(QWidget):
                 if st.avg_charge_gain_pct is not None else "")
         self.cards["charge_time"].set(format_duration(st.avg_charge_duration_h), gain)
         self.cards["last_charge"].set(format_when(st.last_charge_end))
+        self.cards["cycles"].set(format_cycles(st.equivalent_cycles, st.charge_count))
 
         now = time.time()
         secs = RANGES[self._range]

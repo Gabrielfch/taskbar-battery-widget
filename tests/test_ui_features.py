@@ -323,7 +323,7 @@ def test_alerts_do_not_renotify_idle_device():
     class C:
         def get(self, k):
             return {"notifications_enabled": True, "low_threshold": 20,
-                    "notification_cooldown_min": 1}[k]
+                    "notification_cooldown_min": 1, "full_charge_alert": True}[k]
     am = AlertManager(C())
     assert len(am.check([Device("x", "M", "mouse", 10, True)], 0.0)) == 1
     assert am.check([Device("x", "M", "mouse", 10, True, idle=True)], 1000.0) == []

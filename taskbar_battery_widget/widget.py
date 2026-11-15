@@ -21,6 +21,7 @@ from .i18n import kind_name as _kind_name, tr
 from .icons import draw_bolt, draw_kind_icon
 from .models import Device, visibility_key
 from .naming import sanitize_name
+from .remaining import remaining_text
 from .popup import HOVER_DELAY_MS, HoverPopup, PopupContent, build_popup_content, place_popup, stale_text
 from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, REASON_LEFT_NEEDS_CENTERED,  # noqa: F401
                         REASON_NO_TASKBAR_FLOATING, Env,
@@ -211,6 +212,7 @@ class TaskbarWidget(QWidget):
         self._cfg = cfg
         self._devices: list[Device] = []
         self._radio_on = True
+        self._rates: dict | None = None     # key -> Rates (time-left estimates)
         self._light = taskbar.taskbar_uses_light_theme()
         self._pills: list[_Pill] = []
         self._rects: list[tuple] = []
@@ -277,6 +279,10 @@ class TaskbarWidget(QWidget):
         self._rebuild()
         self._devices_seen = True
         self.update_position()
+
+    def set_rates(self, rates) -> None:
+        """key -> log_stats.Rates for recorded devices (time-left estimates); used on the next rebuild."""
+        self._rates = dict(rates) if rates else None
 
     def set_radio(self, on: bool) -> None:
         self._radio_on = bool(on)
@@ -352,6 +358,9 @@ class TaskbarWidget(QWidget):
                 if idle:
                     tip += f" ({tr('idle')})"
                     spoken += f" {tr('idle')}"
+                left = None if idle else remaining_text(d, self._rates)
+                if left:
+                    tip += f"\n{left}"
                 tip += f"\n{kind_name}"
                 st = row_style(d, threshold, not self._light, self._color_mode() == "levels")
                 alert = st.alert
@@ -764,7 +773,8 @@ class TaskbarWidget(QWidget):
             parts = [t for t in pill.tooltip.split(chr(10)) if t]
             content = PopupContent(parts[0] if parts else "", parts[1:])
         else:
-            content = build_popup_content(pill.device, int(self._cfg_get("low_threshold", 20)))
+            content = build_popup_content(pill.device, int(self._cfg_get("low_threshold", 20)),
+                                          remaining=remaining_text(pill.device, self._rates))
         if self._popup is None:
             self._popup = HoverPopup()
         self._popup.set_content(content, dark=not self._light,

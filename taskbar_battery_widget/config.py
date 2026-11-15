@@ -15,6 +15,7 @@ DEFAULTS = {
     "low_threshold": 20,
     "notifications_enabled": True,
     "notification_cooldown_min": 60,
+    "full_charge_alert": True,      # notify once when a device finishes charging
     "show_disconnected": False,
     "show_when_empty": False,
     "start_with_windows": False,

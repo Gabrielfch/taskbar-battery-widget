@@ -115,7 +115,8 @@ def wrap_title(text: str, fm: QFontMetrics, width: int, max_lines: int = 2) -> l
     return lines or [""]
 
 
-def build_popup_content(device: Device, low_threshold: int = 20, now: float | None = None) -> PopupContent:
+def build_popup_content(device: Device, low_threshold: int = 20, now: float | None = None,
+                        remaining: str | None = None) -> PopupContent:
     """Plain-text card content (never markup): name, kind - link, battery - status, update time."""
     name = sanitize_name(device.name) or "?"
     kind = _kind_name(device.kind) if device.kind else ""
@@ -128,6 +129,8 @@ def build_popup_content(device: Device, low_threshold: int = 20, now: float | No
         idle = getattr(device, "idle", False)
         state = idle_text(device, now) if idle else status_text(device, low_threshold)
         lines.append(f"{device.battery}% - {state}")
+        if remaining:
+            lines.append(remaining)
     else:
         lines.append(status_text(device, low_threshold))
     upd = "" if stale or getattr(device, "idle", False) else format_updated(getattr(device, "updated", None), now)

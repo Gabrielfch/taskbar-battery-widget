@@ -289,6 +289,7 @@ def main() -> int:
     from .detail_log import DetailLogger
     from .device_history import DeviceHistory
     from .monitor import DeviceMonitor
+    from .remaining import RemainingEstimator
     from .stats_window import StatsWindows
     from .tray import TrayController
     from .visibility import visible_devices
@@ -325,11 +326,34 @@ def main() -> int:
     detail_logger = DetailLogger()
     detail_driver = DetailLogDriver(detail_logger, cfg)
 
+    def recorded_targets() -> dict:
+        """visibility key -> CSV path of the devices being recorded right now."""
+        from .models import visibility_key
+        keys = detail_driver.enabled_keys()
+        return {visibility_key(d.id): detail_logger.path_for(d) for d in latest
+                if visibility_key(d.id) in keys}
+
+    estimator = RemainingEstimator(recorded_targets)
+
+    def push_rates(refresh: bool = False) -> None:
+        keys = detail_driver.enabled_keys()
+        rates = {k: v for k, v in estimator.rates().items() if k in keys}
+        widget.set_rates(rates)
+        tray.set_rates(rates, refresh)
+
+    def on_rates() -> None:
+        # Only the open panel's text changes; the pills read the rates when the hover popup opens.
+        push_rates(refresh=True)
+
+    estimator.updated.connect(on_rates)
+
     def on_devices(devices) -> None:
         raw[:] = devices
         devices = full_device_list(history, devices, cfg, time.time())
         latest[:] = devices
         detail_driver.set_devices(devices)
+        push_rates()
+        estimator.refresh_if_new()
         widget.set_devices(devices)
         tray.set_devices(devices)
         try:
@@ -380,6 +404,7 @@ def main() -> int:
     tray.open_detail_log_requested.connect(open_stats)
     # first sample right away when recording starts (then one per minute)
     tray.detail_log_started.connect(lambda key: detail_logger.tick(latest, {key}))
+    tray.detail_log_started.connect(lambda _key: estimator.refresh_if_new())
 
     def open_detail_folder() -> None:
         log.info("open detailed logs folder requested")
@@ -396,6 +421,7 @@ def main() -> int:
     theme_timer.timeout.connect(refresh_theme)
 
     def shutdown() -> None:
+        estimator.stop()
         stats_windows.close_all()
         run_shutdown(theme_timer, widget, tray, monitor, history, lock, (detail_driver, detail_logger))
 
@@ -409,6 +435,7 @@ def main() -> int:
     widget.start()
     theme_timer.start()
     detail_driver.start()
+    estimator.start()
     monitor.start()
     auto_updates.start()
     return app.exec()

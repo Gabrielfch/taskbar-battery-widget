@@ -261,7 +261,7 @@ def test_tray_menu_structure(qapp, tmp_path):
     s2 = {a.text(): a.menu() for a in st.actions() if a.menu()}
     assert _texts(s2["Fuentes"]) == ["2.4 GHz y USB", "Bluetooth"]
     alerts = s2["Alertas"]
-    assert _texts(alerts)[0].startswith("Avisar") and alerts.actions()[1].menu() is not None
+    assert _texts(alerts)[0].startswith("Avisar") and alerts.actions()[2].menu() is not None
     assert _texts(s2["Registros"]) == ["Abrir registro de dispositivos", "Abrir carpeta de registros",
                                        "Registro detallado (cada minuto)",
                                        "Abrir carpeta de registros detallados"]

@@ -69,6 +69,22 @@ class Stats:
     avg_charge_gain_pct: float | None
     last_charge_end: float | None
     days: tuple[DayStat, ...]
+    equivalent_cycles: float = 0.0     # sum of every known charge gain / 100
+    discharge_hours: float = 0.0       # time of every eligible discharge segment
+
+
+@dataclass(frozen=True)
+class Rates:
+    discharge_pct_per_h: float | None
+    charge_pct_per_h: float | None
+
+
+RATE_WINDOW_DAYS = 7
+MIN_CHARGE_S = 600     # observed charges shorter than this are ignored for the charge rate
+EST_MIN_DISCHARGE_H = 6.0     # time-left estimate: minimum discharge time in the window ...
+EST_MIN_DROP_PCT = 10         # ... and minimum total drop
+EST_MAX_LOG_AGE_S = 2 * 3600  # no estimate when the log has not been written for this long
+EST_MAX_REMAINING_H = 30 * 24.0
 
 
 # ---------------------------------------------------------------- reading
@@ -116,8 +132,10 @@ def _read_file(path: Path) -> list[Sample]:
     return out
 
 
-def read_samples(csv_path: Path) -> list[Sample]:
-    """Read the current CSV plus rotated backups; never raises on bad data."""
+def read_samples(csv_path: Path, since: float | None = None) -> list[Sample]:
+    """Read the current CSV plus rotated backups; never raises on bad data.
+
+    With `since`, older backups are skipped once a file ends before that time."""
     csv_path = Path(csv_path)
     files = [csv_path]
     files += [Path(f"{csv_path}.{n}") for n in range(1, _MAX_BACKUPS + 1)]
@@ -125,6 +143,8 @@ def read_samples(csv_path: Path) -> list[Sample]:
     total = 0
     for f in files:  # newest first so the row cap keeps recent data
         part = _read_file(f)
+        if since is not None and part and max(x.t for x in part) < since:
+            break               # entirely older than `since`, and so are the next backups
         chunks.append(part)
         total += len(part)
         if total >= MAX_ROWS:
@@ -343,7 +363,7 @@ def compute_stats(samples: Sequence[Sample], gap_s: float = GAP_S) -> Stats:
 
     durations = [(c.end - c.start) / 3600.0 for c in charges if c.observed and c.start < c.end]
     gains = [
-        float(c.to_pct - c.from_pct)
+        float(c.to_pct - c.from_pct)  # also feeds equivalent_cycles
         for c in charges
         if c.from_pct is not None and c.to_pct is not None
     ]
@@ -376,7 +396,66 @@ def compute_stats(samples: Sequence[Sample], gap_s: float = GAP_S) -> Stats:
         avg_charge_gain_pct=_mean(gains),
         last_charge_end=max((c.end for c in charges), default=None),
         days=tuple(days),
+        equivalent_cycles=sum(max(0.0, g) for g in gains) / 100.0,
+        discharge_hours=dis_hours,
     )
+
+
+def estimate_rates(samples: Sequence[Sample], now: float, window_days: float = RATE_WINDOW_DAYS,
+                   gap_s: float = GAP_S, max_age_s: float | None = EST_MAX_LOG_AGE_S) -> Rates:
+    """Recent discharge and charge speed (% per hour) from the last `window_days` of samples.
+
+    Discharge needs a solid base (>= 6 h of segments and >= 10 % dropped); charge durations stop at the
+    first sample that reaches the final level, so the tail topped up at 100 % does not slow it down.
+    With `max_age_s`, a log whose last sample is older than that gives no estimate.
+    """
+    since = now - window_days * 86400.0
+    recent = [s for s in samples if since <= s.t <= now]
+    if not recent:
+        return Rates(None, None)
+    if max_age_s is not None and now - recent[-1].t > max_age_s:
+        return Rates(None, None)
+    st = compute_stats(recent, gap_s)
+    drop = sum(d.from_pct - d.to_pct for d in st.discharges)
+    discharge = (drop / st.discharge_hours
+                 if st.discharge_hours >= EST_MIN_DISCHARGE_H and drop >= EST_MIN_DROP_PCT else None)
+    times = [s.t for s in recent]
+    gain = 0.0
+    secs = 0.0
+    for c in st.charges:
+        if not c.observed or c.from_pct is None or c.to_pct is None or c.to_pct <= c.from_pct:
+            continue
+        end = c.end
+        lo = bisect_left(times, c.start)
+        hi = bisect_right(times, c.end)
+        for s in recent[lo:hi]:
+            if s.battery is not None and s.battery >= c.to_pct:
+                end = s.t
+                break
+        dur = end - c.start
+        if dur < MIN_CHARGE_S:
+            continue
+        gain += c.to_pct - c.from_pct
+        secs += dur
+    charge = gain / (secs / 3600.0) if secs > 0 and gain > 0 else None
+    return Rates(discharge, charge)
+
+
+def remaining_hours(battery: int | None, charging: bool, rates: Rates | None) -> float | None:
+    """Hours until empty (discharging) or full (charging); None when it cannot be estimated."""
+    if battery is None or rates is None:
+        return None
+    if charging:
+        rate = rates.charge_pct_per_h
+        if not rate or rate <= 0 or battery >= 100:
+            return None
+        hours = (100 - battery) / rate
+    else:
+        rate = rates.discharge_pct_per_h
+        if not rate or rate <= 0:
+            return None
+        hours = battery / rate
+    return hours if hours <= EST_MAX_REMAINING_H else None
 
 
 # ---------------------------------------------------------------- series

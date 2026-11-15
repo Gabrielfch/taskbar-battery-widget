@@ -96,6 +96,8 @@ def build_settings_menu(parent: QMenu, cfg, cb: SettingsCallbacks) -> SettingsMe
     alerts = root.addMenu(tr("menu_alerts"))
     _toggle(sm, alerts, tr("notifications"), "notifications_enabled",
             cfg_bool("notifications_enabled"), cfg_setter("notifications_enabled"))
+    _toggle(sm, alerts, tr("full_charge_alert"), "full_charge_alert",
+            cfg_bool("full_charge_alert"), cfg_setter("full_charge_alert"))
     sub = alerts.addMenu(tr("low_threshold"))
     group = QActionGroup(sub)
     group.setExclusive(True)

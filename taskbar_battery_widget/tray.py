@@ -57,6 +57,7 @@ class TrayController(QObject):
         self._cfg = cfg
         self._devices = []
         self._radio_on = True
+        self._rates: dict | None = None     # key -> Rates (time-left estimates)
         self._dark = True
         self._tray = QSystemTrayIcon(self)
         self._menu = QMenu()
@@ -212,7 +213,8 @@ class TrayController(QObject):
     def _push_model(self, p) -> None:
         model = build_panel_model(
             self._devices, visibility.hidden_keys(self._cfg), bool(self._cfg.get("show_disconnected")),
-            int(self._cfg.get("low_threshold")), self._dark, self._cfg.get("color_mode") != "mono", radio_on=self._radio_on)
+            int(self._cfg.get("low_threshold")), self._dark, self._cfg.get("color_mode") != "mono", radio_on=self._radio_on,
+            rates=self._rates)
         p.set_model(model, self._detail_keys())
 
     def open_panel(self, anchor=None) -> None:
@@ -432,6 +434,13 @@ class TrayController(QObject):
         self._devices = list(devices)
         self._update_icon()
         self._refresh_panel()
+
+    def set_rates(self, rates, refresh: bool = False) -> None:
+        """key -> log_stats.Rates for recorded devices (time-left estimates). With `refresh`, an open
+        panel is redrawn (cheap: the icon and the pills do not change)."""
+        self._rates = dict(rates) if rates else None
+        if refresh:
+            self._refresh_panel()
 
     def set_radio(self, on: bool) -> None:
         self._radio_on = bool(on)
