@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from taskbar_battery_widget import razer
 
 
@@ -95,6 +97,58 @@ def test_scan_razer_skips_unsupported_and_failures(monkeypatch):
     def boom(path):
         raise OSError("busy")
     assert razer.scan_razer([rinfo(91)], boom) == []
+
+
+def test_basilisk_v3_pro_reads_through_mouse_collection(monkeypatch):
+    """Issue #1: the Basilisk V3 Pro (1532:00AB / 00AA) exposes the 90-byte report only on the mouse
+    collection (0001:0002 feat=91); every interface used to be skipped."""
+    monkeypatch.setattr(razer, "SET_GET_DELAY_S", 0)
+    opened = []
+    h = FakeRazer(accept_tid=0x1F, level=0xFF, charging=0)
+
+    def factory(path):
+        opened.append(path)
+        return h
+    infos = [
+        SimpleNamespace(path="a", vid=0x1532, pid=0x00AB, usage_page=0x0001, usage=0x0002, in_len=0, out_len=0,
+                        feat_len=91, product="Razer Basilisk V3 Pro"),
+        SimpleNamespace(path="b", vid=0x1532, pid=0x00AB, usage_page=0x0001, usage=0x0002, in_len=0, out_len=0,
+                        feat_len=0, product="Razer Basilisk V3 Pro"),
+        SimpleNamespace(path="c", vid=0x1532, pid=0x00AB, usage_page=0x0059, usage=0x0001, in_len=0, out_len=0,
+                        feat_len=51, product="Razer Basilisk V3 Pro"),
+        SimpleNamespace(path="d", vid=0x1532, pid=0x00AB, usage_page=0x000C, usage=0x0001, in_len=0, out_len=0,
+                        feat_len=91, product="Razer Basilisk V3 Pro"),     # consumer page: never queried
+    ]
+    devs = razer.scan_razer(infos, factory)
+    assert opened == ["a"]
+    assert len(devs) == 1 and devs[0].battery == 100 and devs[0].kind == "mouse"
+    assert devs[0].link == "2.4ghz"                  # wireless PID even though the product string is plain
+    wired = [SimpleNamespace(**{**vars(infos[0]), "pid": 0x00AA})]
+    assert razer.scan_razer(wired, lambda p: FakeRazer(accept_tid=0x1F, level=0x80))[0].link == "usb"
+
+
+def test_vendor_collection_is_tried_before_the_mouse_collection(monkeypatch):
+    monkeypatch.setattr(razer, "SET_GET_DELAY_S", 0)
+    opened = []
+
+    def factory(path):
+        opened.append(path)
+        return FakeRazer(accept_tid=0x1F, level=0x80)
+    infos = [rinfo(91, pid=0x00A7, page=0x0001, path="a-mouse"), rinfo(91, pid=0x00A7, page=0xFF00, path="z-vendor")]
+    razer.scan_razer(infos, factory)
+    assert opened == ["z-vendor"]                     # found there: the mouse collection is not touched
+
+
+def test_feature_only_handle_refuses_read_and_write():
+    from taskbar_battery_widget import hid_win
+    h = hid_win.HidHandle.__new__(hid_win.HidHandle)
+    h.feature_only, h._h, h._closing = True, 123, False
+    import threading
+    h._lock = threading.RLock()
+    with pytest.raises(OSError):
+        h.read(10)
+    with pytest.raises(OSError):
+        h.write(b"\x00")
 
 
 def test_kind_and_link():

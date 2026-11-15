@@ -287,15 +287,19 @@ class HidHandle:
     pending overlapped read and waits for the cancellation before the event/file handles are freed.
     """
 
-    def __init__(self, path: str, in_len: int = 64):
+    def __init__(self, path: str, in_len: int = 64, feature_only: bool = False):
         self.path = path
         self._in_len = in_len
+        self.feature_only = feature_only
         self._lock = threading.RLock()          # serialises handle operations against close()
         self._closing = False
         self._pending = False
         self._ovl = _OVERLAPPED()
         self._rbuf = None
-        self._h = _open_raw(path, GENERIC_READ | GENERIC_WRITE, True)
+        # feature_only: query-only access (0). Windows refuses read/write opens of mouse/keyboard
+        # collections (the system holds them), but HidD_Get/SetFeature work on a 0-access handle.
+        access = 0 if feature_only else GENERIC_READ | GENERIC_WRITE
+        self._h = _open_raw(path, access, True)
         if self._h is None:
             raise OSError(f"cannot open HID path {redact_path(path)}")
         self._ev = _k32.CreateEventW(None, True, False, None)       # read completion
@@ -345,10 +349,15 @@ class HidHandle:
             raise OSError("HID handle closed")
         return self._h
 
+    def _live_rw(self):
+        if self.feature_only:
+            raise OSError("HID handle opened for feature reports only")
+        return self._live()
+
     def write(self, data: bytes, timeout_ms: int = 1000) -> bool:
         """Send an output report (first byte = report id). True only if every byte was written."""
         with self._lock:
-            h = self._live()
+            h = self._live_rw()
             buf = ctypes.create_string_buffer(bytes(data), len(data))
             ovl = _OVERLAPPED()
             ovl.hEvent = self._wev
@@ -372,7 +381,7 @@ class HidHandle:
         Raises OSError when the device is gone or the handle was closed/cancelled.
         """
         with self._lock:
-            h = self._live()
+            h = self._live_rw()
             if not self._pending:
                 self._rbuf = ctypes.create_string_buffer(self._in_len)
                 self._ovl = _OVERLAPPED()

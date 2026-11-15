@@ -211,18 +211,39 @@ def _plausible(dev_id: str, pct: int) -> int | None:
     return pct
 
 
+GENERIC_DESKTOP = 0x0001
+GENERIC_USAGES = (0x0002, 0x0006)       # mouse, keyboard: some Razer devices take the 90-byte report there
+
+
+def _is_vendor(info) -> bool:
+    return info.usage_page >= VENDOR_PAGE_MIN
+
+
+def _supports_feature_report(info) -> bool:
+    """A collection that declares the 90-byte (+ report id) feature report: vendor page or mouse/keyboard."""
+    if info.feat_len < FEATURE_BUF_LEN:
+        return False
+    return _is_vendor(info) or (info.usage_page == GENERIC_DESKTOP and info.usage in GENERIC_USAGES)
+
+
 def scan_razer(infos, handle_factory=None, cancel: threading.Event | None = None) -> list[Device]:
     """Query vendor-page Razer collections that expose the 90-byte feature report. Never raises."""
     if handle_factory is None:
         from .hid_win import HidHandle
-        handle_factory = HidHandle
+
+        def handle_factory(path):
+            # feature reports only: lets us query the mouse/keyboard collection, which Windows will not
+            # open for read/write (newer mice such as the Basilisk V3 Pro answer only there)
+            return HidHandle(path, feature_only=True)
     out: list[Device] = []
     seen: set[int] = set()
     deadline = time.monotonic() + SCAN_BUDGET_S
-    for i in sorted((x for x in infos if x.vid == RAZER_VID), key=lambda x: x.path):
+    razer = [x for x in infos if x.vid == RAZER_VID]
+    # vendor collections first (classic devices), then the generic mouse/keyboard collections
+    for i in sorted(razer, key=lambda x: (not _is_vendor(x), x.path)):
         if cancel is not None and cancel.is_set() or time.monotonic() >= deadline:
             break
-        if i.usage_page < VENDOR_PAGE_MIN or i.feat_len < FEATURE_BUF_LEN:
+        if not _supports_feature_report(i):
             log.debug("razer %04x skip %04x:%04x feat=%d", i.pid, i.usage_page, i.usage, i.feat_len)
             continue
         if i.pid in seen or i.pid in ODESSA_DONGLES:     # ODESSA dongles: razer_odessa reads them
@@ -245,6 +266,8 @@ def scan_razer(infos, handle_factory=None, cancel: threading.Event | None = None
             name = product_name or "Razer device"
             kind = kind_for(name)
         dev_id = f"razer:{i.pid:04x}:{_path_hash(i.path)}"
+        # the table knows whether this PID is the wired or the wireless mode; the product string often does not
+        link = link_for(known.name) if known is not None else link_for(name)
         out.append(Device(id=dev_id, name=name, kind=kind,
-                          battery=_plausible(dev_id, res[0]), connected=True, charging=res[1], link=link_for(name)))
+                          battery=_plausible(dev_id, res[0]), connected=True, charging=res[1], link=link))
     return out
