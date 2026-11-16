@@ -266,7 +266,8 @@ def test_tray_menu_structure(qapp, tmp_path):
         "Abrir registro de dispositivos", "Abrir carpeta de registros",
         "Registro detallado (cada minuto)", "Abrir carpeta de registros detallados"]
     pers = [c.title() if hasattr(c, "title") else c.label() for c in pages["personalization"].children]
-    assert pers == ["Colores", "Estilo de iconos", "Iconos personalizados…", "Posición"]
+    assert pers == ["Colores", "Estilo de iconos", "Iconos personalizados…", "Tamaño del panel",
+                    "Escala de la interfaz", "Idioma", "Posición"]
 
 
 def test_tray_hidden_device_not_in_icon(qapp, tmp_path):

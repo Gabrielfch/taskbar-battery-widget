@@ -10,7 +10,7 @@ from .models import Device, visibility_key
 from .naming import sanitize_name
 
 def _lang(lang: str | None) -> str:
-    return i18n.get_language() if lang is None else ("es" if lang.lower().startswith("es") else "en")
+    return i18n.get_language() if lang is None else i18n.normalize_language(lang)
 
 
 def _t(key: str, lang: str, **kw) -> str:

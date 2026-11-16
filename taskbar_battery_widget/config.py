@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from .custom_icons import safe_name as _safe_icon_name
+from .i18n import LANGUAGES as _i18n_languages
 from .models import KINDS, is_visibility_key, visibility_key
 from .naming import sanitize_name
 
@@ -43,6 +44,9 @@ DEFAULTS = {
     "placement_monitor": "primary", # "primary" or a monitor key (models-style key, see MONITOR_KEY_RE)
     "floating_positions": {},       # monitor key ("primary" or key) -> {"anchor", "dx", "dy"}
     "show_in_fullscreen": False,    # keep the widget visible over fullscreen windows
+    "panel_size": "normal",         # one of PANEL_SIZES: height of the device panel (share of the screen)
+    "ui_scale": 100,                # one of UI_SCALES (percent): fonts, rows, buttons and pills
+    "language": "auto",             # one of LANGUAGES: "auto" follows the system language
 }
 
 MAX_HIDDEN = 200
@@ -56,6 +60,10 @@ COLOR_PALETTES = ("classic", "colorblind", "pastel", "high_contrast", "mono", "c
 ICON_STYLES = ("outline", "filled", "simple", "retro", "battery", "none")
 CUSTOM_COLOR_KEYS = ("high", "medium", "low")
 HEX_COLOR_RE = re.compile(r"#[0-9A-Fa-f]{6}")
+PANEL_SIZES = ("compact", "normal", "large")
+PANEL_SIZE_FRACTION = {"compact": 0.40, "normal": 0.50, "large": 0.65}   # of the screen's available height
+UI_SCALES = (90, 100, 115, 130)
+LANGUAGES = ("auto",) + tuple(_i18n_languages)   # "auto" + every language registered in i18n.LANGUAGES
 PLACEMENT_MODES = ("taskbar", "floating")
 TASKBAR_ANCHORS = ("right", "left")
 FLOATING_ANCHORS = ("top-left", "top-center", "top-right", "middle-left", "middle-right",
@@ -136,6 +144,12 @@ def _valid(key, value) -> bool:
     if key == "custom_colors":
         return (isinstance(value, dict) and set(value) == set(CUSTOM_COLOR_KEYS)
                 and all(isinstance(v, str) and HEX_COLOR_RE.fullmatch(v) for v in value.values()))
+    if key == "panel_size":
+        return isinstance(value, str) and value in PANEL_SIZES
+    if key == "language":
+        return isinstance(value, str) and value in LANGUAGES
+    if key == "ui_scale":
+        return _is_int(value) and value in UI_SCALES
     if key == "placement_mode":
         return isinstance(value, str) and value in PLACEMENT_MODES
     if key == "taskbar_anchor":

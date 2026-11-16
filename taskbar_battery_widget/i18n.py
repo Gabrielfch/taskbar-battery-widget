@@ -1,4 +1,11 @@
-"""Minimal i18n: Spanish if the system locale starts with "es", else English.
+"""Minimal i18n for N languages: the system language when it is supported, else English.
+
+Languages live in ONE place: `LANGUAGES` (code -> name written in that language) plus the string
+table registered for the code in `_TABLES`. To add a language (e.g. Portuguese "pt"):
+  1. add `"pt": "Português"` to LANGUAGES;
+  2. write a dict `PT = {...}` with the same keys as EN (a missing key falls back to the English text);
+  3. register it: `_TABLES["pt"] = PT`.
+The Settings selector, the config validation (`language`) and the system-language detection pick it up.
 
 Stable keys (use `tr(key, **kw)`; unknown keys return the key itself):
     app_name, bluetooth_off, no_devices, refresh, notifications,
@@ -93,6 +100,8 @@ EN = {
     "quit": "Quit",
     "color_levels": "Color by battery level",
     "menu_colors": "Colors", "menu_icon_style": "Icon style",
+    "menu_panel_size": "Panel size", "panel_size_compact": "Compact", "panel_size_normal": "Normal", "panel_size_large": "Large",
+    "menu_ui_scale": "Interface scale", "menu_language": "Language", "lang_auto": "Automatic (system)",
     "palette_classic": "Classic", "palette_colorblind": "Colorblind (blue/orange)",
     "palette_pastel": "Pastel", "palette_high_contrast": "High contrast",
     "palette_mono": "Monochrome", "palette_custom": "Custom...",
@@ -289,6 +298,8 @@ ES = {
     "quit": "Salir",
     "color_levels": "Color según el nivel",
     "menu_colors": "Colores", "menu_icon_style": "Estilo de iconos",
+    "menu_panel_size": "Tamaño del panel", "panel_size_compact": "Compacto", "panel_size_normal": "Normal", "panel_size_large": "Grande",
+    "menu_ui_scale": "Escala de la interfaz", "menu_language": "Idioma", "lang_auto": "Automático (sistema)",
     "palette_classic": "Clásica", "palette_colorblind": "Daltonismo (azul/naranja)",
     "palette_pastel": "Pastel", "palette_high_contrast": "Alto contraste",
     "palette_mono": "Monocromo", "palette_custom": "Personalizada...",
@@ -411,7 +422,16 @@ ES = {
     "settings_page_desc": "Abre la página",
 }
 
+# Supported UI languages: code -> name in its own language (shown like that in the language selector).
+LANGUAGES = {"es": "Español", "en": "English"}
+FALLBACK_LANGUAGE = "en"
 _TABLES = {"en": EN, "es": ES}
+
+
+def normalize_language(lang) -> str:
+    """"es-MX" / "ES" -> "es"; a code that is not supported -> the fallback language (English)."""
+    code = str(lang or "").lower().replace("_", "-").split("-")[0]
+    return code if code in LANGUAGES and code in _TABLES else FALLBACK_LANGUAGE
 
 
 def detect_language() -> str:
@@ -429,7 +449,7 @@ def detect_language() -> str:
             name = locale.getlocale()[0] or ""
     except Exception:
         name = ""
-    return "es" if name.lower().startswith("es") else "en"
+    return normalize_language(name)
 
 
 _lang = detect_language()
@@ -437,10 +457,17 @@ _lang = detect_language()
 
 def set_language(lang: str) -> None:
     global _lang
-    _lang = "es" if lang.lower().startswith("es") else "en"
+    _lang = normalize_language(lang)
 
 
 def get_language() -> str:
+    return _lang
+
+
+def apply_language_setting(pref) -> str:
+    """Apply the config value `language`: a supported code forces that language, anything else ("auto")
+    follows the system language. Returns the language now in force."""
+    set_language(pref if pref in LANGUAGES else detect_language())
     return _lang
 
 
@@ -455,8 +482,8 @@ def tr(key: str, **kw) -> str:
 
 
 def tr_in(lang: str, key: str, **kw) -> str:
-    """Like tr() but for an explicit language ("es" or anything else = English)."""
-    text = (ES if lang == "es" else EN).get(key) or EN.get(key) or key
+    """Like tr() but for an explicit language code (an unsupported one = English)."""
+    text = _TABLES[normalize_language(lang)].get(key) or EN.get(key) or key
     if kw:
         try:
             return text.format(**kw)

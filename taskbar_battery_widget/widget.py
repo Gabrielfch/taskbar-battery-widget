@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QMenu, QWidget
 from . import custom_icons
 from . import taskbar
 from .colors import TASKBAR_BASE, band_color, battery_color, pill_tint, row_style
-from .config import FLOATING_ANCHORS
+from .config import FLOATING_ANCHORS, UI_SCALES
 from .i18n import kind_name as _kind_name, tr
 from .icons import draw_bolt, draw_kind_icon, get_icon_style
 from .models import Device, visibility_key
@@ -219,6 +219,7 @@ class TaskbarWidget(QWidget):
         self._rects: list[tuple] = []
         self._hover = -1
         self._pill_h = 28
+        self._pill_scale = 1.0          # effective pill height / the height the placement asked for
         self._vertical = False
         self._styled = False
         self._menu: QMenu | None = None
@@ -438,6 +439,29 @@ class TaskbarWidget(QWidget):
         return battery_color(pill.level, pill.charging, int(self._cfg_get("low_threshold", 20)),
                              not self._light)
 
+    def _ui_pct(self) -> int:
+        """Config ui_scale (90 / 100 / 115 / 130); anything else counts as 100."""
+        v = self._cfg_get("ui_scale", 100)
+        return v if isinstance(v, int) and not isinstance(v, bool) and v in UI_SCALES else 100
+
+    @staticmethod
+    def scaled_pill_h(base: int, pct: int, bar_thickness: float | None = None) -> int:
+        """Pill height for the UI scale `pct`. On a taskbar it never exceeds the bar thickness minus the
+        outer margins (so at 130 % a small bar limits the pills: they simply stop growing); it is never
+        reduced below what the placement itself asked for by that limit."""
+        h = round(base * pct / 100)
+        if bar_thickness is not None and pct > 100:
+            h = min(h, max(base, int(bar_thickness) - 2 * MARGIN))
+        return max(1, h)
+
+    @property
+    def _pad(self) -> int:
+        return max(4, round(PAD * self._pill_scale))
+
+    @property
+    def _gap(self) -> int:
+        return max(3, round(ICON_GAP * self._pill_scale))
+
     def _font(self) -> QFont:
         f = QFont("Segoe UI")
         f.setPixelSize(max(MIN_FONT_PX, round(self._pill_h * 0.45)))
@@ -471,13 +495,13 @@ class TaskbarWidget(QWidget):
     def _pill_width(self, p: _Pill, fm: QFontMetrics, icon: int, bolt: int) -> int:
         tw = fm.horizontalAdvance(("!" if p.warn else "") + p.text)
         if p.kind == "overflow":
-            return 2 * PAD + tw
+            return 2 * self._pad + tw
         style = get_icon_style()
         own_bolt = p.charging and style != "battery"     # the battery icon draws its own bolt
         extra = (bolt if own_bolt else 0) + (MOON_W + 3 if p.idle else 0)
         if style == "none" and self._custom_file(p, icon) is None:
-            return pill_width(tw, 0, extra, gap=0)
-        return pill_width(tw, icon, extra)
+            return pill_width(tw, 0, extra, pad=self._pad, gap=0)
+        return pill_width(tw, icon, extra, pad=self._pad, gap=self._gap)
 
     def _relayout(self) -> None:
         fm = QFontMetrics(self._font())
@@ -487,7 +511,7 @@ class TaskbarWidget(QWidget):
         widths = [self._pill_width(p, fm, icon, bolt) for p in allp]
         extents = [self._pill_h] * len(allp) if self._vertical else widths
         ow_text = ("!" if any(p.warn for p in allp) else "") + f"+{len(allp)}"
-        ow_w = 2 * PAD + fm.horizontalAdvance(ow_text)
+        ow_w = 2 * self._pad + fm.horizontalAdvance(ow_text)
         k = fit_count(extents, self._max_extent, self._pill_h if self._vertical else ow_w)
         pills, widths = list(allp[:k]), widths[:k]
         if k < len(allp):
@@ -498,7 +522,7 @@ class TaskbarWidget(QWidget):
             more = tr("panel_more_one" if n == 1 else "panel_more_other", n=n)
             pills.append(_Pill("overflow", f"+{n}", "\n".join(r.a11y for r in rest),
                                a11y=more, members=rest, warn=warn, alert=alert))
-            widths.append(2 * PAD + fm.horizontalAdvance(("!" if warn else "") + f"+{n}"))
+            widths.append(2 * self._pad + fm.horizontalAdvance(("!" if warn else "") + f"+{n}"))
         self._pills = pills
         if self._kfocus >= len(pills):
             self._set_kfocus(len(pills) - 1)
@@ -702,8 +726,16 @@ class TaskbarWidget(QWidget):
         self._edge = (tinfo.edge if tinfo is not None
                       else taskbar.EDGE_TOP if placement.float_anchor.startswith("top") else taskbar.EDGE_BOTTOM)
         self._set_floating(floating)
-        if res.pill_h != self._pill_h or res.vertical != self._vertical or res.max_extent != self._max_extent:
-            self._pill_h, self._vertical, self._max_extent = res.pill_h, res.vertical, res.max_extent
+        thickness = None
+        if tinfo is not None and not floating:      # a real taskbar: the pills may not outgrow it
+            dpr = env.dpr or 1.0
+            thickness = (taskbar.rect_w(tinfo.rect) if res.vertical else taskbar.rect_h(tinfo.rect)) / dpr
+        eff_h = self.scaled_pill_h(res.pill_h, self._ui_pct(), thickness)
+        scale = eff_h / res.pill_h if res.pill_h else 1.0
+        if (eff_h != self._pill_h or res.vertical != self._vertical or res.max_extent != self._max_extent
+                or abs(scale - self._pill_scale) > 1e-6):
+            self._pill_h, self._vertical, self._max_extent = eff_h, res.vertical, res.max_extent
+            self._pill_scale = scale
             self._relayout()
             env = replace(env, size=(self.width(), self.height()))      # size changed; nothing else re-read
             res = compute_placement(env, placement)
@@ -888,7 +920,7 @@ class TaskbarWidget(QWidget):
                 p.setPen(color)
                 p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), ("!" if pill.warn else "") + pill.text)
                 continue
-            ir = QRectF(x + PAD, y + (h - icon) / 2, icon, icon)
+            ir = QRectF(x + self._pad, y + (h - icon) / 2, icon, icon)
             icon_color = fg if level_color is not None else color
             if pill.dim:
                 icon_color = QColor(icon_color)
@@ -899,16 +931,16 @@ class TaskbarWidget(QWidget):
             custom = self._custom_file(pill, icon)
             if custom is not None:      # user image: drawn in every style (also "none"), dimmed like the icon
                 custom_icons.draw_custom_icon(p, ir, custom, icon_color.alphaF())
-                text_x = x + PAD + icon + ICON_GAP
+                text_x = x + self._pad + icon + self._gap
             elif style == "none":
-                text_x = x + PAD
+                text_x = x + self._pad
             else:
                 if style in ("battery", "retro") and level_color is not None:
                     accent = QColor(color)      # the level colour drives the gauge / the retro accent
                     accent.setAlpha(icon_color.alpha())
                     icon_color = accent
                 draw_kind_icon(p, pill.kind, ir, icon_color, pill.level, pill.charging, style)
-                text_x = x + PAD + icon + ICON_GAP
+                text_x = x + self._pad + icon + self._gap
             if pill.idle:
                 moon = QColor(fg)
                 moon.setAlpha(210)
@@ -917,11 +949,11 @@ class TaskbarWidget(QWidget):
             own_bolt = pill.charging and style != "battery"
             bolt = max(6, icon // 2) if own_bolt else 0
             p.setPen(color)
-            p.drawText(QRectF(text_x, y, w - (text_x - x) - PAD - bolt, h),
+            p.drawText(QRectF(text_x, y, w - (text_x - x) - self._pad - bolt, h),
                        int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
                        ("!" if pill.warn else "") + pill.text)
             if level_color is not None and pill.level is not None and h >= BAR_MIN_PILL_H:
-                bw = w - 2 * PAD
+                bw = w - 2 * self._pad
                 by = y + h - 5.0
                 bar = QColor(color)
                 if pill.idle:
@@ -930,13 +962,13 @@ class TaskbarWidget(QWidget):
                 track.setAlpha(55)
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(track)
-                p.drawRoundedRect(QRectF(x + PAD, by, bw, BAR_H), BAR_H / 2, BAR_H / 2)
+                p.drawRoundedRect(QRectF(x + self._pad, by, bw, BAR_H), BAR_H / 2, BAR_H / 2)
                 p.setBrush(bar)
-                p.drawRoundedRect(QRectF(x + PAD, by, max(BAR_H, bw * max(0, min(100, pill.level)) / 100),
+                p.drawRoundedRect(QRectF(x + self._pad, by, max(BAR_H, bw * max(0, min(100, pill.level)) / 100),
                                          BAR_H), BAR_H / 2, BAR_H / 2)
             if own_bolt:
                 bh = icon * 0.8
-                draw_bolt(p, QRectF(x + w - PAD - bolt, y + (h - bh) / 2, bolt, bh),
+                draw_bolt(p, QRectF(x + w - self._pad - bolt, y + (h - bh) / 2, bolt, bh),
                           QColor(110, 220, 120) if not self._light else QColor(30, 150, 60))
         p.end()
 

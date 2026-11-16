@@ -17,7 +17,8 @@ class Cfg:
                   "full_charge_alert": True, "detail_log_enabled": False, "start_with_windows": False,
                   "show_in_fullscreen": False, "low_threshold": 20, "color_palette": "classic",
                   "color_mode": "levels", "icon_style": "outline", "placement_mode": "taskbar",
-                  "taskbar_anchor": "right", "placement_monitor": "primary", "floating_positions": {}}
+                  "taskbar_anchor": "right", "placement_monitor": "primary", "floating_positions": {},
+                  "panel_size": "normal", "ui_scale": 100, "language": "auto"}
 
     def get(self, k):
         return self.d[k]
@@ -103,7 +104,7 @@ def test_panel_keeps_position_and_width(panel):
     g1 = panel.geometry()
     assert g1.width() == g0.width() and g1.x() == g0.x()
     avail = panel._screen_avail
-    assert g1.height() <= avail.height() * dp.MAX_HEIGHT_FRACTION + 1
+    assert g1.height() <= avail.height() * dp.PANEL_SIZE_FRACTION["normal"] + 1
 
 
 def test_root_rows_and_title(panel):
@@ -337,7 +338,7 @@ def test_long_page_scrolls_within_the_cap(panel, env):
     click(v.row("personalization"))
     click(v.row("palette"))
     avail = panel._screen_avail
-    assert panel.height() <= avail.height() * dp.MAX_HEIGHT_FRACTION + 1
+    assert panel.height() <= avail.height() * dp.PANEL_SIZE_FRACTION["normal"] + 1
     assert v.content_height() > 0
 
 

@@ -5,11 +5,12 @@ import logging
 import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixmap
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QStackedWidget,
-                               QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter, QPixmap
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy,
+                               QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from . import custom_icons, i18n, taskbar
+from .config import PANEL_SIZE_FRACTION, UI_SCALES
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
 from .icons import (about_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon,
                     refresh_icon, show_all_icon)
@@ -18,8 +19,16 @@ from .popup import place_popup
 
 log = logging.getLogger(__name__)
 
-MAX_HEIGHT_FRACTION = 0.6
-PANEL_WIDTH = 320          # content width, without the scrollbar
+# Panel size: a FIXED window (same for the device list and every Settings page). Its height is a share of
+# the available height of the screen it opens on (config panel_size: compact 0.40 / normal 0.50 / large
+# 0.65, see config.PANEL_SIZE_FRACTION); its width follows the height:
+#     width = clamp(height * WIDTH_PER_HEIGHT, MIN_WIDTH, MAX_WIDTH_FRACTION * available width) * ui_scale
+# (never wider than WIDTH_SCREEN_LIMIT of the available width). Content that does not fit scrolls.
+WIDTH_PER_HEIGHT = 0.62
+MIN_WIDTH = 300
+MAX_WIDTH_FRACTION = 0.4
+WIDTH_SCREEN_LIMIT = 0.9
+MIN_HEIGHT = 240
 ICON_PX = 20
 BTN_ICON_PX = 18
 BTN_PX = 32               # minimum touch/click target of every button (logical px)
@@ -37,19 +46,77 @@ def _hex(c: QColor) -> str:
     return c.name()
 
 
+def panel_dimensions(avail: QRect, size: str = "normal", scale_pct: int = 100) -> tuple[int, int]:
+    """(width, height) in logical px of the panel for a screen whose available area is `avail`."""
+    frac = PANEL_SIZE_FRACTION.get(size, PANEL_SIZE_FRACTION["normal"])
+    scale = (scale_pct if scale_pct in UI_SCALES else 100) / 100.0
+    height = min(avail.height(), max(MIN_HEIGHT, round(avail.height() * frac)))
+    base = max(MIN_WIDTH, min(height * WIDTH_PER_HEIGHT, avail.width() * MAX_WIDTH_FRACTION))
+    width = min(round(base * scale), int(avail.width() * WIDTH_SCREEN_LIMIT))
+    return width, height
+
+
+def scaled_font(scale: float) -> QFont:
+    """The application font at `scale` times its size (pixel or point sized)."""
+    f = QFont(QGuiApplication.font())
+    if f.pixelSize() > 0:
+        f.setPixelSize(max(1, round(f.pixelSize() * scale)))
+    else:
+        f.setPointSizeF(max(1.0, f.pointSizeF() * scale))
+    return f
+
+
+class _ElidedLabel(QLabel):
+    """Single-line label that takes the width the layout gives it and elides only what does not fit."""
+
+    def __init__(self, text: str = ""):
+        super().__init__()
+        self._full = text
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        super().setText(text)
+
+    def full_text(self) -> str:
+        return self._full
+
+    def setText(self, text: str) -> None:
+        self._full = text
+        self._elide()
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, super().minimumSizeHint().height())
+
+    def _elide(self) -> None:
+        w = self.width()
+        text = self._full
+        if w > 8 and QFontMetrics(self.font()).horizontalAdvance(text) > w:
+            text = QFontMetrics(self.font()).elidedText(text, Qt.TextElideMode.ElideRight, w)
+        if text != self.text():
+            super().setText(text)
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        self._elide()
+
+    def changeEvent(self, ev) -> None:
+        super().changeEvent(ev)
+        if ev.type() == QEvent.Type.FontChange:
+            self._elide()
+
+
 def _kind_pixmap(kind: str, color: QColor, dpr: float, level: int | None = None,
-                 charging: bool = False, key: str = "") -> QPixmap:
+                 charging: bool = False, key: str = "", size: int = ICON_PX) -> QPixmap:
     """Row icon; the "none" style (widget only) falls back to outline: the panel needs the kind.
     A user image (device > kind) replaces the built-in icon; the colour's alpha is its opacity."""
     style = get_icon_style()
     if style == "none":
         style = "outline"
-    px = int(ICON_PX * dpr)
+    px = int(size * dpr)
     pm = QPixmap(px, px)
     pm.fill(Qt.GlobalColor.transparent)
     pm.setDevicePixelRatio(dpr)
     p = QPainter(pm)
-    rect = QRectF(0, 0, ICON_PX, ICON_PX)
+    rect = QRectF(0, 0, size, size)
     custom = custom_icons.file_for(kind, key)
     if not (custom and custom_icons.draw_custom_icon(p, rect, custom, color.alphaF())):
         draw_kind_icon(p, kind, rect, color, level, charging, style)
@@ -121,6 +188,9 @@ class DevicePanel(QFrame):
         self._edge = "bottom"                    # screen edge the panel was opened from
         self._settings_view = None               # SettingsView, created on the first show_settings()
         self._settings_model = None
+        self._size = "normal"                    # config panel_size
+        self._scale_pct = 100                    # config ui_scale (percent)
+        self._k = 1.0
 
         self._scroll = QScrollArea(self)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -137,9 +207,10 @@ class DevicePanel(QFrame):
         lay.setSpacing(4)
         self._stack = QStackedWidget(self)       # page 0: device list, page 1: Settings
         self._stack.addWidget(self._scroll)
-        lay.addWidget(self._stack)
+        lay.addWidget(self._stack, 1)
         lay.addWidget(self._toolbar_widget)
         self._apply_style()
+        self._apply_scale()
 
     # ------------------------------------------------------------------ public API
     def set_dark(self, dark: bool) -> None:
@@ -152,11 +223,48 @@ class DevicePanel(QFrame):
             if self._model is not None:
                 self.set_model(self._model, self._logging_keys)
 
+    @property
+    def panel_size(self) -> str:
+        return self._size
+
+    @property
+    def ui_scale(self) -> int:
+        return self._scale_pct
+
+    def set_metrics(self, size: str, scale_pct: int) -> None:
+        """Apply config panel_size / ui_scale live: fonts, rows, buttons and the window are redone."""
+        size = size if size in PANEL_SIZE_FRACTION else "normal"
+        scale_pct = int(scale_pct) if scale_pct in UI_SCALES else 100
+        if size == self._size and scale_pct == self._scale_pct:
+            return
+        self._size, self._scale_pct = size, scale_pct
+        self._k = scale_pct / 100.0
+        self._apply_scale()
+        if self._settings_view is not None:
+            self._settings_view.set_scale(self._k)
+        self._sig = None
+        if self._model is not None and self._edit is None:
+            self.set_model(self._model, self._logging_keys)
+        self._refit(keep_edge=True)
+        if self.isVisible() and self.in_settings:
+            self._settings_view.focus_first()
+
+    def retranslate(self) -> None:
+        """The UI language changed: texts of the toolbar, the device list and the open Settings page."""
+        lang = i18n.get_language()
+        self.setAccessibleName(i18n.tr("devices"))
+        self._refresh_toolbar(lang)
+        self._sig = None
+        if self._model is not None and self._edit is None:
+            self.set_model(self._model, self._logging_keys)
+        if self._settings_view is not None:
+            self._settings_view.refresh()
+
     def set_model(self, model: PanelModel, logging_keys=()) -> None:
         """Show `model`; rebuilds only when something visible changed and keeps scroll/focus."""
         logging_keys = frozenset(logging_keys or ())
         lang = i18n.get_language()
-        sig = (model.signature, self._dark, lang, get_icon_style(), custom_icons.maps_version(),
+        sig = (model.signature, self._dark, lang, get_icon_style(), custom_icons.maps_version(), self._scale_pct,
                self.show_logging, logging_keys if self.show_logging else frozenset())
         self._model = model
         self._logging_keys = logging_keys
@@ -224,7 +332,7 @@ class DevicePanel(QFrame):
             self._finish_edit(True)
         if self._settings_view is None:
             from .settings_view import SettingsView
-            v = SettingsView(self._settings_model, self._dark)
+            v = SettingsView(self._settings_model, self._dark, scale=self._k)
             v.leave_requested.connect(self.show_devices)
             v.layout_changed.connect(self._on_settings_layout)
             v.rebuilt.connect(self._chain_settings_tab_order)
@@ -269,6 +377,36 @@ class DevicePanel(QFrame):
         order = self._settings_view.focus_order() + self._toolbar_buttons()
         for x, y in zip(order, order[1:]):
             QWidget.setTabOrder(x, y)
+
+    # ------------------------------------------------------------------ scale
+    def _s(self, base: int) -> int:
+        return max(1, round(base * self._k))
+
+    @property
+    def _btn(self) -> int:
+        """Side of every button: scaled, but never below the 32 px touch target."""
+        return max(BTN_PX, self._s(BTN_PX))
+
+    @property
+    def _icon(self) -> int:
+        return self._s(ICON_PX)
+
+    @property
+    def _bicon(self) -> int:
+        return self._s(BTN_ICON_PX)
+
+    def _apply_scale(self) -> None:
+        self.setFont(scaled_font(self._k))
+        for b in self._toolbar.values():
+            self._size_button(b)
+            b.setIconSize(QSize(self._bicon, self._bicon))
+        h = self._toolbar_widget.layout()
+        h.setContentsMargins(self._s(2), 0, self._s(2), 0)
+        h.setSpacing(self._s(4))
+        lay = self.layout()
+        lay.setContentsMargins(self._s(6), self._s(6), self._s(6), self._s(6))
+        lay.setSpacing(self._s(4))
+        self._refresh_toolbar(i18n.get_language())
 
     # ------------------------------------------------------------------ appearance
     def _apply_style(self) -> None:
@@ -315,7 +453,7 @@ class DevicePanel(QFrame):
             self._size_button(b)
             b.setAutoRaise(True)
             b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-            b.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
+            b.setIconSize(QSize(self._bicon, self._bicon))
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
             b.installEventFilter(self)
@@ -348,18 +486,17 @@ class DevicePanel(QFrame):
             b.setAccessibleName(labels[name])
         t = self._toolbar
         t["show_all"].setEnabled(self._show_all_enabled)
-        t["refresh"].setIcon(refresh_icon(BTN_ICON_PX, self._text))
-        t["show_all"].setIcon(show_all_icon(BTN_ICON_PX, self._text if self._show_all_enabled else grey))
-        t["settings"].setIcon(gear_icon(BTN_ICON_PX, self._text))
-        t["about"].setIcon(about_icon(BTN_ICON_PX, self._text))
-        t["quit"].setIcon(power_icon(BTN_ICON_PX, self._text))
+        t["refresh"].setIcon(refresh_icon(self._bicon, self._text))
+        t["show_all"].setIcon(show_all_icon(self._bicon, self._text if self._show_all_enabled else grey))
+        t["settings"].setIcon(gear_icon(self._bicon, self._text))
+        t["about"].setIcon(about_icon(self._bicon, self._text))
+        t["quit"].setIcon(power_icon(self._bicon, self._text))
 
     def _toolbar_buttons(self) -> list[QToolButton]:
         return list(self._toolbar.values())
 
-    @staticmethod
-    def _size_button(b: QToolButton) -> None:
-        b.setFixedSize(BTN_PX, BTN_PX)
+    def _size_button(self, b: QToolButton) -> None:
+        b.setFixedSize(self._btn, self._btn)
 
     def _eye_button(self, name_text: str, checked: bool, tracked_key: tuple[str, str],
                     description: str = "", tip_on: str = "", tip_off: str = "") -> QToolButton:
@@ -369,7 +506,7 @@ class DevicePanel(QFrame):
         b.setChecked(checked)
         b.setAutoRaise(True)
         b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        b.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
+        b.setIconSize(QSize(self._bicon, self._bicon))
         b.setProperty("tip_on", tip_on or name_text)
         b.setProperty("tip_off", tip_off or name_text)
         b.setToolTip(b.property("tip_on") if checked else b.property("tip_off"))
@@ -384,12 +521,12 @@ class DevicePanel(QFrame):
 
     def _set_eye_icon(self, b: QToolButton, visible: bool) -> None:
         color = self._text if visible else band_color("grey", self._dark)
-        b.setIcon(eye_icon(BTN_ICON_PX, visible, color))
+        b.setIcon(eye_icon(self._bicon, visible, color))
 
     def _header(self, kind: str, lang: str, eye: QToolButton | None) -> QWidget:
         w = QWidget()
         h = QHBoxLayout(w)
-        h.setContentsMargins(8, 6, 4, 2)
+        h.setContentsMargins(self._s(8), self._s(6), self._s(4), self._s(2))
         lab = QLabel(section_title(kind, lang))
         lab.setTextFormat(Qt.TextFormat.PlainText)
         f = lab.font()
@@ -412,8 +549,8 @@ class DevicePanel(QFrame):
                         f"border-radius: 6px; }}")
         desc = f"{row.name}, {level_text(row)}"
         h = QHBoxLayout(w)
-        h.setContentsMargins(ROW_MARGIN_L, 4, ROW_MARGIN_R, 4)
-        h.setSpacing(ROW_SPACING)
+        h.setContentsMargins(self._s(ROW_MARGIN_L), self._s(4), self._s(ROW_MARGIN_R), self._s(4))
+        h.setSpacing(self._s(ROW_SPACING))
 
         icon_color = QColor(st.fg)
         if row.idle:
@@ -422,24 +559,17 @@ class DevicePanel(QFrame):
             icon_color.setAlpha(DIM_ALPHA)
         dpr = self.devicePixelRatioF() or 1.0
         icon = QLabel()
-        icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr, row.battery, row.charging, row.key))
-        icon.setFixedSize(ICON_PX, ICON_PX)
+        icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr, row.battery, row.charging, row.key, self._icon))
+        icon.setFixedSize(self._icon, self._icon)
         h.addWidget(icon)
 
-        n_btns = (2 + (1 if self.show_logging else 0)
-                  + (1 if self.show_logging and row.key in self._logging_keys else 0))
-        avail = (PANEL_WIDTH - 2 * ROW_BORDER - ROW_MARGIN_L - ROW_MARGIN_R - ICON_PX
-                 - BTN_PX * n_btns - ROW_SPACING * (n_btns + 1) - 2)
-
+        # the text cell takes every pixel the buttons leave; the name elides only if it really does not fit
         cell = QWidget()
-        cell.setFixedWidth(avail)
+        cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         cv = QVBoxLayout(cell)
         cv.setContentsMargins(0, 0, 0, 0)
         cv.setSpacing(0)
-        name = QLabel()
-        name.setTextFormat(Qt.TextFormat.PlainText)
-        name.setFixedWidth(avail)
-        name.setText(QFontMetrics(name.font()).elidedText(row.name, Qt.TextElideMode.ElideRight, avail))
+        name = _ElidedLabel(row.name)
         if row.original_name:
             tip = row.name + "\n" + _t("original_name", lang, name=row.original_name)
             name.setToolTip(tip)
@@ -450,17 +580,15 @@ class DevicePanel(QFrame):
         status = QLabel(level_text(row))
         status.setTextFormat(Qt.TextFormat.PlainText)
         status.setWordWrap(True)
+        status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         status.setStyleSheet(f"color: {_hex(st.fg)}; background: transparent;")
         if st.dimmed:
             f = status.font()
             f.setItalic(True)
             status.setFont(f)
-        status.setFixedWidth(avail)
-        need = QFontMetrics(status.font()).boundingRect(
-            0, 0, avail, 10000, int(Qt.TextFlag.TextWordWrap), status.text()).height()
-        status.setFixedHeight(need + 2)
         cv.addWidget(status)
-        h.addWidget(cell)
+        h.addWidget(cell, 1)
+        avail = 0       # the alias editor takes the width of the name label
 
         buttons: list[QToolButton] = []
         if self.show_logging:
@@ -471,14 +599,14 @@ class DevicePanel(QFrame):
             rec.setChecked(on)
             rec.setAutoRaise(True)
             rec.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-            rec.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
+            rec.setIconSize(QSize(self._bicon, self._bicon))
             label = _t("record", lang, name=row.name)
             rec.setProperty("tip_on", _t("tip_record_stop", lang))
             rec.setProperty("tip_off", _t("tip_record_start", lang))
             rec.setToolTip(rec.property("tip_on") if on else rec.property("tip_off"))
             rec.setAccessibleName(label)
             rec.setAccessibleDescription(desc)
-            rec.setIcon(record_icon(BTN_ICON_PX, on, band_color("red", self._dark) if on
+            rec.setIcon(record_icon(self._bicon, on, band_color("red", self._dark) if on
                                     else band_color("grey", self._dark)))
             rec.installEventFilter(self)
             self._buttons[(row.key, "rec")] = rec
@@ -505,12 +633,12 @@ class DevicePanel(QFrame):
         self._size_button(pen)
         pen.setAutoRaise(True)
         pen.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        pen.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
+        pen.setIconSize(QSize(self._bicon, self._bicon))
         pen.setToolTip(_t("tip_alias_edit" if row.original_name else "tip_alias", lang))
         pen.setAccessibleName(_t("alias", lang, name=row.name))
         pen.setAccessibleDescription(desc)
         pen.setCursor(Qt.CursorShape.PointingHandCursor)
-        pen.setIcon(pencil_icon(BTN_ICON_PX, self._text if row.original_name
+        pen.setIcon(pencil_icon(self._bicon, self._text if row.original_name
                                 else band_color("grey", self._dark)))
         pen.installEventFilter(self)
         self._buttons[(row.key, "alias")] = pen
@@ -559,7 +687,7 @@ class DevicePanel(QFrame):
         content.setStyleSheet("background: transparent;")
         v = QVBoxLayout(content)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(4)
+        v.setSpacing(self._s(4))
         if not model.radio_on:
             off = QLabel(_t("radio_off", lang))
             off.setTextFormat(Qt.TextFormat.PlainText)
@@ -588,7 +716,6 @@ class DevicePanel(QFrame):
             for r in model.known:
                 v.addWidget(self._row_widget(r, lang, eye_enabled=model.show_disconnected))
         v.addStretch(1)
-        content.setFixedWidth(PANEL_WIDTH)
         self._content = content
         self._scroll.setWidget(content)
         self.setAccessibleName(i18n.tr("devices"))
@@ -613,26 +740,12 @@ class DevicePanel(QFrame):
         return s.availableGeometry() if s is not None else QRect(0, 0, 1920, 1040)
 
     def _fit(self, avail: QRect, keep_edge: bool = False) -> None:
-        """Size the panel: content height capped at 60 % of the screen's available height.
-        With `keep_edge` a panel opened above the taskbar keeps its bottom edge when the height changes."""
-        settings = self.in_settings
-        if self._content is None and not settings:
-            return
-        if settings:
-            want = self._settings_view.content_height()
-        else:
-            self._content.adjustSize()
-            want = self._content.sizeHint().height()
-        margins = self.layout().contentsMargins()
-        extra = (margins.top() + margins.bottom() + self.layout().spacing()
-                 + self._toolbar_widget.sizeHint().height() + 2)
-        cap = max(80, int(avail.height() * MAX_HEIGHT_FRACTION) - extra)
-        height = min(want, cap)
-        sb = self._scroll.verticalScrollBar().sizeHint().width() if want > cap else 0
+        """Give the panel its fixed size for the screen `avail` (see panel_dimensions); the same size for
+        the device list and every Settings page. With `keep_edge` a panel opened above the taskbar keeps
+        its bottom edge when the size changes."""
+        width, height = panel_dimensions(avail, self._size, self._scale_pct)
         old = self.geometry()
-        (self._settings_view if settings else self._scroll).setFixedSize(PANEL_WIDTH + sb, height)
-        self._stack.setFixedSize(PANEL_WIDTH + sb, height)
-        self.setFixedSize(PANEL_WIDTH + sb + margins.left() + margins.right() + 2, height + extra)
+        self.setFixedSize(width, height)
         if self.isVisible():
             if keep_edge and self._edge == "bottom":
                 self.move(old.x(), old.bottom() + 1 - self.height())
@@ -660,7 +773,7 @@ class DevicePanel(QFrame):
 
     def _on_record(self, key: str, on: bool, b: QToolButton) -> None:
         self._set_state_tip(b, on)
-        b.setIcon(record_icon(BTN_ICON_PX, on, band_color("red", self._dark) if on
+        b.setIcon(record_icon(self._bicon, on, band_color("red", self._dark) if on
                               else band_color("grey", self._dark)))
         self.logging_toggled.emit(key, on)
 
@@ -671,7 +784,9 @@ class DevicePanel(QFrame):
             return
         edit = QLineEdit(self)
         edit.setMaxLength(MAX_ALIAS_LEN)
-        edit.setFixedWidth(width)
+        edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        edit.setMinimumWidth(0)
+        edit.setFixedHeight(max(label.height(), edit.sizeHint().height()))
         edit.setText(row.name if row.original_name else "")
         edit.setPlaceholderText(row.original_name or row.name)
         edit.setAccessibleName(_t("alias_edit", lang, name=row.original_name or row.name))
@@ -903,6 +1018,12 @@ class DevicePanel(QFrame):
 
     def _on_screen_changed(self, *_a) -> None:
         """Icons are pixmaps at the current devicePixelRatio: drop the cached signature and rebuild."""
+        screen = self.screen() if _a else None
+        if screen is not None and self.isVisible():
+            avail = screen.availableGeometry()
+            if avail != self._screen_avail:      # moved to another monitor / DPI: reshape for it
+                self._screen_avail = avail
+                self._refit(keep_edge=False)
         self._sig = None
         if self._model is not None:
             self.set_model(self._model, self._logging_keys)

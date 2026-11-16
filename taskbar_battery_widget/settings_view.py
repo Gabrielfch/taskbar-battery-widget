@@ -10,8 +10,8 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QScrollArea, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QScrollArea,
+                               QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from . import i18n
 from .colors import band_color
@@ -20,13 +20,18 @@ from .settings_model import Action, Choice, Page, Separator, SettingsModel, Togg
 
 log = logging.getLogger(__name__)
 
-PANEL_WIDTH = 320          # same content width as the device list
+# Base metrics at 100 %; every length goes through `scaled()` (the UI scale of the panel).
 ROW_H = 36                 # >= the 32 px touch target of the panel buttons
 BTN_PX = 32
 GLYPH_PX = 18
 TRAIL_PX = 16
 LEAD_W = 28                # leading slot: glyph / checkbox / radio
 INSET_PX = 18              # accordion options are indented
+MIN_TARGET = 32            # touch targets never go below this (logical px), also at 90 %
+
+
+def scaled(base: int, k: float, floor: int = 1) -> int:
+    return max(floor, round(base * k))
 
 
 @dataclass(frozen=True)
@@ -51,8 +56,9 @@ class _Row(QAbstractButton):
 
     def __init__(self, rid: str, kind: str, text: str, colors: _Colors, *, lead: QIcon | None = None,
                  trail: QIcon | None = None, value: str = "", indicator: str = "", inset: bool = False,
-                 parent: QWidget | None = None):
+                 scale: float = 1.0, parent: QWidget | None = None):
         super().__init__(parent)
+        self._k = float(scale)
         self.rid = rid
         self.kind = kind                    # "page" | "toggle" | "choice" | "option" | "action"
         self._label = text
@@ -66,16 +72,16 @@ class _Row(QAbstractButton):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        self.setFixedHeight(ROW_H)
-        self.setMinimumWidth(PANEL_WIDTH)
+        self.setFixedHeight(scaled(ROW_H, self._k, MIN_TARGET))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCheckable(indicator != "")
         self.setText(text)
 
     def sizeHint(self) -> QSize:
-        return QSize(PANEL_WIDTH, ROW_H)
+        return QSize(200, self.height())
 
     def minimumSizeHint(self) -> QSize:
-        return QSize(PANEL_WIDTH, ROW_H)
+        return QSize(0, self.height())
 
     def value_text(self) -> str:
         return self._value
@@ -107,8 +113,10 @@ class _Row(QAbstractButton):
             p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 5, 5)
         fg = c.text if self.isEnabled() else c.dim
         h = self.height()
-        x = 12 + (INSET_PX if self._inset else 0)
-        lead = QRectF(x, (h - GLYPH_PX) / 2, GLYPH_PX, GLYPH_PX)
+        k = self._k
+        glyph, trail_px = scaled(GLYPH_PX, k), scaled(TRAIL_PX, k)
+        x = scaled(12, k) + (scaled(INSET_PX, k) if self._inset else 0)
+        lead = QRectF(x, (h - glyph) / 2, glyph, glyph)
         if self._indicator == "check":
             self._paint_check(p, lead, fg)
         elif self._indicator == "radio":
@@ -116,11 +124,11 @@ class _Row(QAbstractButton):
         elif self._lead is not None:
             self._lead.paint(p, lead.toRect(), Qt.AlignmentFlag.AlignCenter,
                              QIcon.Mode.Normal if self.isEnabled() else QIcon.Mode.Disabled)
-        x += LEAD_W
-        right = self.width() - 10
+        x += scaled(LEAD_W, k)
+        right = self.width() - scaled(10, k)
         if self._trail is not None:
-            self._trail.paint(p, QRect(right - TRAIL_PX, (h - TRAIL_PX) // 2, TRAIL_PX, TRAIL_PX))
-            right -= TRAIL_PX + 4
+            self._trail.paint(p, QRect(right - trail_px, (h - trail_px) // 2, trail_px, trail_px))
+            right -= trail_px + 4
         fm = QFontMetrics(self.font())
         if self._value:
             vw = min(fm.horizontalAdvance(self._value), int((right - x) * 0.5))
@@ -167,9 +175,11 @@ class SettingsView(QWidget):
     page_changed = Signal(str)      # id of the page now shown
     rebuilt = Signal()              # the rows were recreated (tab order must be chained again)
 
-    def __init__(self, model: SettingsModel, dark: bool = True, parent: QWidget | None = None):
+    def __init__(self, model: SettingsModel, dark: bool = True, parent: QWidget | None = None,
+                 scale: float = 1.0):
         super().__init__(parent)
         self.setObjectName("SettingsView")
+        self._k = float(scale)
         self._model = model
         self._dark = bool(dark)
         self._colors = _Colors.make(self._dark)
@@ -181,10 +191,9 @@ class SettingsView(QWidget):
         self._last_height = 0
 
         self._back = QToolButton(self)
-        self._back.setFixedSize(BTN_PX, BTN_PX)
         self._back.setAutoRaise(True)
         self._back.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self._back.setIconSize(QSize(GLYPH_PX, GLYPH_PX))
+        self._size_back()
         self._back.setCursor(Qt.CursorShape.PointingHandCursor)
         self._back.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._back.clicked.connect(lambda _c=False: self.go_back())
@@ -229,6 +238,23 @@ class SettingsView(QWidget):
             self._path = model.path_to(ids[-1]) if ids else [model.root]
             self._open = None
         self._rebuild()
+
+    def _size_back(self) -> None:
+        btn = scaled(BTN_PX, self._k, MIN_TARGET)
+        self._back.setFixedSize(btn, btn)
+        g = scaled(GLYPH_PX, self._k)
+        self._back.setIconSize(QSize(g, g))
+
+    @property
+    def scale(self) -> float:
+        return self._k
+
+    def set_scale(self, k: float) -> None:
+        """New interface scale (the panel sets the matching font on itself); rows are rebuilt."""
+        if abs(float(k) - self._k) > 1e-6:
+            self._k = float(k)
+            self._size_back()
+            self._rebuild()
 
     def set_dark(self, dark: bool) -> None:
         if bool(dark) != self._dark:
@@ -338,7 +364,7 @@ class SettingsView(QWidget):
         self._rows = {}
         self._order = [self._back]
 
-        self._back.setIcon(glyph_icon("back", GLYPH_PX, c.text))
+        self._back.setIcon(glyph_icon("back", scaled(GLYPH_PX, self._k), c.text))
         back = i18n.tr("back")
         self._back.setToolTip(back)
         self._back.setAccessibleName(back)
@@ -365,7 +391,6 @@ class SettingsView(QWidget):
                 continue
             self._add_node(v, body, node)
         v.addStretch(1)
-        body.setFixedWidth(PANEL_WIDTH)
         self._body = body
         self._scroll.setWidget(body)
 
@@ -382,19 +407,19 @@ class SettingsView(QWidget):
             self._rows[focus].setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _make_row(self, rid: str, kind: str, text: str, **kw) -> _Row:
-        row = _Row(rid, kind, text, self._colors, **kw)
+        row = _Row(rid, kind, text, self._colors, scale=self._k, **kw)
         row.installEventFilter(self)
         self._rows[rid] = row
         self._order.append(row)
         return row
 
     def _trail(self, name: str, enabled: bool = True) -> QIcon:
-        return glyph_icon(name, TRAIL_PX, self._colors.text if enabled else self._colors.dim)
+        return glyph_icon(name, scaled(TRAIL_PX, self._k), self._colors.text if enabled else self._colors.dim)
 
     def _add_node(self, v: QVBoxLayout, body: QWidget, node) -> None:
         c = self._colors
         if isinstance(node, Page):
-            row = self._make_row(node.id, "page", node.title(), lead=glyph_icon(node.icon, GLYPH_PX, c.text),
+            row = self._make_row(node.id, "page", node.title(), lead=glyph_icon(node.icon, scaled(GLYPH_PX, self._k), c.text),
                                  trail=self._trail("chevron_right"), parent=body)
             row.setAccessibleName(node.title())
             row.setAccessibleDescription(i18n.tr("settings_page_desc"))

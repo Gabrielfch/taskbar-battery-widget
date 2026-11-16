@@ -8,8 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .config import COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES
-from .i18n import tr
+from .config import COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES, LANGUAGES, PANEL_SIZES, UI_SCALES
+from .i18n import LANGUAGES as I18N_LANGUAGES, tr
 
 DEFAULT_FLOATING_ANCHOR = "bottom-right"
 
@@ -36,6 +36,9 @@ class SettingsCallbacks:
     icons_centered: Callable[[], object] = lambda: True             # True / False / None (unknown)
     monitor_has_taskbar: Callable[[], bool] = lambda: True          # does the widget's monitor have a taskbar
     open_custom_icons: Callable[[], None] = lambda: None            # custom icon images dialog
+    set_panel_size: Callable[[str], None] = lambda size: None       # one of config.PANEL_SIZES
+    set_ui_scale: Callable[[int], None] = lambda pct: None          # one of config.UI_SCALES
+    set_language: Callable[[str], None] = lambda lang: None         # one of config.LANGUAGES
 
 
 # ------------------------------------------------------------------ nodes
@@ -255,6 +258,10 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
                enabled=reset_enabled),
     ])
 
+    # Language names are shown in their own language, whatever the current UI language is.
+    def language_options() -> list:
+        return [Option(v, tr("lang_auto") if v == "auto" else I18N_LANGUAGES[v]) for v in LANGUAGES]
+
     personalization = Page(id="personalization", title_key="menu_personalization", icon="personalization",
                            children=[
         Choice(id="palette", label_key="menu_colors",
@@ -264,6 +271,14 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
                options=static_options(ICON_STYLES, lambda n: tr("icon_" + n)),
                get=lambda: cfg.get("icon_style"), set=lambda v: cb.set_icon_style(str(v))),
         Action(id="custom_icons", label_key="custom_icons_menu", run=lambda: cb.open_custom_icons()),
+        Choice(id="panel_size", label_key="menu_panel_size",
+               options=static_options(PANEL_SIZES, lambda n: tr("panel_size_" + n)),
+               get=lambda: cfg.get("panel_size"), set=lambda v: cb.set_panel_size(str(v))),
+        Choice(id="ui_scale", label_key="menu_ui_scale",
+               options=static_options(UI_SCALES, lambda n: f"{n} %"),
+               get=lambda: int(cfg.get("ui_scale")), set=lambda v: cb.set_ui_scale(int(v))),
+        Choice(id="language", label_key="menu_language", options=language_options,
+               get=lambda: cfg.get("language"), set=lambda v: cb.set_language(str(v))),
         position,
     ])
 

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 from . import aliases
 from . import colors
 from . import custom_icons
+from . import i18n
 from . import icons
 from . import startup
 from . import taskbar
@@ -54,6 +55,7 @@ def apply_appearance(cfg) -> None:
     elif palette == "mono":
         palette = "classic"
     colors.set_palette(palette, cfg.get("custom_colors"))
+    i18n.apply_language_setting(cfg.get("language"))
     setter = getattr(icons, "set_icon_style", None)
     if setter is not None:
         setter(cfg.get("icon_style"))
@@ -125,7 +127,9 @@ class TrayController(QObject):
         """The Settings tree shown inside the device panel (see settings_model / settings_view)."""
         return build_settings_model(self._cfg, SettingsCallbacks(
             set_bool=self._set_bool, set_threshold=self._set_threshold,
-            set_palette=self._set_palette, set_icon_style=self._set_icon_style, set_startup=self._set_startup,
+            set_palette=self._set_palette, set_icon_style=self._set_icon_style,
+            set_panel_size=self._set_panel_size, set_ui_scale=self._set_ui_scale,
+            set_language=self._set_language, set_startup=self._set_startup,
             open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
             open_detail_folder=self.open_detail_folder_requested.emit,
             startup_enabled=lambda: startup.is_enabled(),
@@ -207,6 +211,39 @@ class TrayController(QObject):
         self._cfg.set("icon_style", style)
         self._appearance_changed()
 
+    def _set_panel_size(self, size: str) -> None:
+        self._cfg.set("panel_size", size)
+        self._metrics_changed()
+
+    def _set_ui_scale(self, pct: int) -> None:
+        self._cfg.set("ui_scale", int(pct))
+        self._metrics_changed()
+
+    def _set_language(self, lang: str) -> None:
+        """Change the UI language live. Panel, Settings pages, pill tooltips, tray tooltip and menu are
+        redone now; an already open About / statistics window keeps its language until it is reopened."""
+        self._cfg.set("language", lang)
+        i18n.apply_language_setting(lang)
+        self._menu.clear()
+        self._build_menu()
+        if self._about is not None and not self._about.isVisible():
+            self._about.deleteLater()
+            self._about = None
+        if self._panel is not None:
+            self._panel.retranslate()
+        self._update_icon()
+        self._refresh_panel()
+        self.ui_settings_changed.emit()
+
+    def _metrics_changed(self) -> None:
+        """Panel size / interface scale changed: reshape the open panel now and re-lay out the pills."""
+        self._apply_panel_metrics()
+        self.ui_settings_changed.emit()
+
+    def _apply_panel_metrics(self) -> None:
+        if self._panel is not None:
+            self._panel.set_metrics(self._cfg.get("panel_size"), self._cfg.get("ui_scale"))
+
     def open_custom_icons(self) -> None:
         """Custom icons dialog: OK saves both maps and redraws; Cancel only removes orphan imports."""
         from PySide6.QtWidgets import QDialog
@@ -245,6 +282,7 @@ class TrayController(QObject):
             from .device_panel import DevicePanel
             self._panel = DevicePanel(dark=self._dark, show_logging=True)
             self._panel.set_settings_model(self._settings)
+            self._apply_panel_metrics()
             self._panel.visibility_toggled.connect(self._on_visibility)
             self._panel.show_disconnected_toggled.connect(self._on_show_disconnected)
             self._panel.show_all_requested.connect(self._on_show_all)
