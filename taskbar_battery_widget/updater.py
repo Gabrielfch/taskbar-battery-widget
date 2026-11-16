@@ -107,6 +107,7 @@ class Release:
     tag: str                         # "v1.3.1"
     page_url: str                    # release page on GitHub
     assets: dict = field(default_factory=dict)       # name -> validated download URL
+    body: str = ""                   # release notes (Markdown), sanitised by sanitize_body
 
     @property
     def installer_name(self) -> str:
@@ -117,6 +118,21 @@ class Release:
         """Everything needed for a verified in-app update is present (including a way to verify it)."""
         return (self.installer_name in self.assets and SUMS_NAME in self.assets
                 and SIG_NAME in self.assets and bool(usable_public_keys()))
+
+
+MAX_BODY_CHARS = 20_000
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+
+
+def sanitize_body(value) -> str:
+    """Release notes from the API: a str of at most MAX_BODY_CHARS characters without control characters.
+
+    Line breaks and tabs are kept (CRLF becomes LF); anything that is not a str gives "".
+    """
+    if not isinstance(value, str):
+        return ""
+    text = value.replace("\r\n", "\n").replace("\r", "\n")
+    return _CONTROL_RE.sub("", text)[:MAX_BODY_CHARS].strip()
 
 
 def installer_asset_name(version: str) -> str:
@@ -162,7 +178,8 @@ def parse_release(data) -> Release | None:
         name, url = a.get("name"), a.get("browser_download_url")
         if name in (SUMS_NAME, SIG_NAME, installer_asset_name(version)) and is_valid_asset_url(url, tag, name):
             assets[name] = url
-    return Release(version=version, tag=tag, page_url=release_page_url(tag), assets=assets)
+    return Release(version=version, tag=tag, page_url=release_page_url(tag), assets=assets,
+                   body=sanitize_body(data.get("body")))
 
 
 # ------------------------------------------------------------------ network plumbing

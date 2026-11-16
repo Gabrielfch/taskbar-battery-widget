@@ -57,10 +57,16 @@ LEGAL = [
     (str(ROOT / n), ".") for n in ("LICENSE", "THIRD_PARTY_NOTICES.md") if ONEFILE and (ROOT / n).is_file()
 ]
 
+# Release notes shown by "What's new" (whats_new.local_notes reads <bundle>/docs/release-notes/v<version>.md).
+NOTES = [
+    (str(f), "docs/release-notes")
+    for f in sorted((ROOT / "docs" / "release-notes").glob("v*.md"))
+]
+
 a = Analysis(
     [str(SPEC_DIR / "app_entry.py")],
     pathex=[str(ROOT)],
-    datas=LEGAL,
+    datas=LEGAL + NOTES,
     hiddenimports=hiddenimports,
     excludes=EXCLUDES,
     noarchive=False,

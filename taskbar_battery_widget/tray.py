@@ -117,6 +117,26 @@ class TrayController(QObject):
         self._about.raise_()
         self._about.activateWindow()
 
+    # ---- tutorial / what's new
+    def open_tutorial(self) -> None:
+        """The six-step tour (first run, or Settings > Tutorial)."""
+        from .tutorial import show_tutorial
+        show_tutorial(self._cfg)
+
+    def open_whats_new(self, notes: str | None = None) -> None:
+        """Notes of the running version (read locally); a short message when this build has none."""
+        from . import __version__, whats_new
+        text = whats_new.local_notes(__version__) if notes is None else notes
+        if text:
+            whats_new.show_whats_new(__version__, text)
+            return
+        from PySide6.QtWidgets import QMessageBox
+        from .dialogs import app_dialog_guard
+        box = QMessageBox(QMessageBox.Icon.Information, tr("whatsnew_title", version=__version__),
+                          tr("whatsnew_missing"), QMessageBox.StandardButton.Ok)
+        with app_dialog_guard():
+            box.exec()
+
     def set_available_release(self, rel) -> None:
         self._release = rel
         if self._about is not None:
@@ -136,6 +156,7 @@ class TrayController(QObject):
             set_placement=self._set_placement, set_monitor=self._set_monitor,
             reset_position=self._reset_position, list_screens=self._list_screens,
             open_custom_icons=self.open_custom_icons,
+            open_tutorial=lambda: self.open_tutorial(), open_whats_new=lambda: self.open_whats_new(),
             set_floating_anchor=self._set_floating_anchor, current_key=self._current_key,
             icons_centered=self._icons_centered, monitor_has_taskbar=self._monitor_has_taskbar))
 

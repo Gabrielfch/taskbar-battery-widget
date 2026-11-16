@@ -39,6 +39,8 @@ class SettingsCallbacks:
     set_panel_size: Callable[[str], None] = lambda size: None       # one of config.PANEL_SIZES
     set_ui_scale: Callable[[int], None] = lambda pct: None          # one of config.UI_SCALES
     set_language: Callable[[str], None] = lambda lang: None         # one of config.LANGUAGES
+    open_tutorial: Callable[[], None] = lambda: None                # the six-step tour
+    open_whats_new: Callable[[], None] = lambda: None               # notes of the running version
 
 
 # ------------------------------------------------------------------ nodes
@@ -289,5 +291,7 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
         Toggle(id="start_with_windows", label_key="start_with_windows", get=startup_state,
                set=lambda v: cb.set_startup(bool(v))),
         personalization,
+        Action(id="tutorial", label_key="tutorial_menu", run=lambda: cb.open_tutorial()),
+        Action(id="whats_new", label_key="whatsnew_menu", run=lambda: cb.open_whats_new()),
     ])
     return SettingsModel(root, cb)

@@ -252,7 +252,21 @@ def open_detail_log(logger, devices, key: str, open_path, open_file=None) -> Non
     open_path(path.parent)
 
 
-APP_USER_MODEL_ID = "Gabrielfch.TaskbarBatteryWidget"
+STARTUP_GUIDE_DELAY_MS = 1500
+
+
+def show_startup_guide(tray, plan) -> None:
+    """First run: the tutorial. After an update: the notes of the new version. Never raises."""
+    try:
+        if plan.tutorial:
+            tray.open_tutorial()
+        elif plan.show_notes:
+            tray.open_whats_new(plan.notes)
+    except Exception:
+        log.exception("startup guide failed")
+
+
+APP_USER_MODEL_ID ="Gabrielfch.TaskbarBatteryWidget"
 
 
 def set_app_identity(app) -> None:
@@ -444,6 +458,13 @@ def main() -> int:
     estimator.start()
     monitor.start()
     auto_updates.start()
+    try:
+        from . import whats_new
+        plan = whats_new.plan_startup(cfg)
+        if plan.tutorial or plan.show_notes:      # after the widget is up: never delays the start
+            QTimer.singleShot(STARTUP_GUIDE_DELAY_MS, lambda: show_startup_guide(tray, plan))
+    except Exception:
+        log.exception("could not plan the startup guide")
     return app.exec()
 
 

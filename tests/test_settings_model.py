@@ -45,7 +45,7 @@ OLD_MENU = {
     "personalization": {"palette", "icon_style", "custom_icons", "position",
                         "panel_size", "ui_scale", "language"},
     "position": {"placement", "float_anchor", "monitor", "show_in_fullscreen", "reset_position"},
-    "root": {"sources", "alerts", "logs", "start_with_windows", "personalization"},
+    "root": {"sources", "alerts", "logs", "start_with_windows", "personalization", "tutorial", "whats_new"},
 }
 
 
@@ -60,7 +60,7 @@ def test_parity_with_old_menu():
              Choice: {"low_threshold", "palette", "icon_style", "placement", "float_anchor", "monitor",
                        "panel_size", "ui_scale", "language"},
              Action: {"open_device_log", "open_logs_folder", "open_detail_folder", "custom_icons",
-                      "reset_position"}}
+                      "reset_position", "tutorial", "whats_new"}}
     for kind, ids in kinds.items():
         assert {n.id for n in m.walk() if isinstance(n, kind)} == ids
     ids = [n.id for n in m.walk()]

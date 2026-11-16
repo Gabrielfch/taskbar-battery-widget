@@ -13,9 +13,9 @@ from PySide6 import __version__ as pyside_version
 from PySide6.QtCore import QObject, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPalette
 from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout)
+                               QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
-from . import __version__, updater
+from . import __version__, updater, whats_new
 from .dialogs import app_dialog_guard
 from .i18n import tr
 from .icons import make_tray_icon
@@ -118,6 +118,14 @@ class AboutDialog(QDialog):
         self._build()
         if release is not None:
             self.set_release(release)
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        """Tall enough for the content, but never taller than the screen (the content scrolls)."""
+        want = self._content.sizeHint().height() + 4
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        cap = screen.availableGeometry().height() - 90 if screen is not None else want
+        self.resize(max(self.width(), 480), max(self.height(), min(want, cap)))
 
     # ------------------------------------------------------------------ layout
     def _label(self, text: str = "", name: str | None = None, wrap: bool = True) -> QLabel:
@@ -141,7 +149,17 @@ class AboutDialog(QDialog):
         return f'<a href="{html.escape(url, quote=True)}">{html.escape(text)}</a>'
 
     def _build(self) -> None:
-        root = QVBoxLayout(self)
+        # the content scrolls when the screen is too short for it (the news area makes the dialog taller)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._content = QWidget()
+        scroll.setWidget(self._content)
+        outer.addWidget(scroll)
+        root = QVBoxLayout(self._content)
         root.setSpacing(10)
 
         head = QHBoxLayout()
@@ -226,6 +244,22 @@ class AboutDialog(QDialog):
         self.progress.hide()
         root.addWidget(self.progress)
 
+        # news of the available version, shown before downloading anything
+        self.notes_title = QLabel()
+        self.notes_title.hide()
+        root.addWidget(self.notes_title)
+        self.notes_browser = whats_new.make_notes_browser("", self)
+        self.notes_browser.setMinimumHeight(96)
+        self.notes_browser.setMaximumHeight(150)
+        self.notes_browser.hide()
+        root.addWidget(self.notes_browser)
+        self.notes_link = self._label("", "notes_link")
+        self.notes_link.setTextFormat(Qt.TextFormat.RichText)
+        self.notes_link.linkActivated.connect(open_url)
+        self._style_links(self.notes_link)
+        self.notes_link.hide()
+        root.addWidget(self.notes_link)
+
         buttons = QHBoxLayout()
         self.check_button = QPushButton(tr("about_check"))
         self.check_button.clicked.connect(self.check_now)
@@ -299,6 +333,7 @@ class AboutDialog(QDialog):
         self.notes_button.setVisible(show)
         self.install_button.setVisible(False)
         self.hint_label.setVisible(False)
+        self._show_notes(rel)
         if rel is None:
             return
         self._set_status(tr("upd_new", version=rel.version))
@@ -314,6 +349,25 @@ class AboutDialog(QDialog):
             self.hint_label.show()
         else:
             self.install_button.setVisible(True)
+
+    def _show_notes(self, rel: updater.Release | None) -> None:
+        """"What's new in X.Y.Z" under the status line (or a link to the release when it has no notes)."""
+        body = whats_new.strip_images(rel.body) if rel is not None else ""
+        self.notes_title.setVisible(bool(rel is not None and body))
+        self.notes_browser.setVisible(bool(body))
+        self.notes_link.setVisible(rel is not None and not body)
+        if rel is None:
+            self.notes_browser.clear()
+            return
+        if body:
+            title = tr("whatsnew_title", version=rel.version)
+            self.notes_title.setText(f"<b>{html.escape(title)}</b>")
+            self.notes_title.setAccessibleName(title)
+            self.notes_browser.setAccessibleName(title)
+            self.notes_browser.setMarkdown(body)
+        else:
+            self.notes_link.setText(self._link("notes_release", rel.page_url, tr("upd_notes_github")))
+        self._fit_height()
 
     def _apply_pending(self) -> None:
         if self._pending_release is not None and not self._busy:
@@ -355,6 +409,13 @@ class AboutDialog(QDialog):
         box = QMessageBox(QMessageBox.Icon.Question, tr("upd_confirm_title"),
                           tr("upd_confirm", version=version),
                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
+        rel = self._release
+        if rel is not None and rel.version == version:
+            notes = whats_new.summary(rel.body)
+            if notes:
+                box.setInformativeText(f"{tr('whatsnew_title', version=version)}\n\n{notes}")
+            else:
+                box.setInformativeText(f"{tr('upd_notes_github')}\n{rel.page_url}")
         box.setDefaultButton(QMessageBox.StandardButton.No)
         with app_dialog_guard():
             return box.exec() == QMessageBox.StandardButton.Yes

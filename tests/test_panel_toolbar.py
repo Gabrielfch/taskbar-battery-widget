@@ -191,9 +191,9 @@ def test_tray_gear_shows_settings_page_and_keeps_panel(qapp, tmp_path):
     v = t._panel.settings_view
     assert v.title_text() == "Configuración"
     assert [r.rid for r in v.rows().values()] == ["sources", "alerts", "logs", "start_with_windows",
-                                                   "personalization"]
+                                                   "personalization", "tutorial", "whats_new"]
     assert [r._label for r in v.rows().values()] == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows",
-                                                     "Personalización"]
+                                                     "Personalización", "Tutorial", "Novedades"]
     t._panel.close()
 
 

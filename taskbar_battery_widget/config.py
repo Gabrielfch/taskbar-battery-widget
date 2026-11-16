@@ -47,6 +47,8 @@ DEFAULTS = {
     "panel_size": "normal",         # one of PANEL_SIZES: height of the device panel (share of the screen)
     "ui_scale": 100,                # one of UI_SCALES (percent): fonts, rows, buttons and pills
     "language": "auto",             # one of LANGUAGES: "auto" follows the system language
+    "last_seen_version": "",        # "X.Y.Z" of the last version whose news were handled ("" = never)
+    "tutorial_seen": False,         # the first-run tutorial was shown (finished or skipped)
 }
 
 MAX_HIDDEN = 200
@@ -71,6 +73,7 @@ FLOATING_ANCHORS = ("top-left", "top-center", "top-right", "middle-left", "middl
 MAX_FLOATING = 16                   # entries in floating_positions
 MAX_OFFSET = 10000                  # |dx| and |dy| are clamped to this
 MONITOR_KEY_RE = re.compile(r"[0-9a-f#]{1,40}")
+VERSION_RE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}")
 
 
 LEGACY_DIR = "BtBatteryBar"  # settings folder of the previous app name (migration only)
@@ -148,6 +151,8 @@ def _valid(key, value) -> bool:
         return isinstance(value, str) and value in PANEL_SIZES
     if key == "language":
         return isinstance(value, str) and value in LANGUAGES
+    if key == "last_seen_version":
+        return isinstance(value, str) and (value == "" or VERSION_RE.fullmatch(value) is not None)
     if key == "ui_scale":
         return _is_int(value) and value in UI_SCALES
     if key == "placement_mode":
@@ -225,6 +230,7 @@ class Config:
         else:
             self.path = default_path()
             migrate_legacy_config(self.path)
+        self.is_new = not self.path.exists()     # no settings file yet: first run of the app
         self._data = {k: _copy(v) for k, v in DEFAULTS.items()}
         self._load()
 

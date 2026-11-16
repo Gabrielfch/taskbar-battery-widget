@@ -110,7 +110,8 @@ def test_panel_keeps_position_and_width(panel):
 def test_root_rows_and_title(panel):
     v = open_settings(panel)
     assert v.title_text() == "Settings"
-    assert list(v.rows()) == ["sources", "alerts", "logs", "start_with_windows", "personalization"]
+    assert list(v.rows()) == ["sources", "alerts", "logs", "start_with_windows", "personalization", "tutorial",
+                              "whats_new"]
     assert all(r.height() >= dp.BTN_PX for r in v.rows().values())
     assert v.back_button().width() >= dp.BTN_PX and v.back_button().height() >= dp.BTN_PX
 
@@ -287,7 +288,7 @@ def test_keyboard_accordion(panel, env):
 def test_toolbar_up_reaches_settings_and_tab_chain(panel):
     v = open_settings(panel)
     key(panel._toolbar["quit"], Qt.Key.Key_Up)
-    assert panel.focusWidget() is v.row("personalization")
+    assert panel.focusWidget() is v.row("whats_new")          # last row of the root page
 
 
 def test_panel_closing_resets_to_devices(panel):
