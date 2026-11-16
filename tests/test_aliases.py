@@ -62,6 +62,21 @@ def test_config_set_sanitises_and_rejects(tmp_path):
         c.set("device_aliases", ["nope"])
 
 
+def test_set_alias_failure_logs_no_alias_values(tmp_path, caplog):
+    c = Config(tmp_path / "c.json")
+    secret = "SecretAliasName"
+    for i in range(200):
+        c._data["device_aliases"][visibility_key(str(i))] = secret
+    with caplog.at_level("DEBUG"):
+        assert set_alias(c, visibility_key("new"), "x") is False
+    assert caplog.records
+    assert secret not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records)
+    with pytest.raises(ValueError) as e:
+        c.set("device_aliases", {visibility_key(str(i)): secret for i in range(201)})
+    assert secret not in str(e.value)
+
+
 # ---------------------------------------------------------------- application
 def test_apply_and_remove(tmp_path):
     c = Config(tmp_path / "c.json")

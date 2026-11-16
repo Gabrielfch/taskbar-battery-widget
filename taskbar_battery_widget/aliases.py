@@ -49,7 +49,7 @@ def set_alias(cfg, key: str, alias: str) -> bool:
         aliases.pop(key, None)
     try:
         cfg.set("device_aliases", aliases)
-    except Exception:
-        log.exception("could not save the device alias")
+    except Exception as e:
+        log.warning("could not save the device alias (%s)", type(e).__name__)
         return False
     return True

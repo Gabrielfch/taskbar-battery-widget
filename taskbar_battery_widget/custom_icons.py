@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-import shutil
+import time
 from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt
 from PySide6.QtGui import QImageReader, QPainter, QPixmap
 
 from .device_history import base_dir
@@ -20,7 +20,9 @@ from .device_history import base_dir
 ALLOWED_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".ico", ".gif")
 MAX_BYTES = 2 * 1024 * 1024
 MAX_DIM = 2048
-_SAFE_NAME = re.compile(r"^[0-9a-f]{16}\.(png|jpg|jpeg|bmp|ico|gif)$")
+_SAFE_NAME = re.compile(r"[0-9a-f]{16}\.(png|jpg|jpeg|bmp|ico|gif)")
+_ALLOWED_FORMATS = {"png", "jpg", "jpeg", "bmp", "ico", "gif"}
+_TMP_MAX_AGE = 3600
 _CACHE_MAX = 128
 
 # Error codes (translate with the i18n keys of the same name).
@@ -44,7 +46,40 @@ def icons_dir() -> Path:
 
 
 def safe_name(value) -> bool:
-    return isinstance(value, str) and _SAFE_NAME.match(value) is not None
+    return isinstance(value, str) and _SAFE_NAME.fullmatch(value) is not None
+
+
+def _open_reader(data: bytes):
+    """(reader, buffer) over `data`; the buffer must outlive the reader."""
+    buf = QBuffer()
+    buf.setData(QByteArray(data))
+    buf.open(QIODevice.OpenModeFlag.ReadOnly)
+    reader = QImageReader(buf)
+    reader.setAutoTransform(False)
+    return reader, buf
+
+
+def _format_ok(reader) -> bool:
+    try:
+        return bytes(reader.format()).decode("ascii", "ignore").lower() in _ALLOWED_FORMATS
+    except Exception:
+        return False
+
+
+def _decode(data: bytes, err: str):
+    """Validate `data` (allowed raster format, size limits) and return the decoded QImage."""
+    reader, buf = _open_reader(data)
+    if not reader.canRead() or not _format_ok(reader):
+        raise IconImportError(err)
+    size = reader.size()
+    if size.isValid() and (size.width() > MAX_DIM or size.height() > MAX_DIM):
+        raise IconImportError(ERR_DIMENSIONS)
+    img = reader.read()
+    if img.isNull():
+        raise IconImportError(ERR_UNREADABLE)
+    if img.width() > MAX_DIM or img.height() > MAX_DIM:
+        raise IconImportError(ERR_DIMENSIONS)
+    return img
 
 
 def import_image(src) -> str:
@@ -62,18 +97,7 @@ def import_image(src) -> str:
         raise IconImportError(ERR_IO) from None
     if len(data) > MAX_BYTES:
         raise IconImportError(ERR_TOO_BIG)
-    reader = QImageReader(str(src))
-    reader.setAutoTransform(False)
-    if not reader.canRead():
-        raise IconImportError(ERR_UNREADABLE)
-    size = reader.size()
-    if size.isValid() and (size.width() > MAX_DIM or size.height() > MAX_DIM):
-        raise IconImportError(ERR_DIMENSIONS)
-    img = reader.read()
-    if img.isNull():
-        raise IconImportError(ERR_UNREADABLE)
-    if img.width() > MAX_DIM or img.height() > MAX_DIM:
-        raise IconImportError(ERR_DIMENSIONS)
+    img = _decode(data, ERR_UNREADABLE)
     name = hashlib.sha256(data).hexdigest()[:16] + ext
     try:
         d = icons_dir()
@@ -81,7 +105,7 @@ def import_image(src) -> str:
         dest = d / name
         if not dest.exists():
             tmp = d / (name + ".tmp")
-            shutil.copyfile(src, tmp)
+            tmp.write_bytes(data)       # the exact bytes that were validated (no second read of src)
             tmp.replace(dest)
     except OSError:
         raise IconImportError(ERR_IO) from None
@@ -127,6 +151,7 @@ def file_for(kind: str, key: str) -> str | None:
 # (filename, size_px, dpr) -> QPixmap ; failures: filename -> mtime_ns at failure
 _cache: OrderedDict = OrderedDict()
 _failed: dict = {}
+_usable: dict = {}
 
 
 def _mtime(path: Path) -> int | None:
@@ -139,6 +164,33 @@ def _mtime(path: Path) -> int | None:
 def clear_cache() -> None:
     _cache.clear()
     _failed.clear()
+    _usable.clear()
+
+
+def usable(filename: str) -> bool:
+    """Cheap check (one stat, no pixmap cached) that the file exists and decodes as an allowed image."""
+    try:
+        if not safe_name(filename):
+            return False
+        path = icons_dir() / filename
+        mt = _mtime(path)
+        if mt is None:
+            return False
+        if _failed.get(filename) == mt:
+            return False
+        if _usable.get(filename) == mt:
+            return True
+        try:
+            if path.stat().st_size > MAX_BYTES:
+                raise IconImportError(ERR_TOO_BIG)
+            _decode(path.read_bytes(), ERR_UNREADABLE)
+        except (IconImportError, OSError):
+            _failed[filename] = mt
+            return False
+        _usable[filename] = mt
+        return True
+    except Exception:
+        return False
 
 
 def pixmap_for(filename: str, size_px: int, dpr: float) -> QPixmap | None:
@@ -162,13 +214,9 @@ def pixmap_for(filename: str, size_px: int, dpr: float) -> QPixmap | None:
             _cache.move_to_end(key)
             return hit
         _failed.pop(filename, None)
-        reader = QImageReader(str(path))
-        sz = reader.size()
-        if not reader.canRead() or (sz.isValid() and (sz.width() > MAX_DIM or sz.height() > MAX_DIM)):
-            _failed[filename] = mt
-            return None
-        img = reader.read()
-        if img.isNull():
+        try:
+            img = _decode(path.read_bytes() if path.stat().st_size <= MAX_BYTES else b"", ERR_UNREADABLE)
+        except (IconImportError, OSError):
             _failed[filename] = mt
             return None
         px = max(1, int(round(size_px * dpr)))
@@ -220,16 +268,26 @@ def draw_custom_icon(painter: QPainter, rect, filename: str, opacity: float = 1.
 
 
 def cleanup_unused(used: set[str]) -> None:
+    """Delete our own image files not in `used`, plus stale ``*.tmp`` leftovers; nothing else."""
     try:
         d = icons_dir()
         if not d.is_dir():
             return
         keep = {u for u in used if isinstance(u, str)}
+        now = time.time()
         for f in d.iterdir():
-            if f.is_file() and f.name not in keep:
-                try:
+            try:
+                if not f.is_file():
+                    continue
+                if safe_name(f.name):
+                    doomed = f.name not in keep
+                elif f.suffix == ".tmp":
+                    doomed = now - f.stat().st_mtime > _TMP_MAX_AGE
+                else:
+                    doomed = False
+                if doomed:
                     f.unlink()
-                except OSError:
-                    pass
+            except OSError:
+                pass
     except OSError:
         pass

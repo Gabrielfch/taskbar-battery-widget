@@ -55,12 +55,16 @@ def test_ensure_contrast_lightens_on_dark_bg():
     assert colors.contrast_ratio(out, bg) >= 3.0
 
 
-def test_custom_palette_is_legible_in_both_themes():
-    colors.set_palette("custom", {"high": "#FFFF66", "medium": "#FFFF99", "low": "#202040"})
+@pytest.mark.parametrize("custom", (
+    {"high": "#FFFF66", "medium": "#FFFF99", "low": "#202040"},
+    {"high": "#808080", "medium": "#777777", "low": "#999999"},
+    {"high": "#7F7F7F", "medium": "#8A8A8A", "low": "#6E6E6E"}))
+def test_custom_palette_is_legible_in_both_themes(custom):
+    colors.set_palette("custom", custom)
     for dark in (True, False):
         for bg in colors.pill_backgrounds(dark).values():
             for band in ("green", "amber", "orange", "red"):
-                assert colors.contrast_ratio(colors.band_color(band, dark), bg) >= 3.0
+                assert colors.contrast_ratio(colors.band_color(band, dark), bg) >= 4.5
 
 
 def test_config_defaults_validation_and_migration(tmp_path):
@@ -81,6 +85,13 @@ def test_config_defaults_validation_and_migration(tmp_path):
                  encoding="utf-8")
     c2 = Config(p)
     assert c2.get("color_palette") == "pastel" and c2.get("icon_style") == "outline"
+
+
+def test_invalid_palette_with_mono_mode_keeps_mono(tmp_path):
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"color_mode": "mono", "color_palette": "neon"}), encoding="utf-8")
+    c = Config(p)
+    assert c.get("color_palette") == "mono" and c.get("color_mode") == "mono"
 
 
 def test_menu_radios_and_color_mode(qapp, tmp_path):

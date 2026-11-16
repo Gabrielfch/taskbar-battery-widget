@@ -1,7 +1,8 @@
 """Small dialog to pick the high / medium / low battery colours of the "custom" palette."""
 from __future__ import annotations
 
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (QColorDialog, QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout,
                                QLabel, QPushButton, QVBoxLayout)
 
@@ -80,7 +81,12 @@ class CustomColorsDialog(QDialog):
     def _refresh(self) -> None:
         pal = custom_palette(self._colors)
         for key, b in self._buttons.items():
-            b.setStyleSheet(f"border-left: 14px solid {self._colors[key]}; padding: 4px 10px;")
+            # swatch as the button icon: no stylesheet, so the native focus indicator stays visible
+            pm = QPixmap(14, 14)
+            pm.fill(QColor(self._colors[key]))
+            b.setIcon(QIcon(pm))
+            b.setIconSize(QSize(14, 14))
+            b.setAccessibleName(f"{tr('custom_' + key)} {self._colors[key]}")
         for lbl, band, kind, dark in self._pills:
             fg = QColor(*pal[band][0 if dark else 1])
             bg = pill_backgrounds(dark)[kind]

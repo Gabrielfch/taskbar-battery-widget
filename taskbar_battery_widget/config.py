@@ -233,11 +233,10 @@ class Config:
             elif key in raw and _valid(key, raw[key]):
                 self._data[key] = raw[key]
         migrated_beta = False
-        if "color_palette" not in raw and self._data["color_mode"] == "mono":
+        if not _valid("color_palette", raw.get("color_palette")) and self._data["color_mode"] == "mono":
             self._data["color_palette"] = "mono"        # pre-palette configs
             migrated_beta = True
-        if self._data["color_palette"] != "mono" and self._data["color_mode"] == "mono" \
-                and "color_palette" in raw:
+        if self._data["color_palette"] != "mono" and self._data["color_mode"] == "mono":
             self._data["color_mode"] = "levels"         # keep both keys consistent
         elif self._data["color_palette"] == "mono":
             self._data["color_mode"] = "mono"
@@ -274,6 +273,8 @@ class Config:
                 and len(value) <= MAX_CUSTOM_ICONS:
             value = clean_custom_icons(value, key == "custom_icons_kind")
         if not _valid(key, value):
+            if key in ("device_aliases", "custom_icons_kind", "custom_icons_device"):
+                raise ValueError(f"invalid value for {key!r}")      # never echo personal data
             raise ValueError(f"invalid value for {key!r}: {value!r}")
         if key == "floating_positions":
             value = _clean_floating(value)              # clamps dx/dy

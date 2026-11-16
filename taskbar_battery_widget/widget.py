@@ -464,7 +464,7 @@ class TaskbarWidget(QWidget):
         if pill.device is None:
             return None
         name = custom_icons.file_for(pill.kind, visibility_key(pill.device.id))
-        if name is None or custom_icons.pixmap_for(name, icon, 1.0) is None:
+        if name is None or not custom_icons.usable(name):
             return None
         return name
 

@@ -127,7 +127,7 @@ def custom_palette(custom) -> dict:
         for dark in (True, False):
             col = QColor(*c)
             for bg in pill_backgrounds(dark).values():
-                col = ensure_contrast(col, bg, 3.0)
+                col = ensure_contrast(col, bg, 4.5)
             variants.append((col.red(), col.green(), col.blue()))
         out[band] = tuple(variants)
     return out

@@ -138,6 +138,63 @@ def test_cleanup_unused(tmp_path):
     assert list(ci.icons_dir().iterdir()) == []
 
 
+_SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>'
+
+
+def test_reject_svg_disguised_as_png(tmp_path):
+    f = tmp_path / "evil.png"
+    f.write_bytes(_SVG)
+    with pytest.raises(ci.IconImportError) as e:
+        ci.import_image(f)
+    assert e.value.code in (ci.ERR_EXTENSION, ci.ERR_UNREADABLE)
+    assert not ci.icons_dir().exists() or list(ci.icons_dir().iterdir()) == []
+
+
+def test_reject_tiff_disguised_as_png(tmp_path):
+    img = QImage(8, 8, QImage.Format.Format_ARGB32)
+    img.fill(QColor("red"))
+    f = tmp_path / "t.tiff"
+    if not img.save(str(f), "TIFF"):
+        pytest.skip("no TIFF writer")
+    g = tmp_path / "t.png"
+    g.write_bytes(f.read_bytes())
+    with pytest.raises(ci.IconImportError) as e:
+        ci.import_image(g)
+    assert e.value.code in (ci.ERR_EXTENSION, ci.ERR_UNREADABLE)
+
+
+def test_pixmap_for_rejects_svg_content():
+    d = ci.icons_dir()
+    d.mkdir(parents=True)
+    name = "0123456789abcdef.png"
+    (d / name).write_bytes(_SVG)
+    assert ci.pixmap_for(name, 16, 1.0) is None
+    assert ci.usable(name) is False
+
+
+def test_safe_name_rejects_trailing_newline():
+    assert ci.safe_name("0123456789abcdef.png")
+    assert not ci.safe_name("0123456789abcdef.png\n")
+
+
+def test_cleanup_leaves_foreign_files(tmp_path):
+    n1 = ci.import_image(make_png(tmp_path / "a.png"))
+    d = ci.icons_dir()
+    (d / "notes.txt").write_text("mine")
+    (d / "photo.png").write_bytes(b"x")
+    (d / "sub").mkdir()
+    fresh = d / "aaaaaaaaaaaaaaaa.png.tmp"
+    fresh.write_bytes(b"x")
+    old = d / "bbbbbbbbbbbbbbbb.png.tmp"
+    old.write_bytes(b"x")
+    past = time.time() - 7200
+    os.utime(old, (past, past))
+    ci.cleanup_unused(set())
+    names = {f.name for f in d.iterdir()}
+    assert names == {"notes.txt", "photo.png", "sub", fresh.name}
+    assert n1 not in names
+
+
 def _pick(monkeypatch, path):
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
 

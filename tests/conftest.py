@@ -35,8 +35,10 @@ def _isolate_module_state():
         wireless.reset_cache()
         from taskbar_battery_widget import colors, icons
         colors.set_palette("classic")
-        if hasattr(icons, "set_icon_style"):
-            icons.set_icon_style("outline")
+        icons.set_icon_style("outline")
+        from taskbar_battery_widget import custom_icons
+        custom_icons.set_maps({}, {})
+        custom_icons.clear_cache()
 
     _reset()
     yield
