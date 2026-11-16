@@ -5,7 +5,7 @@ import logging
 import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy,
                                QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
@@ -40,6 +40,10 @@ HIDE_GRACE_S = 0.3        # a tray click this soon after the panel closed is the
 
 def _t(key: str, lang: str, **kw) -> str:
     return i18n.tr_in(lang, "panel_" + key if key != "show_all" else key, **kw)
+
+
+def _cursor_pos() -> QPoint:
+    return QCursor.pos()
 
 
 def _hex(c: QColor) -> str:
@@ -941,6 +945,15 @@ class DevicePanel(QFrame):
             self.activateWindow()
         edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
+    def _pointer_on_edit_extras(self) -> bool:
+        """True when the mouse is over the editing row's icon button or cross (a click there moves the focus
+        off the line edit before the button sees the click)."""
+        targets = [b for b in (self._edit_icon, self._edit_clear) if b is not None and b.isVisible()]
+        if not targets:
+            return False
+        pos = _cursor_pos()
+        return any(b.rect().contains(b.mapFromGlobal(pos)) for b in targets)
+
     def _check_edit_focus(self) -> None:
         """Focus left the editor by keyboard: the edit ends unless it went to the row's icon buttons."""
         if self._edit is None or self._modal:
@@ -976,6 +989,8 @@ class DevicePanel(QFrame):
                 if reason in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason):
                     QTimer.singleShot(0, self._check_edit_focus)    # may just be going to the icon buttons
                     return False
+                if self._pointer_on_edit_extras():
+                    return False        # the click is for the row icon / cross: keep editing (they open a dialog)
                 self._finish_edit(True)
             return False
         if self._edit is not None and obj is not None and obj in (self._edit_icon, self._edit_clear):

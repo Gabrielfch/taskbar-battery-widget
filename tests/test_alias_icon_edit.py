@@ -116,6 +116,27 @@ def test_popup_focus_out_does_not_save(panel):
     assert panel._edit is None and saved == [(KEY, "typed")]
 
 
+def test_mouse_focus_out_onto_icon_keeps_editing(panel, monkeypatch):
+    """Regression: a click on the row icon moved the focus off the editor first, which ended the edit and
+    removed the icon button before it saw the click, so the file dialog never opened."""
+    edit = start(panel)
+    edit.setText("typed")
+    QTest.qWait(20)                     # the inserted buttons are shown on the next event loop pass
+    icon = panel._edit_icon
+    centre = icon.mapToGlobal(icon.rect().center())
+    monkeypatch.setattr(dp, "_cursor_pos", lambda: centre)
+    focus_out(edit, Qt.FocusReason.MouseFocusReason)
+    assert panel._edit is edit and panel._edit_icon is icon and edit.text() == "typed"
+    got = []
+    panel.icon_change_requested.connect(got.append)
+    icon.click()
+    assert got == [KEY]
+    far = panel.mapToGlobal(panel.rect().bottomRight()) + QPoint(200, 200)
+    monkeypatch.setattr(dp, "_cursor_pos", lambda: far)
+    focus_out(edit, Qt.FocusReason.MouseFocusReason)
+    assert panel._edit is None          # a click anywhere else still ends the edit
+
+
 def test_hide_with_open_editor_saves_and_unblocks(panel):
     edit = start(panel)
     edit.setText("hidden")
