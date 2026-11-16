@@ -9,7 +9,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .models import is_visibility_key, visibility_key
+from .custom_icons import safe_name as _safe_icon_name
+from .models import KINDS, is_visibility_key, visibility_key
 from .naming import sanitize_name
 
 DEFAULTS = {
@@ -32,6 +33,8 @@ DEFAULTS = {
     "custom_colors": {"high": "#6EDC78", "medium": "#F5C842", "low": "#FF9999"},
     "icon_style": "outline",        # one of ICON_STYLES
     "device_aliases": {},           # visibility key -> user-chosen display name (see aliases.py)
+    "custom_icons_kind": {},        # device kind -> imported image file name (see custom_icons.py)
+    "custom_icons_device": {},      # visibility key -> imported image file name
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)
@@ -44,6 +47,7 @@ DEFAULTS = {
 
 MAX_HIDDEN = 200
 MAX_ALIASES = 200
+MAX_CUSTOM_ICONS = 200
 MAX_ALIAS_LEN = 48
 MAX_DETAIL_DEVICES = 50
 MAX_TIMESTAMP = 4_102_444_800       # year 2100
@@ -145,6 +149,10 @@ def _valid(key, value) -> bool:
         return (isinstance(value, dict) and len(value) <= MAX_ALIASES
                 and all(is_visibility_key(k) and isinstance(v, str) and 0 < len(v) <= MAX_ALIAS_LEN
                         and v == sanitize_name(v, MAX_ALIAS_LEN) for k, v in value.items()))
+    if key in ("custom_icons_kind", "custom_icons_device"):
+        ok_key = (lambda k: k in KINDS) if key == "custom_icons_kind" else is_visibility_key
+        return (isinstance(value, dict) and len(value) <= MAX_CUSTOM_ICONS
+                and all(isinstance(k, str) and ok_key(k) and _safe_icon_name(v) for k, v in value.items()))
     if key in ("hidden_devices", "detail_log_devices"):
         limit = MAX_HIDDEN if key == "hidden_devices" else MAX_DETAIL_DEVICES
         return (isinstance(value, list) and len(value) <= limit
@@ -181,6 +189,21 @@ def clean_aliases(value) -> dict:
     return out
 
 
+def clean_custom_icons(value, by_kind: bool) -> dict:
+    """Sanitised copy of custom_icons_kind / custom_icons_device: bad keys/file names dropped."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict = {}
+    for k, v in value.items():
+        if len(out) >= MAX_CUSTOM_ICONS:
+            break
+        if not isinstance(k, str) or not (k in KINDS if by_kind else is_visibility_key(k)):
+            continue
+        if _safe_icon_name(v):
+            out[k] = v
+    return out
+
+
 class Config:
     def __init__(self, path=None):
         if path:
@@ -203,6 +226,8 @@ class Config:
         for key in DEFAULTS:
             if key == "device_aliases":
                 self._data[key] = clean_aliases(raw.get(key))
+            elif key in ("custom_icons_kind", "custom_icons_device"):
+                self._data[key] = clean_custom_icons(raw.get(key), key == "custom_icons_kind")
             elif key == "floating_positions" and isinstance(raw.get(key), dict):
                 self._data[key] = _clean_floating(raw[key])    # bad entries dropped, the rest kept
             elif key in raw and _valid(key, raw[key]):
@@ -245,6 +270,9 @@ class Config:
             value = value[:MAX_DETAIL_DEVICES]      # over the limit: truncate instead of raising into the UI
         if key == "device_aliases" and isinstance(value, dict) and len(value) <= MAX_ALIASES:
             value = clean_aliases(value)
+        if key in ("custom_icons_kind", "custom_icons_device") and isinstance(value, dict) \
+                and len(value) <= MAX_CUSTOM_ICONS:
+            value = clean_custom_icons(value, key == "custom_icons_kind")
         if not _valid(key, value):
             raise ValueError(f"invalid value for {key!r}: {value!r}")
         if key == "floating_positions":

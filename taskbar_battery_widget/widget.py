@@ -14,6 +14,7 @@ from PySide6.QtGui import (QAccessible, QAccessibleEvent, QColor, QCursor, QFont
                            QPainterPath, QPen)
 from PySide6.QtWidgets import QMenu, QWidget
 
+from . import custom_icons
 from . import taskbar
 from .colors import TASKBAR_BASE, band_color, battery_color, pill_tint, row_style
 from .config import FLOATING_ANCHORS
@@ -457,6 +458,16 @@ class TaskbarWidget(QWidget):
             return lc
         return band_color("red", dark) if pill.alert else fg
 
+    @staticmethod
+    def _custom_file(pill: _Pill, icon: int) -> str | None:
+        """User image for this pill (device > kind) if one is set and loads; else None (built-in icon)."""
+        if pill.device is None:
+            return None
+        name = custom_icons.file_for(pill.kind, visibility_key(pill.device.id))
+        if name is None or custom_icons.pixmap_for(name, icon, 1.0) is None:
+            return None
+        return name
+
     def _pill_width(self, p: _Pill, fm: QFontMetrics, icon: int, bolt: int) -> int:
         tw = fm.horizontalAdvance(("!" if p.warn else "") + p.text)
         if p.kind == "overflow":
@@ -464,7 +475,7 @@ class TaskbarWidget(QWidget):
         style = get_icon_style()
         own_bolt = p.charging and style != "battery"     # the battery icon draws its own bolt
         extra = (bolt if own_bolt else 0) + (MOON_W + 3 if p.idle else 0)
-        if style == "none":
+        if style == "none" and self._custom_file(p, icon) is None:
             return pill_width(tw, 0, extra, gap=0)
         return pill_width(tw, icon, extra)
 
@@ -885,7 +896,11 @@ class TaskbarWidget(QWidget):
             elif pill.idle:
                 icon_color = QColor(icon_color)
                 icon_color.setAlpha(IDLE_ALPHA)
-            if style == "none":
+            custom = self._custom_file(pill, icon)
+            if custom is not None:      # user image: drawn in every style (also "none"), dimmed like the icon
+                custom_icons.draw_custom_icon(p, ir, custom, icon_color.alphaF())
+                text_x = x + PAD + icon + ICON_GAP
+            elif style == "none":
                 text_x = x + PAD
             else:
                 if style in ("battery", "retro") and level_color is not None:

@@ -200,6 +200,14 @@ EN = {
     "kind_pen": "Pen", "kind_remote": "Remote", "kind_microphone": "Microphone",
     "kind_camera": "Camera", "kind_tv": "TV", "kind_car": "Car",
     "kind_printer": "Printer", "kind_generic": "Device",
+    "icon_err_extension": "Unsupported format. Use PNG, JPG, BMP, ICO or GIF.",
+    "icon_err_too_big": "The image is larger than 2 MB.",
+    "icon_err_dimensions": "The image is larger than 2048x2048 pixels.",
+    "icon_err_unreadable": "The image could not be read (corrupt or invalid file).",
+    "icon_err_io": "The file could not be accessed or copied.",
+    "custom_icons_title": "Custom icons", "custom_icons_menu": "Custom icons…",
+    "custom_icons_tab_kind": "By type", "custom_icons_tab_device": "By device",
+    "custom_icons_choose": "Choose image…", "custom_icons_remove": "Remove",
 }
 
 ES = {
@@ -389,6 +397,14 @@ ES = {
     "kind_pen": "Lápiz", "kind_remote": "Control remoto", "kind_microphone": "Micrófono",
     "kind_camera": "Cámara", "kind_tv": "TV", "kind_car": "Coche",
     "kind_printer": "Impresora", "kind_generic": "Dispositivo",
+    "icon_err_extension": "Formato no admitido. Usa PNG, JPG, BMP, ICO o GIF.",
+    "icon_err_too_big": "La imagen supera los 2 MB.",
+    "icon_err_dimensions": "La imagen supera 2048x2048 píxeles.",
+    "icon_err_unreadable": "No se pudo leer la imagen (archivo dañado o no válido).",
+    "icon_err_io": "No se pudo acceder al archivo o copiarlo.",
+    "custom_icons_title": "Iconos personalizados", "custom_icons_menu": "Iconos personalizados…",
+    "custom_icons_tab_kind": "Por tipo", "custom_icons_tab_device": "Por dispositivo",
+    "custom_icons_choose": "Elegir imagen…", "custom_icons_remove": "Quitar",
 }
 
 _TABLES = {"en": EN, "es": ES}

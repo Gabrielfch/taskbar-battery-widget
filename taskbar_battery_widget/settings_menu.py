@@ -34,6 +34,7 @@ class SettingsCallbacks:
     current_key: Callable[[], object] = lambda: None                # monitor key the widget is on
     icons_centered: Callable[[], object] = lambda: True             # True / False / None (unknown)
     monitor_has_taskbar: Callable[[], bool] = lambda: True          # does the widget's monitor have a taskbar
+    open_custom_icons: Callable[[], None] = lambda: None            # custom icon images dialog
 
 
 @dataclass
@@ -48,6 +49,7 @@ class SettingsMenu:
     palette_actions: dict = field(default_factory=dict)     # palette name -> action
     icon_actions: dict = field(default_factory=dict)        # icon style -> action
     reset_action: object = None
+    custom_icons_action: object = None
     anchor_menu: object = None
     position_menu: object = None
     monitor_menu: object = None
@@ -137,6 +139,8 @@ def build_settings_menu(parent: QMenu, cfg, cb: SettingsCallbacks) -> SettingsMe
                       lambda: effective_palette(cfg), cb.set_palette)
     _build_radio_menu(sm, pers, tr("menu_icon_style"), ICON_STYLES, "icon_", sm.icon_actions,
                       lambda: cfg.get("icon_style"), cb.set_icon_style)
+    sm.custom_icons_action = pers.addAction(tr("custom_icons_menu"))
+    sm.custom_icons_action.triggered.connect(lambda _c=False: cb.open_custom_icons())
     _build_position_menu(sm, pers, cfg, cb)
     return sm
 

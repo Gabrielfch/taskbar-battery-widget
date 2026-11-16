@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixm
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
                                QToolButton, QVBoxLayout, QWidget)
 
-from . import i18n, taskbar
+from . import custom_icons, i18n, taskbar
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
 from .icons import (about_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon,
                     refresh_icon, show_all_icon)
@@ -38,8 +38,9 @@ def _hex(c: QColor) -> str:
 
 
 def _kind_pixmap(kind: str, color: QColor, dpr: float, level: int | None = None,
-                 charging: bool = False) -> QPixmap:
-    """Row icon; the "none" style (widget only) falls back to outline: the panel needs the kind."""
+                 charging: bool = False, key: str = "") -> QPixmap:
+    """Row icon; the "none" style (widget only) falls back to outline: the panel needs the kind.
+    A user image (device > kind) replaces the built-in icon; the colour's alpha is its opacity."""
     style = get_icon_style()
     if style == "none":
         style = "outline"
@@ -48,7 +49,10 @@ def _kind_pixmap(kind: str, color: QColor, dpr: float, level: int | None = None,
     pm.fill(Qt.GlobalColor.transparent)
     pm.setDevicePixelRatio(dpr)
     p = QPainter(pm)
-    draw_kind_icon(p, kind, QRectF(0, 0, ICON_PX, ICON_PX), color, level, charging, style)
+    rect = QRectF(0, 0, ICON_PX, ICON_PX)
+    custom = custom_icons.file_for(kind, key)
+    if not (custom and custom_icons.draw_custom_icon(p, rect, custom, color.alphaF())):
+        draw_kind_icon(p, kind, rect, color, level, charging, style)
     p.end()
     return pm
 
@@ -145,8 +149,8 @@ class DevicePanel(QFrame):
         """Show `model`; rebuilds only when something visible changed and keeps scroll/focus."""
         logging_keys = frozenset(logging_keys or ())
         lang = i18n.get_language()
-        sig = (model.signature, self._dark, lang, get_icon_style(), self.show_logging,
-               logging_keys if self.show_logging else frozenset())
+        sig = (model.signature, self._dark, lang, get_icon_style(), custom_icons.maps_version(),
+               self.show_logging, logging_keys if self.show_logging else frozenset())
         self._model = model
         self._logging_keys = logging_keys
         self.setAccessibleName(i18n.tr("devices"))
@@ -328,7 +332,7 @@ class DevicePanel(QFrame):
             icon_color.setAlpha(DIM_ALPHA)
         dpr = self.devicePixelRatioF() or 1.0
         icon = QLabel()
-        icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr, row.battery, row.charging))
+        icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr, row.battery, row.charging, row.key))
         icon.setFixedSize(ICON_PX, ICON_PX)
         h.addWidget(icon)
 

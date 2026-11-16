@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from . import aliases
 from . import colors
+from . import custom_icons
 from . import icons
 from . import startup
 from . import taskbar
@@ -57,6 +58,7 @@ def apply_appearance(cfg) -> None:
     setter = getattr(icons, "set_icon_style", None)
     if setter is not None:
         setter(cfg.get("icon_style"))
+    custom_icons.set_maps(cfg.get("custom_icons_kind"), cfg.get("custom_icons_device"))
 
 
 class TrayController(QObject):
@@ -130,6 +132,7 @@ class TrayController(QObject):
             startup_enabled=lambda: startup.is_enabled(),
             set_placement=self._set_placement, set_monitor=self._set_monitor,
             reset_position=self._reset_position, list_screens=self._list_screens,
+            open_custom_icons=self.open_custom_icons,
             set_floating_anchor=self._set_floating_anchor, current_key=self._current_key,
             icons_centered=self._icons_centered, monitor_has_taskbar=self._monitor_has_taskbar))
         acts = self._settings.actions
@@ -207,6 +210,25 @@ class TrayController(QObject):
     def _set_icon_style(self, style: str) -> None:
         self._cfg.set("icon_style", style)
         self._appearance_changed()
+
+    def open_custom_icons(self) -> None:
+        """Custom icons dialog: OK saves both maps and redraws; Cancel only removes orphan imports."""
+        from PySide6.QtWidgets import QDialog
+        from .custom_icons_dialog import CustomIconsDialog
+        from .models import visibility_key
+        devices = [(visibility_key(d.id), d.name, d.kind) for d in self._devices]
+        dlg = CustomIconsDialog(self._cfg.get("custom_icons_kind"), self._cfg.get("custom_icons_device"),
+                                devices, tr=tr)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            by_kind, by_device = dlg.result_maps()
+            try:
+                self._cfg.set("custom_icons_kind", by_kind)
+                self._cfg.set("custom_icons_device", by_device)
+            except ValueError:
+                log.exception("could not save the custom icons")
+            self._appearance_changed()
+        custom_icons.cleanup_unused(set(self._cfg.get("custom_icons_kind").values())
+                                    | set(self._cfg.get("custom_icons_device").values()))
 
     def _appearance_changed(self) -> None:
         apply_appearance(self._cfg)
