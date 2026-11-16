@@ -6,7 +6,7 @@ import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixmap
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QStackedWidget,
                                QToolButton, QVBoxLayout, QWidget)
 
 from . import custom_icons, i18n, taskbar
@@ -84,12 +84,12 @@ class DevicePanel(QFrame):
     alias_changed = Signal(str, str)        # visibility key, new alias ("" = back to the real name)
     open_log_requested = Signal(str)
     refresh_requested = Signal()
-    settings_requested = Signal(QRect)      # global rect of the gear button
+    settings_requested = Signal(QRect)      # global rect of the gear button; the tray answers with show_settings()
     about_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self, parent=None, dark: bool | None = None, show_logging: bool = False):
-        # Not a Qt.Popup: the Settings menu and the About dialog must open above the panel without
+        # Not a Qt.Popup: the About dialog and the other windows must open above the panel without
         # closing it. "Click outside" is emulated with the application-state check below.
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
                          | Qt.WindowType.WindowStaysOnTopHint)
@@ -118,6 +118,9 @@ class DevicePanel(QFrame):
         self._content: QWidget | None = None
         self._screen_avail: QRect | None = None
         self._posted_hwnd = 0
+        self._edge = "bottom"                    # screen edge the panel was opened from
+        self._settings_view = None               # SettingsView, created on the first show_settings()
+        self._settings_model = None
 
         self._scroll = QScrollArea(self)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -132,7 +135,9 @@ class DevicePanel(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(4)
-        lay.addWidget(self._scroll)
+        self._stack = QStackedWidget(self)       # page 0: device list, page 1: Settings
+        self._stack.addWidget(self._scroll)
+        lay.addWidget(self._stack)
         lay.addWidget(self._toolbar_widget)
         self._apply_style()
 
@@ -141,6 +146,8 @@ class DevicePanel(QFrame):
         if bool(dark) != self._dark:
             self._dark = bool(dark)
             self._apply_style()
+            if self._settings_view is not None:
+                self._settings_view.set_dark(self._dark)
             self._sig = None
             if self._model is not None:
                 self.set_model(self._model, self._logging_keys)
@@ -178,6 +185,7 @@ class DevicePanel(QFrame):
         x, y = place_popup((rect.x(), rect.y(), rect.width(), rect.height()),
                            (self.width(), self.height()),
                            (avail.x(), avail.y(), avail.width(), avail.height()), edge=edge)
+        self._edge = edge
         self.move(x, y)
         self.show()
         self.raise_()
@@ -187,8 +195,80 @@ class DevicePanel(QFrame):
         self._show_gen += 1
         gen = self._show_gen
         QTimer.singleShot(ARM_FALLBACK_MS, lambda: self._arm_fallback(gen, 0))
-        first =self._nav[0] if self._nav else self
-        first.setFocus(Qt.FocusReason.PopupFocusReason)
+        if self.in_settings:
+            self._settings_view.focus_first()
+        else:
+            first = self._nav[0] if self._nav else self
+            first.setFocus(Qt.FocusReason.PopupFocusReason)
+
+    # ------------------------------------------------------------------ settings page
+    @property
+    def in_settings(self) -> bool:
+        return self._settings_view is not None and self._stack.currentWidget() is self._settings_view
+
+    @property
+    def settings_view(self):
+        return self._settings_view
+
+    def set_settings_model(self, model) -> None:
+        """The Settings tree the gear shows (built by the tray); an open page re-reads it."""
+        self._settings_model = model
+        if self._settings_view is not None:
+            self._settings_view.set_model(model)
+
+    def show_settings(self, page_id: str = "root") -> None:
+        """Replace the device list by the Settings page `page_id` (default: the root page)."""
+        if self._settings_model is None:
+            return
+        if self._edit is not None:
+            self._finish_edit(True)
+        if self._settings_view is None:
+            from .settings_view import SettingsView
+            v = SettingsView(self._settings_model, self._dark)
+            v.leave_requested.connect(self.show_devices)
+            v.layout_changed.connect(self._on_settings_layout)
+            v.rebuilt.connect(self._chain_settings_tab_order)
+            self._settings_view = v
+            self._stack.addWidget(v)
+        self._settings_view.show_page(page_id)
+        self._stack.setCurrentWidget(self._settings_view)
+        self._toolbar["settings"].setChecked(True)
+        self._chain_settings_tab_order()
+        self._refit(keep_edge=True)
+        if self.isVisible():
+            self._settings_view.focus_first()
+
+    def show_devices(self) -> None:
+        """Back to the device list (from any Settings page)."""
+        was = self.in_settings
+        if self._settings_view is not None:
+            self._stack.setCurrentWidget(self._scroll)
+            self._settings_view.reset()
+        self._toolbar["settings"].setChecked(False)
+        if was:
+            self._refit(keep_edge=True)
+            if self.isVisible():
+                first = self._nav[0] if self._nav else self._toolbar["settings"]
+                first.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def refresh_settings(self) -> None:
+        """Re-read the values shown on the open Settings page (no-op on the device list)."""
+        if self.in_settings:
+            self._settings_view.refresh()
+
+    def _on_settings_layout(self) -> None:
+        if self.in_settings:
+            self._refit(keep_edge=True)
+
+    def _refit(self, keep_edge: bool = False) -> None:
+        self._fit(self._screen_avail or self._primary_avail(), keep_edge=keep_edge)
+
+    def _chain_settings_tab_order(self) -> None:
+        if self._settings_view is None:
+            return
+        order = self._settings_view.focus_order() + self._toolbar_buttons()
+        for x, y in zip(order, order[1:]):
+            QWidget.setTabOrder(x, y)
 
     # ------------------------------------------------------------------ appearance
     def _apply_style(self) -> None:
@@ -198,6 +278,7 @@ class DevicePanel(QFrame):
         edge = QColor(70, 70, 70) if dark else QColor(190, 190, 190)
         hover = "rgba(255,255,255,40)" if dark else "rgba(0,0,0,30)"
         focus = band_color("amber", dark).name()
+        checked = "rgba(255,255,255,70)" if dark else "rgba(0,0,0,55)"
         self._text = text
         handle = "rgba(255,255,255,90)" if dark else "rgba(0,0,0,90)"
         self.setStyleSheet(
@@ -208,6 +289,7 @@ class DevicePanel(QFrame):
             f"border-radius: 5px; padding: 2px; }}"
             f"QToolButton:hover {{ background: {hover}; }}"
             f"QToolButton:focus {{ border: 2px solid {focus}; }}"
+            f"QToolButton#gearBtn:checked {{ background: {checked}; }}"
             f"QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}"
             f"QScrollBar::handle:vertical {{ background: {handle}; min-height: 24px; "
             f"border-radius: 4px; margin: 1px; }}"
@@ -239,14 +321,22 @@ class DevicePanel(QFrame):
             b.installEventFilter(self)
             b.clicked.connect(lambda _c=False, f=slot: f())
             self._toolbar[name] = b
+            if name == "settings":
+                b.setObjectName("gearBtn")
+                b.setCheckable(True)            # marked while the Settings page is shown
             if name == "quit":
                 h.addStretch(1)
             h.addWidget(b)
         return w
 
     def _emit_settings(self) -> None:
+        """The gear alternates between the device list and the Settings page."""
         b = self._toolbar["settings"]
+        if self.in_settings:
+            self.show_devices()
+            return
         self.settings_requested.emit(QRect(b.mapToGlobal(QPoint(0, 0)), b.size()))
+        b.setChecked(self.in_settings)          # the tray may not have shown it
 
     def _refresh_toolbar(self, lang: str) -> None:
         grey = band_color("grey", self._dark)
@@ -522,21 +612,30 @@ class DevicePanel(QFrame):
         s = QGuiApplication.primaryScreen()
         return s.availableGeometry() if s is not None else QRect(0, 0, 1920, 1040)
 
-    def _fit(self, avail: QRect) -> None:
-        """Size the panel: content height capped at 60 % of the screen's available height."""
-        if self._content is None:
+    def _fit(self, avail: QRect, keep_edge: bool = False) -> None:
+        """Size the panel: content height capped at 60 % of the screen's available height.
+        With `keep_edge` a panel opened above the taskbar keeps its bottom edge when the height changes."""
+        settings = self.in_settings
+        if self._content is None and not settings:
             return
-        self._content.adjustSize()
-        want = self._content.sizeHint().height()
+        if settings:
+            want = self._settings_view.content_height()
+        else:
+            self._content.adjustSize()
+            want = self._content.sizeHint().height()
         margins = self.layout().contentsMargins()
         extra = (margins.top() + margins.bottom() + self.layout().spacing()
                  + self._toolbar_widget.sizeHint().height() + 2)
         cap = max(80, int(avail.height() * MAX_HEIGHT_FRACTION) - extra)
         height = min(want, cap)
         sb = self._scroll.verticalScrollBar().sizeHint().width() if want > cap else 0
-        self._scroll.setFixedSize(PANEL_WIDTH + sb, height)
+        old = self.geometry()
+        (self._settings_view if settings else self._scroll).setFixedSize(PANEL_WIDTH + sb, height)
+        self._stack.setFixedSize(PANEL_WIDTH + sb, height)
         self.setFixedSize(PANEL_WIDTH + sb + margins.left() + margins.right() + 2, height + extra)
         if self.isVisible():
+            if keep_edge and self._edge == "bottom":
+                self.move(old.x(), old.bottom() + 1 - self.height())
             g = self.geometry()
             x = max(avail.left(), min(g.x(), avail.right() - g.width() + 1))
             y = max(avail.top(), min(g.y(), avail.bottom() - g.height() + 1))
@@ -630,6 +729,11 @@ class DevicePanel(QFrame):
             return False
         if ev.type() == QEvent.Type.KeyPress:
             key = ev.key()
+            if self.in_settings and (key in (Qt.Key.Key_Escape, Qt.Key.Key_Backspace)
+                                     or (key == Qt.Key.Key_Left
+                                         and ev.modifiers() & Qt.KeyboardModifier.AltModifier)):
+                self._settings_view.go_back()       # one level up; from the root page: the device list
+                return True
             if key == Qt.Key.Key_Escape:
                 self.close()
                 return True
@@ -643,6 +747,9 @@ class DevicePanel(QFrame):
                     live = [b for b in tb if b.isEnabled()]
                     j = max(0, min(len(live) - 1, live.index(obj) + (-1 if key == Qt.Key.Key_Left else 1)))
                     live[j].setFocus(Qt.FocusReason.TabFocusReason)
+                    return True
+                if key == Qt.Key.Key_Up and self.in_settings:
+                    self._settings_view.focus_last()
                     return True
                 if key == Qt.Key.Key_Up and self._nav:
                     self._nav[-1].setFocus(Qt.FocusReason.TabFocusReason)
@@ -692,7 +799,13 @@ class DevicePanel(QFrame):
 
     def keyPressEvent(self, ev) -> None:
         if ev.key() == Qt.Key.Key_Escape:
-            self.close()
+            if self.in_settings:
+                self._settings_view.go_back()
+            else:
+                self.close()
+            return
+        if self.in_settings:
+            super().keyPressEvent(ev)
             return
         if ev.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down) and self._nav:
             self._move_focus(self.focusWidget() or self, -1 if ev.key() == Qt.Key.Key_Up else 1)
@@ -797,6 +910,8 @@ class DevicePanel(QFrame):
     def hideEvent(self, ev) -> None:
         super().hideEvent(ev)
         self.hidden_at = time.monotonic()
+        if self.in_settings:        # the next opening shows the device list again
+            self.show_devices()
         hwnd, self._posted_hwnd = self._posted_hwnd, 0
         if hwnd:
             try:

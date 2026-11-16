@@ -178,11 +178,11 @@ def _tray(tmp_path, monkeypatch):
 
 def test_menu_entry_calls_dialog(tmp_path, monkeypatch):
     cfg, t = _tray(tmp_path, monkeypatch)
-    act = t._settings.custom_icons_action
-    assert act.text() == "Custom icons…"
+    act = t._settings.find("custom_icons")
+    assert act.label() == "Custom icons…"
     seen = []
     monkeypatch.setattr(cid.CustomIconsDialog, "exec", lambda self: seen.append(self) or QDialog.DialogCode.Rejected)
-    act.trigger()
+    act.run()
     assert len(seen) == 1
 
 

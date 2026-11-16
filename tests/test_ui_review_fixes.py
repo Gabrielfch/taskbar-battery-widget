@@ -278,15 +278,19 @@ def test_on_logging_second_set_skipped_when_first_fails(qapp, tmp_path):
     assert calls == ["detail_log_devices"]
 
 
-def test_set_startup_checked_restores_block_state(qapp, tmp_path):
+def test_set_startup_checked_refreshes_open_page(qapp, tmp_path, monkeypatch):
+    from taskbar_battery_widget import startup
+    state = {"on": False}
+    monkeypatch.setattr(startup, "is_enabled", lambda: state["on"])
     t = TrayController(Config(tmp_path / "c.json"))
-    a = t._act_start
-    a.blockSignals(True)
-    t._set_start_checked(True)
-    assert a.signalsBlocked()
-    a.blockSignals(False)
-    t._set_start_checked(False)
-    assert not a.signalsBlocked()
+    t.open_panel()
+    t.show_settings_menu()
+    row = t._panel.settings_view.row("start_with_windows")
+    assert not row.isChecked()
+    state["on"] = True
+    t._set_start_checked(True)             # failure path of _set_startup: the page re-reads the real state
+    assert t._panel.settings_view.row("start_with_windows").isChecked()
+    t._panel.close()
 
 
 # ---- 10. ui-only signal

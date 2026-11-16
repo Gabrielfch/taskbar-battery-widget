@@ -451,15 +451,14 @@ def test_alerts_menu_has_full_charge_toggle(qapp, tmp_path):
     from taskbar_battery_widget.tray import TrayController
     cfg = Config(tmp_path / "c.json")
     t = TrayController(cfg)
-    st = [a.menu() for a in t.menu.actions() if a.menu() and a.text() == "Settings"][0]
-    alerts = [a.menu() for a in st.actions() if a.menu() and a.text() == "Alerts"][0]
-    act = [a for a in alerts.actions() if a.text() == "Notify when fully charged"][0]
-    assert act.isCheckable() and act.isChecked()
-    act.setChecked(False)
+    alerts = t._settings.find("alerts")
+    act = t._settings.find("full_charge_alert")
+    assert act in alerts.children and act.label() == "Notify when fully charged"
+    assert act.get() is True
+    act.set(False)
     assert cfg.get("full_charge_alert") is False
     cfg.set("full_charge_alert", True)
-    t._sync_menu()
-    assert act.isChecked()
+    assert act.get() is True
 
 
 def test_format_cycles_locale_and_no_charges():

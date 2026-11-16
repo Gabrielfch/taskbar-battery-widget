@@ -99,19 +99,20 @@ def test_menu_radios_and_color_mode(qapp, tmp_path):
     cfg = Config(tmp_path / "c.json")
     t = TrayController(cfg)
     sm = t._settings
-    assert set(sm.palette_actions) == set(colors.PALETTES)
-    assert set(sm.icon_actions) == {"outline", "filled", "simple", "retro", "battery", "none"}
-    assert sm.palette_actions["classic"].isChecked() and sm.icon_actions["outline"].isChecked()
+    pal, icons_ = sm.find("palette"), sm.find("icon_style")
+    assert {o.value for o in pal.options()} == set(colors.PALETTES)
+    assert {o.value for o in icons_.options()} == {"outline", "filled", "simple", "retro", "battery", "none"}
+    assert pal.get() == "classic" and icons_.get() == "outline"
     changed = []
     t.ui_settings_changed.connect(lambda: changed.append(1))
-    sm.palette_actions["mono"].trigger()
+    pal.set("mono")
     assert cfg.get("color_mode") == "mono" and cfg.get("color_palette") == "mono"
-    assert colors.get_palette() == "mono" and sm.palette_actions["mono"].isChecked()
-    sm.palette_actions["colorblind"].trigger()
+    assert colors.get_palette() == "mono" and pal.get() == "mono"
+    pal.set("colorblind")
     assert cfg.get("color_mode") == "levels" and colors.get_palette() == "colorblind"
-    assert not sm.palette_actions["mono"].isChecked()
-    sm.icon_actions["retro"].trigger()
-    assert cfg.get("icon_style") == "retro" and sm.icon_actions["retro"].isChecked()
+    assert pal.get() == "colorblind"
+    icons_.set("retro")
+    assert cfg.get("icon_style") == "retro" and icons_.get() == "retro"
     assert len(changed) == 3
     apply_appearance(cfg)
     assert colors.get_palette() == "colorblind"
@@ -121,11 +122,11 @@ def test_custom_choice_cancel_keeps_previous(qapp, tmp_path, monkeypatch):
     cfg = Config(tmp_path / "c.json")
     t = TrayController(cfg)
     monkeypatch.setattr(CustomColorsDialog, "exec", lambda self: 0)
-    t._settings.palette_actions["custom"].trigger()
+    t._settings.find("palette").set("custom")
     assert cfg.get("color_palette") == "classic"
-    assert t._settings.palette_actions["classic"].isChecked()
+    assert t._settings.find("palette").get() == "classic"
     monkeypatch.setattr(CustomColorsDialog, "exec", lambda self: 1)
-    t._settings.palette_actions["custom"].trigger()
+    t._settings.find("palette").set("custom")
     assert cfg.get("color_palette") == "custom" and colors.get_palette() == "custom"
 
 

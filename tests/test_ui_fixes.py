@@ -252,20 +252,21 @@ def test_tray_menu_structure(qapp, tmp_path):
     cfg = Config(tmp_path / "c.json")
     tray = TrayController(cfg)
     tray.set_devices([Device("a", "Raton", "mouse", 97, True, charging=True)])
-    tray._sync_menu()
-    top = _texts(tray.menu)
-    assert top == ["Actualizar", "Configuración", "Acerca de Taskbar Battery Widget…", "Salir"]
-    sub = {a.text(): a.menu() for a in tray.menu.actions() if a.menu()}
-    st = sub["Configuración"]
-    assert _texts(st) == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]
-    s2 = {a.text(): a.menu() for a in st.actions() if a.menu()}
-    assert _texts(s2["Fuentes"]) == ["2.4 GHz y USB", "Bluetooth"]
-    alerts = s2["Alertas"]
-    assert _texts(alerts)[0].startswith("Avisar") and alerts.actions()[2].menu() is not None
-    assert _texts(s2["Registros"]) == ["Abrir registro de dispositivos", "Abrir carpeta de registros",
-                                       "Registro detallado (cada minuto)",
-                                       "Abrir carpeta de registros detallados"]
-    assert _texts(s2["Personalización"]) == ["Colores", "Estilo de iconos", "Iconos personalizados…", "Posición"]
+    # the Settings tree lives in the device panel now: the tray menu only keeps the plain entries
+    assert _texts(tray.menu) == ["Actualizar", "Acerca de Taskbar Battery Widget…", "Salir"]
+    root = tray._settings.root
+    assert root.title() == "Configuración"
+    kids = [c.title() if hasattr(c, "title") else c.label() for c in root.children]
+    assert kids == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]
+    pages = {c.id: c for c in root.children if hasattr(c, "title")}
+    assert [c.label() for c in pages["sources"].children] == ["2.4 GHz y USB", "Bluetooth"]
+    alerts = pages["alerts"].children
+    assert alerts[0].label().startswith("Avisar") and hasattr(alerts[2], "options")
+    assert [c.label() for c in pages["logs"].children] == [
+        "Abrir registro de dispositivos", "Abrir carpeta de registros",
+        "Registro detallado (cada minuto)", "Abrir carpeta de registros detallados"]
+    pers = [c.title() if hasattr(c, "title") else c.label() for c in pages["personalization"].children]
+    assert pers == ["Colores", "Estilo de iconos", "Iconos personalizados…", "Posición"]
 
 
 def test_tray_hidden_device_not_in_icon(qapp, tmp_path):

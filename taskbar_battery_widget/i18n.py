@@ -208,6 +208,8 @@ EN = {
     "custom_icons_title": "Custom icons", "custom_icons_menu": "Custom icons…",
     "custom_icons_tab_kind": "By type", "custom_icons_tab_device": "By device",
     "custom_icons_choose": "Choose image…", "custom_icons_remove": "Remove",
+    "back": "Back", "settings_collapsed": "collapsed", "settings_expanded": "expanded",
+    "settings_page_desc": "Opens the page",
 }
 
 ES = {
@@ -405,6 +407,8 @@ ES = {
     "custom_icons_title": "Iconos personalizados", "custom_icons_menu": "Iconos personalizados…",
     "custom_icons_tab_kind": "Por tipo", "custom_icons_tab_device": "Por dispositivo",
     "custom_icons_choose": "Elegir imagen…", "custom_icons_remove": "Quitar",
+    "back": "Volver", "settings_collapsed": "contraído", "settings_expanded": "desplegado",
+    "settings_page_desc": "Abre la página",
 }
 
 _TABLES = {"en": EN, "es": ES}

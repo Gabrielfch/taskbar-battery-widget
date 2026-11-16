@@ -182,29 +182,26 @@ def _wait_for(cond, timeout_ms: int = 3000) -> bool:
     return bool(cond())
 
 
-def test_tray_gear_shows_settings_menu_and_keeps_panel(qapp, tmp_path, monkeypatch):
+def test_tray_gear_shows_settings_page_and_keeps_panel(qapp, tmp_path):
     set_language("es")
     t = make_tray(tmp_path)
-    shown = []
-    monkeypatch.setattr(tray_mod, "popup_menu_foreground", lambda m, pos, *a: shown.append((m, pos)))
     t.open_panel()
     t._panel._toolbar["settings"].click()
-    assert t._panel.isVisible()
-    assert len(shown) == 1 and shown[0][0] is t._settings.menu
-    texts = [a.text() for a in shown[0][0].actions() if not a.isSeparator()]
-    assert texts == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización"]
+    assert t._panel.isVisible() and t._panel.in_settings
+    v = t._panel.settings_view
+    assert v.title_text() == "Configuración"
+    assert [r.rid for r in v.rows().values()] == ["sources", "alerts", "logs", "start_with_windows",
+                                                   "personalization"]
+    assert [r._label for r in v.rows().values()] == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows",
+                                                     "Personalización"]
+    t._panel.close()
 
 
-def test_settings_menu_really_pops_up(qapp, tmp_path):
+def test_show_settings_menu_opens_closed_panel(qapp, tmp_path):
     t = make_tray(tmp_path)
-    t.open_panel()
-    t._panel._toolbar["settings"].click()
-    menu = t._settings.menu
-    _wait_for(menu.isVisible)
-    try:
-        assert menu.isVisible() and t._panel.isVisible()
-    finally:
-        menu.hide()
+    t.show_settings_menu()
+    assert t._panel.isVisible() and t._panel.in_settings
+    t._panel.close()
 
 
 def test_tooltips_are_short(qapp):

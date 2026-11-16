@@ -6,8 +6,8 @@ import os
 import subprocess
 import time
 
-from PySide6.QtCore import QObject, QPoint, QRect, Signal
-from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from . import aliases
@@ -21,8 +21,7 @@ from .colors import battery_color
 from .i18n import tr
 from .icons import make_tray_icon
 from .panel_model import build_panel_model
-from .widget import popup_menu_foreground
-from .settings_menu import SettingsCallbacks, build_settings_menu
+from .settings_model import SettingsCallbacks, build_settings_model
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +87,7 @@ class TrayController(QObject):
         self._current_key_fn = None
         self._floating_anchor_fn = None
         self._has_taskbar_fn = None
+        self._settings = self._build_settings()
         self._build_menu()
         self._tray.activated.connect(self._on_activated)
         self._tray.setToolTip(tr("app_name"))
@@ -121,10 +121,9 @@ class TrayController(QObject):
             self._about.set_release(rel)
 
     # ------------------------------------------------------------------ menu
-    def _build_menu(self) -> None:
-        m = self._menu
-        m.addAction(tr("refresh")).triggered.connect(self.refresh_requested.emit)
-        self._settings = build_settings_menu(m, self._cfg, SettingsCallbacks(
+    def _build_settings(self):
+        """The Settings tree shown inside the device panel (see settings_model / settings_view)."""
+        return build_settings_model(self._cfg, SettingsCallbacks(
             set_bool=self._set_bool, set_threshold=self._set_threshold,
             set_palette=self._set_palette, set_icon_style=self._set_icon_style, set_startup=self._set_startup,
             open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
@@ -135,17 +134,14 @@ class TrayController(QObject):
             open_custom_icons=self.open_custom_icons,
             set_floating_anchor=self._set_floating_anchor, current_key=self._current_key,
             icons_centered=self._icons_centered, monitor_has_taskbar=self._monitor_has_taskbar))
-        acts = self._settings.actions
-        self._act_wireless = acts["wireless_enabled"]
-        self._act_bluetooth = acts["bluetooth_enabled"]
-        self._act_notif = acts["notifications_enabled"]
-        self._act_start = acts["start_with_windows"]
-        self._thr_actions = self._settings.thr_actions
+
+    def _build_menu(self) -> None:
+        m = self._menu
+        m.addAction(tr("refresh")).triggered.connect(self.refresh_requested.emit)
         m.addSeparator()
         self._act_about = m.addAction(tr("menu_about"))
         self._act_about.triggered.connect(self.show_about)
         m.addAction(tr("quit")).triggered.connect(self.quit_requested.emit)
-        m.aboutToShow.connect(self._sync_menu)
 
     # ---- logs
     def open_path(self, path) -> None:
@@ -248,6 +244,7 @@ class TrayController(QObject):
         if self._panel is None:
             from .device_panel import DevicePanel
             self._panel = DevicePanel(dark=self._dark, show_logging=True)
+            self._panel.set_settings_model(self._settings)
             self._panel.visibility_toggled.connect(self._on_visibility)
             self._panel.show_disconnected_toggled.connect(self._on_show_disconnected)
             self._panel.show_all_requested.connect(self._on_show_all)
@@ -265,6 +262,7 @@ class TrayController(QObject):
         if p is None or not p.isVisible():
             return
         self._push_model(p)
+        p.refresh_settings()        # an open Settings page re-reads the config / monitors
 
     def _push_model(self, p) -> None:
         model = build_panel_model(
@@ -292,22 +290,14 @@ class TrayController(QObject):
         self.quit_requested.emit()
 
     def show_settings_menu(self, anchor=None) -> None:
-        """Open the Settings menu where the gear button was (above it if it fits); the panel stays open.
+        """Show the Settings page inside the device panel (opening the panel first if it is closed).
 
-        The panel is a plain Tool window (not a Qt.Popup), so the menu does not fight it for the
-        popup grab and the app stays active while the menu is up.
-        """
-        menu = self._settings.menu
-        self._sync_menu()
-        if anchor is None:
-            pos = QCursor.pos()
-        else:
-            rect = QRect(anchor)
-            h = menu.sizeHint().height()
-            screen = QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
-            top = screen.availableGeometry().top() if screen is not None else 0
-            pos = QPoint(rect.left(), rect.top() - h) if rect.top() - h >= top else rect.bottomLeft()
-        popup_menu_foreground(menu, pos)
+        `anchor` (the gear button's rect) is only used when the panel has to be opened."""
+        p = self._ensure_panel()
+        p.set_settings_model(self._settings)
+        if not p.isVisible():
+            self.open_panel()
+        p.show_settings()
 
     def _on_activated(self, reason) -> None:
         # on Windows the right click arrives as Context (no context menu is set): same as a left click
@@ -485,11 +475,9 @@ class TrayController(QObject):
         self.settings_changed.emit()
 
     def _set_start_checked(self, value: bool) -> None:
-        self._settings.set_startup_checked(value)
-
-    def _sync_menu(self) -> None:
-        """Refresh the checkmarks every time the menu opens."""
-        self._settings.sync()
+        """The startup entry could not be changed: the open page re-reads the real state."""
+        if self._panel is not None:
+            self._panel.refresh_settings()
 
     # ------------------------------------------------------------------ state
     def set_devices(self, devices) -> None:

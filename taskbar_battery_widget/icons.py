@@ -969,3 +969,81 @@ def about_icon(size: int, color: QColor) -> QIcon:
 
 def power_icon(size: int, color: QColor) -> QIcon:
     return _icon_from(draw_power, size, color, True)
+
+
+# ---- settings page glyphs (navigation inside the device panel)
+def draw_chevron_right(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    _stroked(painter, rect, color)
+    _poly(painter, [(9, 5), (16, 12), (9, 19)])
+    painter.restore()
+
+
+def draw_chevron_down(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    _stroked(painter, rect, color)
+    _poly(painter, [(5, 9), (12, 16), (19, 9)])
+    painter.restore()
+
+
+def draw_chevron_up(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    _stroked(painter, rect, color)
+    _poly(painter, [(5, 15), (12, 8), (19, 15)])
+    painter.restore()
+
+
+def draw_back(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Left arrow."""
+    _stroked(painter, rect, color)
+    _poly(painter, [(20, 12), (5, 12)])
+    _poly(painter, [(11, 6), (5, 12), (11, 18)])
+    painter.restore()
+
+
+def draw_sources(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Signal bars."""
+    _stroked(painter, rect, color)
+    for x, top in ((5.5, 14), (12, 9), (18.5, 4)):
+        _poly(painter, [(x, 19.5), (x, top)])
+    painter.restore()
+
+
+def draw_bell(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    _stroked(painter, rect, color)
+    _poly(painter, [(5, 17), (7, 15), (7, 10), (9, 6.5), (12, 5.5), (15, 6.5), (17, 10), (17, 15), (19, 17)],
+          close=True)
+    _poly(painter, [(10, 20), (14, 20)])
+    painter.restore()
+
+
+def draw_doc(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    _stroked(painter, rect, color)
+    _rr(painter, 5, 3, 14, 18, 2)
+    for y, x2 in ((9, 15.5), (13, 15.5), (17, 12.5)):
+        _poly(painter, [(8.5, y), (x2, y)])
+    painter.restore()
+
+
+def draw_palette(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    _stroked(painter, rect, color)
+    painter.drawEllipse(_P(12, 12), 9, 9)
+    for x, y in ((8, 10), (12, 7.5), (16, 10), (8.5, 15)):
+        painter.drawPoint(_P(x, y))
+    painter.restore()
+
+
+def draw_pin(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    _stroked(painter, rect, color)
+    _poly(painter, [(12, 21), (6.5, 12.5), (6, 9.5), (8, 5.5), (12, 4), (16, 5.5), (18, 9.5), (17.5, 12.5)],
+          close=True)
+    painter.drawEllipse(_P(12, 9.5), 2.2, 2.2)
+    painter.restore()
+
+
+_GLYPHS = {"chevron_right": draw_chevron_right, "chevron_down": draw_chevron_down,
+           "chevron_up": draw_chevron_up, "back": draw_back, "sources": draw_sources, "alerts": draw_bell,
+           "logs": draw_doc, "personalization": draw_palette, "position": draw_pin}
+
+
+def glyph_icon(name: str, size: int, color: QColor) -> QIcon:
+    """QIcon of a settings glyph ("back", "chevron_right", "sources", "alerts", ...); empty if unknown."""
+    draw = _GLYPHS.get(name)
+    return _icon_from(draw, size, color, True) if draw is not None else QIcon()

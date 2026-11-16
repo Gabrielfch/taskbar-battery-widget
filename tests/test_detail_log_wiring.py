@@ -115,17 +115,16 @@ def test_settings_logs_entries_bound_to_config(qapp, tmp_path):
     tray = TrayController(cfg)
     folder = []
     tray.open_detail_folder_requested.connect(lambda: folder.append(1))
-    st = [a.menu() for a in tray.menu.actions() if a.text() == "Settings"][0]
-    logs = [a.menu() for a in st.actions() if a.text() == "Logs"][0]
-    act = [a for a in logs.actions() if a.text() == "Detailed log (every minute)"][0]
-    assert act.isCheckable() and not act.isChecked()
-    act.setChecked(True)
+    logs = tray._settings.find("logs")
+    act = tray._settings.find("detail_log_enabled")
+    assert act in logs.children and act.label() == "Detailed log (every minute)"
+    assert not act.get()
+    act.set(True)
     assert cfg.get("detail_log_enabled") is True
-    [a for a in logs.actions() if a.text() == "Open detailed logs folder"][0].trigger()
+    tray._settings.find("open_detail_folder").run()
     assert folder == [1]
     cfg.set("detail_log_enabled", False)
-    tray._sync_menu()
-    assert not act.isChecked()
+    assert not act.get()
 
 
 def test_overflow_pill_click_requests_panel(qapp):

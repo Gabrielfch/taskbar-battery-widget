@@ -212,10 +212,10 @@ def test_tray_panel_follows_device_changes(qapp, tmp_path):
 def test_tray_toggles_persist(qapp, tmp_path):
     cfg = Config(tmp_path / "c.json")
     tray = TrayController(cfg)
-    tray._act_wireless.setChecked(False)
-    tray._settings.palette_actions["mono"].trigger()
+    tray._settings.find("wireless_enabled").set(False)
+    tray._settings.find("palette").set("mono")
     assert cfg.get("wireless_enabled") is False and cfg.get("color_mode") == "mono"
-    tray._settings.palette_actions["pastel"].trigger()
+    tray._settings.find("palette").set("pastel")
     assert cfg.get("color_mode") == "levels"
 
 

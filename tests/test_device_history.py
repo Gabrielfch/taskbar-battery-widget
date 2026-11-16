@@ -376,8 +376,7 @@ def test_tray_menu_entries(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(tray_mod.subprocess, "Popen", lambda args, **kw: opened.append(args[-1]))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     t = tray_mod.TrayController(Config(tmp_path / "c.json"))
-    logs = [a.menu() for a in t._settings.menu.actions() if a.text() == "Logs"][0]
-    texts = [a.text() for a in logs.actions()]
+    texts = [n.label() for n in t._settings.find("logs").children]
     assert texts == ["Open device log", "Open logs folder", "Detailed log (every minute)",
                      "Open detailed logs folder"]
     t.open_device_log()

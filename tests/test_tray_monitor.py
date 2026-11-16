@@ -62,9 +62,10 @@ def test_tray_startup_failure_reverts_and_does_not_persist(qapp, tmp_path, monke
     monkeypatch.setattr(startup, "set_enabled", boom)
     cfg = Config(tmp_path / "c.json")
     t = tray_mod.TrayController(cfg)
-    assert not t._act_start.isChecked()
-    t._act_start.setChecked(True)          # user toggles; set_enabled fails
-    assert not t._act_start.isChecked()
+    tog = t._settings.find("start_with_windows")
+    assert not tog.get()
+    tog.set(True)                          # user toggles; set_enabled fails
+    assert not tog.get()
     assert cfg.get("start_with_windows") is False
 
 
@@ -74,11 +75,11 @@ def test_tray_startup_success_and_sync(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(startup, "set_enabled", lambda e: state.update(on=e))
     cfg = Config(tmp_path / "c.json")
     t = tray_mod.TrayController(cfg)
-    t._act_start.setChecked(True)
-    assert state["on"] and cfg.get("start_with_windows") is True
+    tog = t._settings.find("start_with_windows")
+    tog.set(True)
+    assert state["on"] and cfg.get("start_with_windows") is True and tog.get()
     state["on"] = False                     # changed externally
-    t._sync_menu()
-    assert not t._act_start.isChecked()
+    assert not tog.get()
 
 
 # ---------------------------------------------------------------- monitor
