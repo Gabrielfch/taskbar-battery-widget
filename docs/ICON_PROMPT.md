@@ -5,8 +5,9 @@ one device: *Settings ▸ Personalization ▸ Custom icons…*, or click the dev
 
 Copy one of these prompts into an AI chat, fill in the `[brackets]`, and load the result in the app.
 
-**What the app accepts:** PNG, JPG, BMP, ICO or GIF, up to 2 MB and 2048×2048 px. SVG is not accepted
-(convert it to PNG first). Use PNG for a transparent background.
+**What the app accepts:** PNG, JPG, BMP, ICO or GIF (up to 2 MB and 2048×2048 px) and SVG (up to 512 KB; it is converted to a
+256×256 PNG when you import it, and SVGs with scripts, external links or `<!DOCTYPE>` are rejected). Use PNG or
+SVG for a transparent background.
 
 ## Prompt for a chat that creates images
 
@@ -46,7 +47,7 @@ Requirements:
   colour if needed.
 - No logos or trademarks.
 
-Also give me a command to convert it to a 256×256 PNG with a transparent background (for example with
+Also give me a command to convert it to a 256×256 PNG (optional: the app imports the SVG directly) with a transparent background (for example with
 Inkscape: inkscape icon.svg --export-type=png -w 256 -h 256 -o icon.png).
 ```
 

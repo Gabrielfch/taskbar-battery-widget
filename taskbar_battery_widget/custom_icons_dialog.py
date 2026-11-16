@@ -8,9 +8,10 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QHBoxLayo
 
 from . import custom_icons
 from .icons import draw_kind_icon
+from .dialogs import app_dialog_guard
 from .models import KINDS
 
-IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.ico *.gif)"
+IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.ico *.gif *.svg)"
 _PREVIEW = 28
 
 
@@ -91,13 +92,15 @@ class CustomIconsDialog(QDialog):
         return scroll
 
     def _choose(self, target: dict, key: str, preview: _Preview, remove: QPushButton) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, self._tr("custom_icons_choose"), "", IMAGE_FILTER)
+        with app_dialog_guard():
+            path, _ = QFileDialog.getOpenFileName(self, self._tr("custom_icons_choose"), "", IMAGE_FILTER)
         if not path:
             return
         try:
             name = custom_icons.import_image(path)
         except custom_icons.IconImportError as e:
-            QMessageBox.warning(self, self._tr("custom_icons_title"), self._tr(e.code))
+            with app_dialog_guard():
+                QMessageBox.warning(self, self._tr("custom_icons_title"), self._tr(e.code))
             return
         target[key] = name
         preview.set_file(name)

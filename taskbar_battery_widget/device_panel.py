@@ -143,6 +143,11 @@ def level_text(row: PanelRow) -> str:
     return f"{cue_prefix(row)}{row.battery}% · {row.status_text}"
 
 
+def _dialog_open() -> bool:
+    from .dialogs import dialog_open
+    return dialog_open()
+
+
 class DevicePanel(QFrame):
     visibility_toggled = Signal(str, bool)
     show_disconnected_toggled = Signal(bool)
@@ -187,6 +192,9 @@ class DevicePanel(QFrame):
         if app is not None:
             app.applicationStateChanged.connect(self._on_app_state_changed)
             app.focusWindowChanged.connect(self._on_focus_window_changed)
+        from . import dialogs
+        dialogs.hub.opened.connect(self._on_dialog_opened)
+        dialogs.hub.closed.connect(self._on_dialog_closed)
         self._buttons: dict[tuple[str, str], QToolButton] = {}
         self._content: QWidget | None = None
         self._screen_avail: QRect | None = None
@@ -1092,12 +1100,33 @@ class DevicePanel(QFrame):
         # slow click on the tray icon is still recognised as the click that closed the panel
         self.hidden_at = time.monotonic()
 
+    # ---- application dialogs (see dialogs.py): the panel must survive a native dialog taking the focus
+    def _on_dialog_opened(self) -> None:
+        if self.isVisible():
+            self._set_topmost(False)        # a native dialog is not a QWindow: lower the band explicitly
+
+    def _on_dialog_closed(self) -> None:
+        if self.isVisible():
+            QTimer.singleShot(HIDE_CHECK_MS, self._after_dialog)
+
+    def _after_dialog(self) -> None:
+        from . import dialogs
+        if not self.isVisible() or dialogs.dialog_open():
+            return
+        if self._app_active():
+            self._armed = True
+            self._set_topmost(True)
+            self.activateWindow()
+        else:
+            self._note_deactivation()
+            self.hide()
+
     def _on_app_state_changed(self, state) -> None:
         if not self.isVisible():
             return
         if state == Qt.ApplicationState.ApplicationActive:
             self._armed = True
-        elif self._armed:
+        elif self._armed and not _dialog_open():
             self._note_deactivation()
             QTimer.singleShot(0, self._hide_if_inactive)
 
@@ -1112,7 +1141,7 @@ class DevicePanel(QFrame):
                 elif (w.flags() & Qt.WindowType.WindowType_Mask) != Qt.WindowType.Popup:
                     # another normal window of the app (About, stats): let it be drawn above the panel
                     self._set_topmost(False)
-        elif self._armed:
+        elif self._armed and not _dialog_open():
             self._note_deactivation()
             QTimer.singleShot(HIDE_CHECK_MS, self._hide_if_inactive)
 
@@ -1126,13 +1155,13 @@ class DevicePanel(QFrame):
             QTimer.singleShot(ARM_FALLBACK_MS, lambda: self._arm_fallback(gen, 1))
             return
         self._armed = True
-        if not self._app_active():
+        if not self._app_active() and not _dialog_open():
             self._note_deactivation()
             self.hide()
 
     def _hide_if_inactive(self) -> None:
         # re-check: a focus handoff between two windows of the app can pass through "no focus window"
-        if self.isVisible() and self._armed and not self._app_active():
+        if self.isVisible() and self._armed and not self._app_active() and not _dialog_open():
             self.hide()
 
     def changeEvent(self, ev) -> None:

@@ -28,7 +28,7 @@ EXCLUDES = [
     "PySide6.QtQuickWidgets", "PySide6.QtQuickControls2", "PySide6.QtQml", "PySide6.QtMultimedia",
     "PySide6.QtMultimediaWidgets", "PySide6.QtCharts", "PySide6.QtDataVisualization",
     "PySide6.QtNetwork", "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets", "PySide6.QtSql",
-    "PySide6.QtSvg", "PySide6.QtSvgWidgets", "PySide6.QtDesigner", "PySide6.QtHelp",
+    "PySide6.QtSvgWidgets", "PySide6.QtDesigner", "PySide6.QtHelp",
     "PySide6.QtTest", "PySide6.QtBluetooth", "PySide6.QtNfc", "PySide6.QtPositioning",
     "PySide6.QtSensors", "PySide6.QtSerialPort", "PySide6.QtRemoteObjects", "PySide6.QtScxml",
     "PySide6.QtSpatialAudio", "PySide6.QtStateMachine", "PySide6.QtTextToSpeech",
@@ -40,9 +40,9 @@ EXCLUDES = [
 
 # Binaries/data that are never needed by a QtCore/QtGui/QtWidgets-only app.
 DROP = (
-    "opengl32sw", "qt6quick", "qt6qml", "qt6pdf", "qt6network", "qt6opengl", "qt6svg",
+    "opengl32sw", "qt6quick", "qt6qml", "qt6pdf", "qt6network", "qt6opengl",
     "qt6virtualkeyboard", "qt6webengine", "qt6multimedia", "qt6charts", "qt6datavis",
-    "d3dcompiler", "translations", "qtquick", "qml", r"imageformats\qpdf",
+    "d3dcompiler", "translations", "qtquick", "qml", r"imageformats\qpdf", r"imageformats\qsvg", r"iconengines\qsvgicon",
     "ffmpeg", "avcodec", "avformat", "avutil", "swresample", "swscale",
 )
 

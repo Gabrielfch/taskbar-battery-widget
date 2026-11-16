@@ -242,3 +242,89 @@ def test_dialog_error_shows_message(tmp_path, monkeypatch):
 def test_dialog_ignores_unsafe_input():
     dlg = CustomIconsDialog({"mouse": "..\\x.png"}, {"k": "/abs.png"}, [], tr=lambda c: c)
     assert dlg.result_maps() == ({}, {})
+
+
+# ---------------------------------------------------------------- SVG import (rendered once to PNG)
+_NS = 'xmlns="http://www.w3.org/2000/svg"'
+_GOOD = f'<svg {_NS} viewBox="0 0 100 50" width="100" height="50"><rect x="0" y="0" width="100" height="50" fill="red"/></svg>'
+
+
+def _svg(tmp_path, text, name="i.svg"):
+    f = tmp_path / name
+    f.write_bytes(text if isinstance(text, bytes) else text.encode("utf-8"))
+    return f
+
+
+def test_svg_imports_as_256_png_with_transparency(tmp_path):
+    n = ci.import_image(_svg(tmp_path, _GOOD))
+    assert ci.safe_name(n) and n.endswith(".png")
+    assert [f.name for f in ci.icons_dir().iterdir()] == [n]          # only the PNG is stored
+    img = QImage(str(ci.icons_dir() / n))
+    assert (img.width(), img.height()) == (256, 256) and img.hasAlphaChannel()
+    assert img.pixelColor(0, 0).alpha() == 0                            # 2:1 shape: transparent top margin
+    assert img.pixelColor(128, 128).alpha() == 255
+    assert ci.usable(n) and ci.pixmap_for(n, 16, 1.0) is not None
+    import hashlib
+    assert n == hashlib.sha256((ci.icons_dir() / n).read_bytes()).hexdigest()[:16] + ".png"
+
+
+@pytest.mark.parametrize("text", [
+    f'<!DOCTYPE svg [<!ENTITY a "x">]><svg {_NS} width="8" height="8"/>',
+    f'<!DOCTYPE svg><svg {_NS} width="8" height="8"/>',
+    f'<svg {_NS} width="8" height="8"><!ENTITY a "x"></svg>',
+    f'<svg {_NS} width="8" height="8"><script>alert(1)</script></svg>',
+    f'<svg {_NS} width="8" height="8"><foreignObject width="8" height="8"/></svg>',
+    f'<svg {_NS} width="8" height="8" onload="x()"><rect width="8" height="8"/></svg>',
+    f'<svg {_NS} width="8" height="8"><rect onclick = "x()" width="8" height="8"/></svg>',
+    f'<svg {_NS} xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="8"><image xlink:href="http://e.com/a.png"/></svg>',
+    f'<svg {_NS} width="8" height="8"><image href="file:///C:/x.png"/></svg>',
+    f'<svg {_NS} width="8" height="8"><image href="C:\\x.png"/></svg>',
+    f'<svg {_NS} width="8" height="8"><image href=x.png/></svg>',
+    f'<svg {_NS} width="8" height="8"><image href="data:image/svg+xml;base64,AAAA"/></svg>',
+    f'<svg {_NS} width="8" height="8"><rect style="fill:url(http://e.com/x)" width="8" height="8"/></svg>',
+    f'<svg {_NS} width="8" height="8"><style>@import "x.css";</style></svg>',
+    "<svg",                                                             # not well formed
+    "not xml at all",
+    f'<html {_NS}><body/></html>',
+    f'<svg {_NS} width="9999" height="9999"><rect width="9" height="9"/></svg>',   # absurd size
+    f'<svg {_NS} width="0" height="0"/>',
+])
+def test_svg_rejected(tmp_path, text):
+    with pytest.raises(ci.IconImportError) as e:
+        ci.import_image(_svg(tmp_path, text))
+    assert e.value.code in (ci.ERR_UNREADABLE,)
+    assert not ci.icons_dir().exists() or list(ci.icons_dir().iterdir()) == []
+
+
+def test_svg_allows_fragment_hrefs_and_embedded_png(tmp_path):
+    png = tmp_path / "e.png"
+    img = QImage(4, 4, QImage.Format.Format_ARGB32)
+    img.fill(QColor("blue"))
+    img.save(str(png))
+    import base64
+    b64 = base64.b64encode(png.read_bytes()).decode()
+    text = (f'<svg {_NS} xmlns:xlink="http://www.w3.org/1999/xlink" width="16" height="16">'
+            f'<defs><rect id="r" width="8" height="8" fill="url(#g)"/></defs><use href="#r"/>'
+            f'<image xlink:href="data:image/png;base64,{b64}" width="4" height="4"/></svg>')
+    assert ci.safe_name(ci.import_image(_svg(tmp_path, text)))
+
+
+def test_svg_too_big_and_svgz(tmp_path):
+    big = _GOOD.replace("</svg>", "<!--" + "a" * (ci.MAX_SVG_BYTES + 10) + "--></svg>")
+    with pytest.raises(ci.IconImportError) as e:
+        ci.import_image(_svg(tmp_path, big))
+    assert e.value.code == ci.ERR_TOO_BIG
+    with pytest.raises(ci.IconImportError) as e:
+        ci.import_image(_svg(tmp_path, _GOOD, "i.svgz"))
+    assert e.value.code == ci.ERR_EXTENSION
+
+
+def test_svg_binary_garbage_and_bad_encoding(tmp_path):
+    for blob in (b"\xff\xfe\x00\x01garbage", b"\x00" * 100, b""):
+        with pytest.raises(ci.IconImportError):
+            ci.import_image(_svg(tmp_path, blob))
+
+
+def test_image_filter_lists_svg():
+    from taskbar_battery_widget.custom_icons_dialog import IMAGE_FILTER
+    assert "*.svg" in IMAGE_FILTER

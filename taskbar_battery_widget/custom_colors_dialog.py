@@ -6,6 +6,7 @@ from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (QColorDialog, QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout,
                                QLabel, QPushButton, QVBoxLayout)
 
+from .dialogs import app_dialog_guard
 from .colors import CUSTOM_DEFAULTS, CUSTOM_KEYS, custom_palette, pill_backgrounds
 from .i18n import tr
 
@@ -74,7 +75,8 @@ class CustomColorsDialog(QDialog):
         self._refresh()
 
     def _pick(self, key: str) -> None:
-        c = QColorDialog.getColor(QColor(self._colors[key]), self, tr("custom_pick", name=tr("custom_" + key)))
+        with app_dialog_guard():
+            c = QColorDialog.getColor(QColor(self._colors[key]), self, tr("custom_pick", name=tr("custom_" + key)))
         if c.isValid():
             self.set_color(key, c.name())
 

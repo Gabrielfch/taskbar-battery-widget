@@ -9,16 +9,20 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt
-from PySide6.QtGui import QImageReader, QPainter, QPixmap
+from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPixmap
 
 from .device_history import base_dir
 
-ALLOWED_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".ico", ".gif")
+ALLOWED_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".ico", ".gif", ".svg")
 MAX_BYTES = 2 * 1024 * 1024
+MAX_SVG_BYTES = 512 * 1024
+MAX_SVG_DIM = 4096          # logical size / viewBox limit of an imported SVG
+SVG_OUT_PX = 256            # an SVG is rendered once, at import, to a PNG of this size
 MAX_DIM = 2048
 _SAFE_NAME = re.compile(r"[0-9a-f]{16}\.(png|jpg|jpeg|bmp|ico|gif)")
 _ALLOWED_FORMATS = {"png", "jpg", "jpeg", "bmp", "ico", "gif"}
@@ -82,22 +86,91 @@ def _decode(data: bytes, err: str):
     return img
 
 
+# --- SVG: sanitised, then rendered ONCE to a PNG; the SVG itself is never stored nor parsed again.
+_SVG_FORBIDDEN = re.compile(r"<!doctype|<!entity|<\?xml-stylesheet|<script|<foreignobject|@import"
+                            r"|[\s\"'/;]on[a-z]+\s*=", re.I)
+_SVG_HREF = re.compile(r"href\s*=", re.I)
+_SVG_HREF_OK = re.compile(r"""href\s*=\s*(?:"(\#[^"]*|data:image/(?:png|jpeg|gif);base64,[A-Za-z0-9+/=\s]*)"
+                              |'(\#[^']*|data:image/(?:png|jpeg|gif);base64,[A-Za-z0-9+/=\s]*)')""", re.I | re.X)
+_SVG_URL = re.compile(r"url\s*\(\s*(?![\s\"']*#)", re.I)
+
+
+def _svg_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise IconImportError(ERR_UNREADABLE) from None
+
+
+def _svg_check(text: str) -> None:
+    """Reject anything that could pull in external content or run code; raises IconImportError."""
+    if chr(0) in text or _SVG_FORBIDDEN.search(text) or _SVG_URL.search(text):
+        raise IconImportError(ERR_UNREADABLE)
+    if len(_SVG_HREF.findall(text)) != len(_SVG_HREF_OK.findall(text)):
+        raise IconImportError(ERR_UNREADABLE)       # an href that is not #fragment / embedded raster
+    try:
+        root = ET.fromstring(text)      # DOCTYPE/ENTITY already excluded: no entity is ever expanded
+    except (ET.ParseError, RecursionError, ValueError):
+        raise IconImportError(ERR_UNREADABLE) from None
+    if root.tag.rsplit("}", 1)[-1].lower() != "svg":
+        raise IconImportError(ERR_UNREADABLE)
+
+
+def _svg_to_png(data: bytes) -> bytes:
+    """Validate an SVG and return it rendered as a 256x256 transparent PNG (aspect ratio kept)."""
+    if len(data) > MAX_SVG_BYTES:
+        raise IconImportError(ERR_TOO_BIG)
+    _svg_check(_svg_text(data))
+    try:
+        from PySide6.QtSvg import QSvgRenderer
+        renderer = QSvgRenderer(QByteArray(data))
+        if not renderer.isValid():
+            raise IconImportError(ERR_UNREADABLE)
+        size = renderer.defaultSize()
+        vb = renderer.viewBoxF()
+        w, h = size.width(), size.height()
+        if w <= 0 or h <= 0 or w > MAX_SVG_DIM or h > MAX_SVG_DIM                 or vb.width() > MAX_SVG_DIM or vb.height() > MAX_SVG_DIM:
+            raise IconImportError(ERR_UNREADABLE)
+        scale = SVG_OUT_PX / max(w, h)
+        tw, th = max(1.0, w * scale), max(1.0, h * scale)
+        img = QImage(SVG_OUT_PX, SVG_OUT_PX, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(QColor(0, 0, 0, 0))
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        renderer.render(p, QRectF((SVG_OUT_PX - tw) / 2, (SVG_OUT_PX - th) / 2, tw, th))
+        p.end()
+        buf = QBuffer()
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        if not img.save(buf, "PNG"):
+            raise IconImportError(ERR_UNREADABLE)
+        return bytes(buf.data())
+    except IconImportError:
+        raise
+    except Exception:
+        raise IconImportError(ERR_UNREADABLE) from None
+
+
 def import_image(src) -> str:
     src = Path(src)
     ext = src.suffix.lower()
     if ext not in ALLOWED_EXT:
         raise IconImportError(ERR_EXTENSION)
+    limit = MAX_SVG_BYTES if ext == ".svg" else MAX_BYTES
     try:
-        if src.stat().st_size > MAX_BYTES:
+        if src.stat().st_size > limit:
             raise IconImportError(ERR_TOO_BIG)
         data = src.read_bytes()
     except IconImportError:
         raise
     except OSError:
         raise IconImportError(ERR_IO) from None
-    if len(data) > MAX_BYTES:
+    if len(data) > limit:
         raise IconImportError(ERR_TOO_BIG)
-    img = _decode(data, ERR_UNREADABLE)
+    if ext == ".svg":
+        data = _svg_to_png(data)        # from here on it is an ordinary PNG
+        ext = ".png"
+    _decode(data, ERR_UNREADABLE)
     name = hashlib.sha256(data).hexdigest()[:16] + ext
     try:
         d = icons_dir()

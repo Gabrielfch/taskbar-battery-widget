@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, 
                                QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout)
 
 from . import __version__, updater
+from .dialogs import app_dialog_guard
 from .i18n import tr
 from .icons import make_tray_icon
 
@@ -355,13 +356,15 @@ class AboutDialog(QDialog):
                           tr("upd_confirm", version=version),
                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
         box.setDefaultButton(QMessageBox.StandardButton.No)
-        return box.exec() == QMessageBox.StandardButton.Yes
+        with app_dialog_guard():
+            return box.exec() == QMessageBox.StandardButton.Yes
 
     def _confirm_launch(self) -> bool:
         box = QMessageBox(QMessageBox.Icon.Question, tr("upd_confirm2_title"), tr("upd_confirm2"),
                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self)
         box.setDefaultButton(QMessageBox.StandardButton.No)
-        return box.exec() == QMessageBox.StandardButton.Yes
+        with app_dialog_guard():
+            return box.exec() == QMessageBox.StandardButton.Yes
 
     def install_update(self) -> None:
         rel = self._release

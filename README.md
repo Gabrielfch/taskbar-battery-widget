@@ -73,6 +73,9 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   while the *Settings* menu, *About* or a statistics window is open, and closes when you click outside the app.
 - *Settings* (gear button): *Sources* (*2.4 GHz and USB* — USB dongles and wired controllers — and
   *Bluetooth*, both on by default), *Alerts*, *Logs*, *Start with Windows* and *Personalization*.
+- Custom icons (*Settings ▸ Personalization ▸ Custom icons…*, or click the icon while editing an alias): PNG, JPG,
+  BMP, ICO, GIF or SVG. An SVG (up to 512 KB, no scripts or external links) is converted to a 256×256 PNG on
+  import; see `docs/ICON_PROMPT.md`.
 - Placement (*Settings ▸ Personalization ▸ Position*):
   - **Taskbar, right** (next to the tray, default) or **left** (needs centred Windows icons; otherwise the app
     warns and uses the right). Works with the taskbar on any edge; on vertical taskbars the pills go to the

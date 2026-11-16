@@ -198,8 +198,11 @@ class TrayController(QObject):
         if name == "custom":
             from .custom_colors_dialog import CustomColorsDialog
             from PySide6.QtWidgets import QDialog
+            from .dialogs import app_dialog_guard
             dlg = CustomColorsDialog(self._cfg.get("custom_colors"))
-            if dlg.exec() != QDialog.DialogCode.Accepted:
+            with app_dialog_guard():
+                accepted = dlg.exec() == QDialog.DialogCode.Accepted
+            if not accepted:
                 return
             self._cfg.set("custom_colors", dlg.colors())
         self._cfg.set("color_palette", name)
@@ -248,11 +251,14 @@ class TrayController(QObject):
         """Custom icons dialog: OK saves both maps and redraws; Cancel only removes orphan imports."""
         from PySide6.QtWidgets import QDialog
         from .custom_icons_dialog import CustomIconsDialog
+        from .dialogs import app_dialog_guard
         from .models import visibility_key
         devices = [(visibility_key(d.id), d.name, d.kind) for d in self._devices]
         dlg = CustomIconsDialog(self._cfg.get("custom_icons_kind"), self._cfg.get("custom_icons_device"),
                                 devices, tr=tr)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        with app_dialog_guard():
+            accepted = dlg.exec() == QDialog.DialogCode.Accepted
+        if accepted:
             by_kind, by_device = dlg.result_maps()
             try:
                 self._cfg.set("custom_icons_kind", by_kind)
@@ -267,14 +273,17 @@ class TrayController(QObject):
         """Panel asked to give one device its own image (alias editor): pick, import, save, redraw."""
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         from .custom_icons_dialog import IMAGE_FILTER
+        from .dialogs import app_dialog_guard
         parent = self._panel
-        path, _ = QFileDialog.getOpenFileName(parent, tr("custom_icons_choose"), "", IMAGE_FILTER)
+        with app_dialog_guard():
+            path, _ = QFileDialog.getOpenFileName(parent, tr("custom_icons_choose"), "", IMAGE_FILTER)
         if not path:
             return
         try:
             name = custom_icons.import_image(path)
         except custom_icons.IconImportError as e:
-            QMessageBox.warning(parent, tr("custom_icons_title"), tr(e.code))
+            with app_dialog_guard():
+                QMessageBox.warning(parent, tr("custom_icons_title"), tr(e.code))
             return
         self._save_device_icon(key, name)
 
