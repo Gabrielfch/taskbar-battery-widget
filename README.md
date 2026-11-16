@@ -71,11 +71,22 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   with *Connected* and *Known* devices. An eye icon per device shows or hides it on the taskbar; an icon
   toolbar at the bottom gives *Refresh*, *Show all*, *Settings*, *About* and *Quit*. The panel stays open
   while the *Settings* menu, *About* or a statistics window is open, and closes when you click outside the app.
-- *Settings* (gear button): *Sources* (*2.4 GHz and USB* — USB dongles and wired controllers — and
-  *Bluetooth*, both on by default), *Alerts*, *Logs*, *Start with Windows* and *Personalization*.
+- *Settings* (gear button) opens inside the panel and is navigated there: a back arrow returns to the previous
+  page, pages open with a chevron, check boxes toggle in place and choice lists unfold below and stay open.
+  Pages: *Sources* (*2.4 GHz and USB* — USB dongles and wired controllers — and *Bluetooth*, both on by
+  default), *Alerts*, *Logs*, *Start with Windows*, *Personalization*, *Tutorial* and *What's new*.
+- The panel has a fixed size, a fraction of the screen height (*Personalization ▸ Panel size*: compact, normal,
+  large), and scrolls when the list or a page is longer.
+- Personalization: colour palettes (classic, colour-blind friendly, pastel, high contrast, mono, or your own
+  colours with automatic contrast correction), device icon styles (outline, filled, simple, retro pixel art,
+  battery, none), interface scale (90–130 %, also for the taskbar pills) and language.
+- Aliases: the pencil on a device row renames it (Enter saves, Esc cancels, empty restores the original name).
+  Aliases are stored by device, so logs and statistics keep their history.
+- First-run tutorial (six short illustrated steps; also in *Settings ▸ Tutorial*). Before installing an update,
+  *About* shows the new version's notes; after updating, the app shows *What's new* once.
 - Custom icons (*Settings ▸ Personalization ▸ Custom icons…*, or click the icon while editing an alias): PNG, JPG,
   BMP, ICO, GIF or SVG. An SVG (up to 512 KB; only basic shapes, paths, gradients and clip paths: no styles, text, filters, `<use>`, images or scripts, otherwise it is rejected) is converted to a 256×256 PNG on
-  import; see `docs/ICON_PROMPT.md`.
+  import. To create an icon with an AI chat, see the ready-made prompts in [docs/ICON_PROMPT.md](docs/ICON_PROMPT.md).
 - Placement (*Settings ▸ Personalization ▸ Position*):
   - **Taskbar, right** (next to the tray, default) or **left** (needs centred Windows icons; otherwise the app
     warns and uses the right). Works with the taskbar on any edge; on vertical taskbars the pills go to the
