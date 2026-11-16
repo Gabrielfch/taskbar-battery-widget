@@ -175,6 +175,9 @@ def apply_ui_settings(widget, cfg, raw, on_devices) -> None:
         on_devices(list(raw))
     else:
         widget.set_config(cfg)
+    refresh = getattr(widget, "refresh_style", None)
+    if refresh is not None:         # palette / icon style may have changed: re-lay out the pills
+        refresh()
 
 
 DETAIL_LOG_INTERVAL_MS = 60_000
@@ -291,13 +294,14 @@ def main() -> int:
     from .monitor import DeviceMonitor
     from .remaining import RemainingEstimator
     from .stats_window import StatsWindows
-    from .tray import TrayController
+    from .tray import TrayController, apply_appearance
     from .visibility import visible_devices
     from .widget import TaskbarWidget
 
     from . import startup
     startup.migrate_legacy()
     cfg = Config()
+    apply_appearance(cfg)
     try:
         # An entry that already launches this copy (e.g. just migrated from the legacy name) wins over a
         # stale config value, so sync() never removes it.

@@ -18,7 +18,7 @@ from . import taskbar
 from .colors import TASKBAR_BASE, band_color, battery_color, pill_tint, row_style
 from .config import FLOATING_ANCHORS
 from .i18n import kind_name as _kind_name, tr
-from .icons import draw_bolt, draw_kind_icon
+from .icons import draw_bolt, draw_kind_icon, get_icon_style
 from .models import Device, visibility_key
 from .naming import sanitize_name
 from .remaining import remaining_text
@@ -274,6 +274,11 @@ class TaskbarWidget(QWidget):
         self._rebuild()
         self.update_position()
 
+    def refresh_style(self) -> None:
+        """Re-measure and repaint after ``icons.set_icon_style(...)`` (set_config(cfg) does the same)."""
+        self._relayout()
+        self.update_position()
+
     def set_devices(self, devices: list[Device]) -> None:
         self._devices = list(devices)
         self._rebuild()
@@ -456,7 +461,11 @@ class TaskbarWidget(QWidget):
         tw = fm.horizontalAdvance(("!" if p.warn else "") + p.text)
         if p.kind == "overflow":
             return 2 * PAD + tw
-        extra = (bolt if p.charging else 0) + (MOON_W + 3 if p.idle else 0)
+        style = get_icon_style()
+        own_bolt = p.charging and style != "battery"     # the battery icon draws its own bolt
+        extra = (bolt if own_bolt else 0) + (MOON_W + 3 if p.idle else 0)
+        if style == "none":
+            return pill_width(tw, 0, extra, gap=0)
         return pill_width(tw, icon, extra)
 
     def _relayout(self) -> None:
@@ -839,6 +848,7 @@ class TaskbarWidget(QWidget):
             p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), rad, rad)
         p.setFont(self._font())
         icon = self._icon_size()
+        style = get_icon_style()
         for i, (pill, (x, y, w, h)) in enumerate(zip(self._pills, self._rects)):
             r = QRectF(x, y, w, h)
             level_color = self.pill_color(pill)
@@ -875,14 +885,22 @@ class TaskbarWidget(QWidget):
             elif pill.idle:
                 icon_color = QColor(icon_color)
                 icon_color.setAlpha(IDLE_ALPHA)
-            draw_kind_icon(p, pill.kind, ir, icon_color)
-            text_x = x + PAD + icon + ICON_GAP
+            if style == "none":
+                text_x = x + PAD
+            else:
+                if style in ("battery", "retro") and level_color is not None:
+                    accent = QColor(color)      # the level colour drives the gauge / the retro accent
+                    accent.setAlpha(icon_color.alpha())
+                    icon_color = accent
+                draw_kind_icon(p, pill.kind, ir, icon_color, pill.level, pill.charging, style)
+                text_x = x + PAD + icon + ICON_GAP
             if pill.idle:
                 moon = QColor(fg)
                 moon.setAlpha(210)
                 self._draw_moon(p, QRectF(text_x - 2, y + (h - MOON_W) / 2, MOON_W, MOON_W), moon)
                 text_x += MOON_W + 3
-            bolt = max(6, icon // 2) if pill.charging else 0
+            own_bolt = pill.charging and style != "battery"
+            bolt = max(6, icon // 2) if own_bolt else 0
             p.setPen(color)
             p.drawText(QRectF(text_x, y, w - (text_x - x) - PAD - bolt, h),
                        int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
@@ -901,7 +919,7 @@ class TaskbarWidget(QWidget):
                 p.setBrush(bar)
                 p.drawRoundedRect(QRectF(x + PAD, by, max(BAR_H, bw * max(0, min(100, pill.level)) / 100),
                                          BAR_H), BAR_H / 2, BAR_H / 2)
-            if pill.charging:
+            if own_bolt:
                 bh = icon * 0.8
                 draw_bolt(p, QRectF(x + w - PAD - bolt, y + (h - bh) / 2, bolt, bh),
                           QColor(110, 220, 120) if not self._light else QColor(30, 150, 60))

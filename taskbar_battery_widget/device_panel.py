@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea,
 
 from . import i18n, taskbar
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
-from .icons import (about_icon, draw_kind_icon, eye_icon, gear_icon, power_icon, record_icon,
+from .icons import (about_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, power_icon, record_icon,
                     refresh_icon, show_all_icon)
 from .panel_model import PanelModel, PanelRow, section_title
 from .popup import place_popup
@@ -36,13 +36,18 @@ def _hex(c: QColor) -> str:
     return c.name()
 
 
-def _kind_pixmap(kind: str, color: QColor, dpr: float) -> QPixmap:
+def _kind_pixmap(kind: str, color: QColor, dpr: float, level: int | None = None,
+                 charging: bool = False) -> QPixmap:
+    """Row icon; the "none" style (widget only) falls back to outline: the panel needs the kind."""
+    style = get_icon_style()
+    if style == "none":
+        style = "outline"
     px = int(ICON_PX * dpr)
     pm = QPixmap(px, px)
     pm.fill(Qt.GlobalColor.transparent)
     pm.setDevicePixelRatio(dpr)
     p = QPainter(pm)
-    draw_kind_icon(p, kind, QRectF(0, 0, ICON_PX, ICON_PX), color)
+    draw_kind_icon(p, kind, QRectF(0, 0, ICON_PX, ICON_PX), color, level, charging, style)
     p.end()
     return pm
 
@@ -135,7 +140,7 @@ class DevicePanel(QFrame):
         """Show `model`; rebuilds only when something visible changed and keeps scroll/focus."""
         logging_keys = frozenset(logging_keys or ())
         lang = i18n.get_language()
-        sig = (model.signature, self._dark, lang, self.show_logging,
+        sig = (model.signature, self._dark, lang, get_icon_style(), self.show_logging,
                logging_keys if self.show_logging else frozenset())
         self._model = model
         self._logging_keys = logging_keys
@@ -316,7 +321,7 @@ class DevicePanel(QFrame):
             icon_color.setAlpha(DIM_ALPHA)
         dpr = self.devicePixelRatioF() or 1.0
         icon = QLabel()
-        icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr))
+        icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr, row.battery, row.charging))
         icon.setFixedSize(ICON_PX, ICON_PX)
         h.addWidget(icon)
 

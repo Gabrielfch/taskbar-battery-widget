@@ -33,6 +33,10 @@ def _isolate_module_state():
         hid_win._info_cache.clear()
         getattr(razer, "_last", {}).clear()
         wireless.reset_cache()
+        from taskbar_battery_widget import colors, icons
+        colors.set_palette("classic")
+        if hasattr(icons, "set_icon_style"):
+            icons.set_icon_style("outline")
 
     _reset()
     yield

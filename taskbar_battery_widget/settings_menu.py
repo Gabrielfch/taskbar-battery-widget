@@ -7,7 +7,7 @@ from typing import Callable
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import QMenu
 
-from .config import FLOATING_ANCHORS
+from .config import COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES
 from .i18n import tr
 
 DEFAULT_FLOATING_ANCHOR = "bottom-right"
@@ -19,12 +19,13 @@ THRESHOLDS = (10, 15, 20, 25, 30)
 class SettingsCallbacks:
     set_bool: Callable[[str, bool], None]         # (config key, value) - persists and notifies
     set_threshold: Callable[[int], None]
-    set_color_mode: Callable[[bool], None]        # True = colour by level
+    set_palette: Callable[[str], None]            # one of config.COLOR_PALETTES
     set_startup: Callable[[bool], None]
     open_device_log: Callable[[], None]
     open_logs_folder: Callable[[], None]
     startup_enabled: Callable[[], bool]           # real state of the Windows startup entry
     open_detail_folder: Callable[[], None] = lambda: None
+    set_icon_style: Callable[[str], None] = lambda style: None      # one of config.ICON_STYLES
     set_placement: Callable[[str], None] = lambda choice: None      # "right" | "left" | "floating"
     set_monitor: Callable[[str], None] = lambda key: None           # "primary" or a monitor key
     reset_position: Callable[[], None] = lambda: None
@@ -44,6 +45,8 @@ class SettingsMenu:
     pos_actions: dict = field(default_factory=dict)         # "right" | "left" | "floating" -> action
     monitor_actions: dict = field(default_factory=dict)     # monitor key -> action
     anchor_actions: dict = field(default_factory=dict)      # floating anchor -> action
+    palette_actions: dict = field(default_factory=dict)     # palette name -> action
+    icon_actions: dict = field(default_factory=dict)        # icon style -> action
     reset_action: object = None
     anchor_menu: object = None
     position_menu: object = None
@@ -130,10 +133,47 @@ def build_settings_menu(parent: QMenu, cfg, cb: SettingsCallbacks) -> SettingsMe
     _toggle(sm, root, tr("start_with_windows"), "start_with_windows", startup_state, cb.set_startup)
 
     pers = root.addMenu(tr("menu_personalization"))
-    _toggle(sm, pers, tr("color_levels"), "color_mode",
-            lambda: cfg.get("color_mode") != "mono", cb.set_color_mode)
+    _build_radio_menu(sm, pers, tr("menu_colors"), COLOR_PALETTES, "palette_", sm.palette_actions,
+                      lambda: effective_palette(cfg), cb.set_palette)
+    _build_radio_menu(sm, pers, tr("menu_icon_style"), ICON_STYLES, "icon_", sm.icon_actions,
+                      lambda: cfg.get("icon_style"), cb.set_icon_style)
     _build_position_menu(sm, pers, cfg, cb)
     return sm
+
+
+def effective_palette(cfg) -> str:
+    """Palette in force: the legacy color_mode == "mono" wins over a stale color_palette."""
+    if cfg.get("color_mode") == "mono":
+        return "mono"
+    pal = cfg.get("color_palette")
+    return "classic" if pal == "mono" else pal
+
+
+def _build_radio_menu(sm: SettingsMenu, parent: QMenu, title: str, names, prefix: str,
+                      store: dict, getter, setter) -> None:
+    sub = parent.addMenu(title)
+    group = QActionGroup(sub)
+    group.setExclusive(True)
+
+    def sync():
+        cur = getter()
+        for name, act in store.items():
+            was = act.blockSignals(True)
+            act.setChecked(name == cur)
+            act.blockSignals(was)
+
+    def choose(name):
+        setter(name)
+        sync()          # a cancelled choice (e.g. the custom-colours dialog) restores the checkmark
+
+    for name in names:
+        a = sub.addAction(tr(prefix + name))
+        a.setCheckable(True)
+        group.addAction(a)
+        a.triggered.connect(lambda _c=False, n=name: choose(n))
+        store[name] = a
+    sync()
+    sm.syncs.append(sync)
 
 
 def _placement_choice(cfg) -> str:

@@ -213,9 +213,9 @@ def test_tray_toggles_persist(qapp, tmp_path):
     cfg = Config(tmp_path / "c.json")
     tray = TrayController(cfg)
     tray._act_wireless.setChecked(False)
-    tray._act_colors.setChecked(False)
+    tray._settings.palette_actions["mono"].trigger()
     assert cfg.get("wireless_enabled") is False and cfg.get("color_mode") == "mono"
-    tray._act_colors.setChecked(True)
+    tray._settings.palette_actions["pastel"].trigger()
     assert cfg.get("color_mode") == "levels"
 
 

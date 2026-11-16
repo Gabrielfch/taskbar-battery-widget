@@ -27,6 +27,9 @@ DEFAULTS = {
     "detail_log_devices": [],       # visibility keys of the devices being logged
     "idle_grace_min": 30,           # minutes a silent (asleep) 2.4 GHz device stays listed
     "color_mode": "levels",         # "levels" | "mono"
+    "color_palette": "classic",     # one of PALETTES ("mono" mirrors color_mode == "mono")
+    "custom_colors": {"high": "#6EDC78", "medium": "#F5C842", "low": "#FF9999"},
+    "icon_style": "outline",        # one of ICON_STYLES
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)
@@ -41,6 +44,10 @@ MAX_HIDDEN = 200
 MAX_DETAIL_DEVICES = 50
 MAX_TIMESTAMP = 4_102_444_800       # year 2100
 COLOR_MODES = ("levels", "mono")
+COLOR_PALETTES = ("classic", "colorblind", "pastel", "high_contrast", "mono", "custom")
+ICON_STYLES = ("outline", "filled", "simple", "retro", "battery", "none")
+CUSTOM_COLOR_KEYS = ("high", "medium", "low")
+HEX_COLOR_RE = re.compile(r"#[0-9A-Fa-f]{6}")
 PLACEMENT_MODES = ("taskbar", "floating")
 TASKBAR_ANCHORS = ("right", "left")
 FLOATING_ANCHORS = ("top-left", "top-center", "top-right", "middle-left", "middle-right",
@@ -114,6 +121,13 @@ def _valid(key, value) -> bool:
     default = DEFAULTS[key]
     if key == "color_mode":
         return isinstance(value, str) and value in COLOR_MODES
+    if key == "color_palette":
+        return isinstance(value, str) and value in COLOR_PALETTES
+    if key == "icon_style":
+        return isinstance(value, str) and value in ICON_STYLES
+    if key == "custom_colors":
+        return (isinstance(value, dict) and set(value) == set(CUSTOM_COLOR_KEYS)
+                and all(isinstance(v, str) and HEX_COLOR_RE.fullmatch(v) for v in value.values()))
     if key == "placement_mode":
         return isinstance(value, str) and value in PLACEMENT_MODES
     if key == "taskbar_anchor":
@@ -167,6 +181,14 @@ class Config:
             elif key in raw and _valid(key, raw[key]):
                 self._data[key] = raw[key]
         migrated_beta = False
+        if "color_palette" not in raw and self._data["color_mode"] == "mono":
+            self._data["color_palette"] = "mono"        # pre-palette configs
+            migrated_beta = True
+        if self._data["color_palette"] != "mono" and self._data["color_mode"] == "mono" \
+                and "color_palette" in raw:
+            self._data["color_mode"] = "levels"         # keep both keys consistent
+        elif self._data["color_palette"] == "mono":
+            self._data["color_mode"] = "mono"
         if "beta_readers" not in raw and raw.get("experimental_readers") is True:
             self._data["beta_readers"] = True
             migrated_beta = True

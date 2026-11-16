@@ -26,7 +26,7 @@ def test_sync_reflects_external_config_changes(qapp, tmp_path):
     cfg.set("low_threshold", 30)
     cfg.set("color_mode", "mono")
     t._sync_menu()
-    assert not t._act_bluetooth.isChecked() and not t._act_colors.isChecked()
+    assert not t._act_bluetooth.isChecked() and t._settings.palette_actions["mono"].isChecked()
     assert [v for v, a in t._thr_actions if a.isChecked()] == [30]
 
 

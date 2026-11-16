@@ -10,6 +10,8 @@ from PySide6.QtCore import QObject, QPoint, QRect, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
+from . import colors
+from . import icons
 from . import startup
 from . import taskbar
 from . import visibility
@@ -41,6 +43,19 @@ def has_file_association(ext: str) -> bool:
         return hr == 0 and bool(exe) and not exe.endswith("openwith.exe")
     except Exception:  # noqa: BLE001 - fall back to Notepad
         return False
+
+
+def apply_appearance(cfg) -> None:
+    """Push the colour palette and icon style from the config into the drawing modules."""
+    palette = cfg.get("color_palette")
+    if cfg.get("color_mode") == "mono":
+        palette = "mono"
+    elif palette == "mono":
+        palette = "classic"
+    colors.set_palette(palette, cfg.get("custom_colors"))
+    setter = getattr(icons, "set_icon_style", None)
+    if setter is not None:
+        setter(cfg.get("icon_style"))
 
 
 class TrayController(QObject):
@@ -108,7 +123,7 @@ class TrayController(QObject):
         m.addAction(tr("refresh")).triggered.connect(self.refresh_requested.emit)
         self._settings = build_settings_menu(m, self._cfg, SettingsCallbacks(
             set_bool=self._set_bool, set_threshold=self._set_threshold,
-            set_color_mode=self._set_color_mode, set_startup=self._set_startup,
+            set_palette=self._set_palette, set_icon_style=self._set_icon_style, set_startup=self._set_startup,
             open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
             open_detail_folder=self.open_detail_folder_requested.emit,
             startup_enabled=lambda: startup.is_enabled(),
@@ -120,7 +135,6 @@ class TrayController(QObject):
         self._act_wireless = acts["wireless_enabled"]
         self._act_bluetooth = acts["bluetooth_enabled"]
         self._act_notif = acts["notifications_enabled"]
-        self._act_colors = acts["color_mode"]
         self._act_start = acts["start_with_windows"]
         self._thr_actions = self._settings.thr_actions
         m.addSeparator()
@@ -176,10 +190,28 @@ class TrayController(QObject):
             return
         self.open_path(path)
 
-    def _set_color_mode(self, levels: bool) -> None:
-        self._cfg.set("color_mode", "levels" if levels else "mono")
+    def _set_palette(self, name: str) -> None:
+        if name == "custom":
+            from .custom_colors_dialog import CustomColorsDialog
+            from PySide6.QtWidgets import QDialog
+            dlg = CustomColorsDialog(self._cfg.get("custom_colors"))
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            self._cfg.set("custom_colors", dlg.colors())
+        self._cfg.set("color_palette", name)
+        # widget.py still reads color_mode: keep it in step with the palette
+        self._cfg.set("color_mode", "mono" if name == "mono" else "levels")
+        self._appearance_changed()
+
+    def _set_icon_style(self, style: str) -> None:
+        self._cfg.set("icon_style", style)
+        self._appearance_changed()
+
+    def _appearance_changed(self) -> None:
+        apply_appearance(self._cfg)
         self._update_icon()
-        self.settings_changed.emit()
+        self._refresh_panel()
+        self.ui_settings_changed.emit()     # redraw only, no device rescan
 
     # ---- device panel
     def hidden_ids(self) -> list[str]:
