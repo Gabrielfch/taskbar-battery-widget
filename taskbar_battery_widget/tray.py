@@ -263,6 +263,38 @@ class TrayController(QObject):
         custom_icons.cleanup_unused(set(self._cfg.get("custom_icons_kind").values())
                                     | set(self._cfg.get("custom_icons_device").values()))
 
+    def _on_icon_change(self, key: str) -> None:
+        """Panel asked to give one device its own image (alias editor): pick, import, save, redraw."""
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from .custom_icons_dialog import IMAGE_FILTER
+        parent = self._panel
+        path, _ = QFileDialog.getOpenFileName(parent, tr("custom_icons_choose"), "", IMAGE_FILTER)
+        if not path:
+            return
+        try:
+            name = custom_icons.import_image(path)
+        except custom_icons.IconImportError as e:
+            QMessageBox.warning(parent, tr("custom_icons_title"), tr(e.code))
+            return
+        self._save_device_icon(key, name)
+
+    def _on_icon_reset(self, key: str) -> None:
+        self._save_device_icon(key, None)
+
+    def _save_device_icon(self, key: str, name: str | None) -> None:
+        by_device = dict(self._cfg.get("custom_icons_device"))
+        if name is None:
+            by_device.pop(key, None)
+        else:
+            by_device[key] = name
+        try:
+            self._cfg.set("custom_icons_device", by_device)
+        except ValueError:
+            log.exception("could not save the custom icon")
+        self._appearance_changed()
+        custom_icons.cleanup_unused(set(self._cfg.get("custom_icons_kind").values())
+                                    | set(self._cfg.get("custom_icons_device").values()))
+
     def _appearance_changed(self) -> None:
         apply_appearance(self._cfg)
         self._update_icon()
@@ -288,6 +320,8 @@ class TrayController(QObject):
             self._panel.show_all_requested.connect(self._on_show_all)
             self._panel.logging_toggled.connect(self._on_logging)
             self._panel.alias_changed.connect(self._on_alias)
+            self._panel.icon_change_requested.connect(self._on_icon_change)
+            self._panel.icon_reset_requested.connect(self._on_icon_reset)
             self._panel.open_log_requested.connect(self.open_detail_log_requested)
             self._panel.refresh_requested.connect(self.refresh_requested)
             self._panel.settings_requested.connect(self.show_settings_menu)

@@ -1,0 +1,70 @@
+# Make a custom icon with an AI chat
+
+Taskbar Battery Widget can show your own image as the icon of a device type (all mice, all keyboards…) or of
+one device: *Settings ▸ Personalization ▸ Custom icons…*, or click the device icon while editing its alias.
+
+Copy one of these prompts into an AI chat, fill in the `[brackets]`, and load the result in the app.
+
+**What the app accepts:** PNG, JPG, BMP, ICO or GIF, up to 2 MB and 2048×2048 px. SVG is not accepted
+(convert it to PNG first). Use PNG for a transparent background.
+
+## Prompt for a chat that creates images
+
+```text
+I need an icon for a Windows app that shows my devices' battery level on the taskbar.
+
+What it shows: [describe the device, e.g. "black wireless gaming mouse with RGB accents", or attach a photo
+and write "the device in the attached image"]
+Style: [e.g. "flat minimal silhouette" / "Windows 95 style pixel art" / "simplified realistic" / "outline"]
+
+Technical requirements (mandatory):
+- Square PNG, 256×256 px, 100 % transparent background (alpha channel), no shadow, no coloured background.
+- The object centred and filling about 85 % of the canvas, with a small even margin.
+- It must be readable at 16–20 px: simple, recognisable silhouette, few details, no text or letters, thick
+  shapes.
+- It must look good on a dark taskbar (#202020) and on a light one (#F3F3F3): use colours with good contrast
+  or a thin outline that separates the shape from the background.
+- One object, front or 3/4 view, no extreme perspective.
+- Do not copy logos or trademarks: take inspiration from the shape, not the logo.
+
+Give me the final image plus a preview scaled down to 20×20 px on a dark and on a light background.
+```
+
+## Prompt for a chat that only writes code (SVG, then convert to PNG)
+
+```text
+Design an icon as SVG code for a Windows app that shows device battery levels on the taskbar.
+
+What it shows: [description, or "the device in the attached image"]
+Style: [flat silhouette / outline / retro pixel art...]
+
+Requirements:
+- viewBox="0 0 256 256", transparent background, no text, no filters or complex gradients.
+- Centred shape filling about 85 % of the canvas, simple shapes and strokes of at least 16 units so it reads
+  at 16–20 px.
+- Good contrast on dark (#202020) and light (#F3F3F3) backgrounds: add a thin outline of the opposite
+  colour if needed.
+- No logos or trademarks.
+
+Also give me a command to convert it to a 256×256 PNG with a transparent background (for example with
+Inkscape: inkscape icon.svg --export-type=png -w 256 -h 256 -o icon.png).
+```
+
+## Prompt en español (chat que genera imágenes)
+
+```text
+Necesito un icono para una app de Windows que muestra la batería de mis dispositivos en la barra de tareas.
+
+Qué representa: [describí el dispositivo, o adjuntá una foto y escribí "el dispositivo de la imagen adjunta"]
+Estilo: [silueta plana minimalista / pixel art estilo Windows 95 / realista simplificado / contorno]
+
+Requisitos técnicos (obligatorios):
+- PNG cuadrado de 256×256 px, fondo 100 % transparente, sin sombra ni fondo de color.
+- Objeto centrado ocupando cerca del 85 % del lienzo, con un margen pequeño parejo.
+- Legible a 16–20 px: silueta simple, pocos detalles, sin texto, formas gruesas.
+- Que se vea bien sobre barra oscura (#202020) y clara (#F3F3F3): buen contraste o un borde fino.
+- Un solo objeto, vista frontal o 3/4.
+- Sin logotipos ni marcas registradas.
+
+Entregá la imagen final y una vista previa a 20×20 px sobre fondo oscuro y claro.
+```

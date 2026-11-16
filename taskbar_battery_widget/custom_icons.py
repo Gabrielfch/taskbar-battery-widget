@@ -143,6 +143,15 @@ def maps_version() -> int:
     return _version
 
 
+def device_file(key: str) -> str | None:
+    """Image file name set for this device itself (not inherited from its kind), or None."""
+    try:
+        v = _by_device.get(key)
+    except TypeError:
+        return None
+    return v if safe_name(v) else None
+
+
 def file_for(kind: str, key: str) -> str | None:
     """Image file name to draw for a device (device > kind), or None for the built-in icon."""
     return resolve(kind, key, _by_kind, _by_device)

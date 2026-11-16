@@ -5,14 +5,14 @@ import logging
 import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QPainter, QPixmap
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy,
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy,
                                QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from . import custom_icons, i18n, taskbar
 from .config import PANEL_SIZE_FRACTION, UI_SCALES
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
-from .icons import (about_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon,
+from .icons import (about_icon, close_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon,
                     refresh_icon, show_all_icon)
 from .panel_model import PanelModel, PanelRow, section_title
 from .popup import place_popup
@@ -154,6 +154,8 @@ class DevicePanel(QFrame):
     settings_requested = Signal(QRect)      # global rect of the gear button; the tray answers with show_settings()
     about_requested = Signal()
     quit_requested = Signal()
+    icon_change_requested = Signal(str)     # visibility key: the tray asks for an image and saves it
+    icon_reset_requested = Signal(str)      # visibility key: drop that device's own custom icon
 
     def __init__(self, parent=None, dark: bool | None = None, show_logging: bool = False):
         # Not a Qt.Popup: the About dialog and the other windows must open above the panel without
@@ -173,6 +175,10 @@ class DevicePanel(QFrame):
         self._edit: QLineEdit | None = None      # inline alias editor while one is open
         self._edit_key = ""
         self._edit_label: QLabel | None = None
+        self._edit_icon: QToolButton | None = None      # clickable icon / remove cross of the row being edited
+        self._edit_clear: QToolButton | None = None
+        self._row_ctx: dict[str, tuple] = {}            # key -> (row layout, icon label, row, icon colour)
+        self._modal = False                             # a file dialog / message box of the tray is open
         self._nav: list[QToolButton] = []        # buttons reached with Up/Down (one per row)
         self._rows: list[list[QToolButton]] = [] # enabled buttons of each row (Left/Right)
         self.hidden_at: float | None = None      # time.monotonic() of the last hide
@@ -559,6 +565,7 @@ class DevicePanel(QFrame):
             icon_color.setAlpha(DIM_ALPHA)
         dpr = self.devicePixelRatioF() or 1.0
         icon = QLabel()
+        self._row_ctx[row.key] = (h, icon, row, icon_color)
         icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr, row.battery, row.charging, row.key, self._icon))
         icon.setFixedSize(self._icon, self._icon)
         h.addWidget(icon)
@@ -682,6 +689,7 @@ class DevicePanel(QFrame):
         self._buttons = {}
         self._nav = []
         self._rows = []
+        self._row_ctx = {}
 
         content = QWidget()
         content.setStyleSheet("background: transparent;")
@@ -798,6 +806,7 @@ class DevicePanel(QFrame):
         label.hide()
         layout.insertWidget(0, edit)
         edit.show()
+        self._add_edit_extras(row, lang)
         edit.setFocus(Qt.FocusReason.OtherFocusReason)
         edit.selectAll()
 
@@ -810,6 +819,7 @@ class DevicePanel(QFrame):
         edit.removeEventFilter(self)
         edit.hide()
         edit.deleteLater()
+        self._remove_edit_extras(key)
         if label is not None:
             label.show()
         btn = self._buttons.get((key, "alias"))
@@ -819,6 +829,118 @@ class DevicePanel(QFrame):
             self.alias_changed.emit(key, text)
         elif self._model is not None:
             self.set_model(self._model, self._logging_keys)     # apply what was deferred
+
+    # While the alias is edited the row icon becomes a button (pick an image for this device) and, when the
+    # device has an image of its own, a small cross removes it. The tray does the import and the saving.
+    def _add_edit_extras(self, row: PanelRow, lang: str) -> None:
+        ctx = self._row_ctx.get(row.key)
+        if ctx is None:
+            return
+        h, label = ctx[0], ctx[1]
+        pen = self._buttons.get((row.key, "alias"))
+        side = self._icon + self._s(6)
+        focus = _hex(band_color("amber", self._dark))
+        css = (f"QToolButton {{ background: transparent; border: 2px solid transparent; border-radius: 4px; "
+               f"padding: 0; }} QToolButton:hover {{ background: rgba(128,128,128,60); }} "
+               f"QToolButton:focus {{ border: 2px solid {focus}; }}")
+        icon = QToolButton(self)
+        icon.setFixedSize(side, side)
+        icon.setIconSize(QSize(self._icon, self._icon))
+        icon.setAutoRaise(True)
+        icon.setStyleSheet(css)
+        icon.setFocusPolicy(Qt.FocusPolicy.TabFocus)    # a mouse click must not pull the focus off the editor
+        icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        icon.setToolTip(_t("tip_icon_change", lang))
+        icon.setAccessibleName(_t("icon_change", lang, name=row.name))
+        icon.installEventFilter(self)
+        icon.clicked.connect(lambda _=False, k=row.key: self._request_icon(k, False))
+        clear = QToolButton(self)
+        clear.setFixedSize(self._bicon + self._s(4), self._bicon + self._s(4))
+        clear.setIconSize(QSize(self._bicon, self._bicon))
+        clear.setAutoRaise(True)
+        clear.setStyleSheet(css)
+        clear.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear.setIcon(close_icon(self._bicon, self._text))
+        clear.setToolTip(_t("tip_icon_reset", lang))
+        clear.setAccessibleName(_t("icon_reset", lang, name=row.name))
+        clear.installEventFilter(self)
+        clear.clicked.connect(lambda _=False, k=row.key: self._request_icon(k, True))
+        label.hide()
+        h.insertWidget(0, icon)
+        h.insertWidget(1, clear)
+        self._edit_icon, self._edit_clear = icon, clear
+        if self._edit is not None:
+            self.setTabOrder(self._edit, icon)
+            self.setTabOrder(icon, clear)
+            if pen is not None:
+                self.setTabOrder(clear, pen)
+        self._sync_edit_extras()
+
+    def _sync_edit_extras(self) -> None:
+        """Repaint the editing row's icon from the current maps; the cross shows only for an own icon."""
+        icon, clear = self._edit_icon, self._edit_clear
+        ctx = self._row_ctx.get(self._edit_key)
+        if icon is None or clear is None or ctx is None:
+            return
+        row, color = ctx[2], ctx[3]
+        dpr = self.devicePixelRatioF() or 1.0
+        icon.setIcon(QIcon(_kind_pixmap(row.kind, color, dpr, row.battery, row.charging, row.key, self._icon)))
+        own = custom_icons.device_file(row.key) is not None
+        clear.setVisible(own)
+        pen = self._buttons.get((row.key, "alias"))
+        i = self._row_of(pen) if pen is not None else None
+        if i is not None:
+            buttons = self._rows[i]
+            for b in (icon, clear):
+                if b in buttons:
+                    buttons.remove(b)
+            j = buttons.index(pen)
+            buttons[j:j] = [icon] + ([clear] if own else [])
+
+    def _remove_edit_extras(self, key: str) -> None:
+        icon, clear = self._edit_icon, self._edit_clear
+        self._edit_icon = self._edit_clear = None
+        ctx = self._row_ctx.get(key)
+        for b in (icon, clear):
+            if b is None:
+                continue
+            for buttons in self._rows:
+                if b in buttons:
+                    buttons.remove(b)
+            b.removeEventFilter(self)
+            b.hide()
+            if ctx is not None:
+                ctx[0].removeWidget(b)
+            b.deleteLater()
+        if ctx is not None and icon is not None:
+            ctx[1].show()
+
+    def _request_icon(self, key: str, reset: bool) -> None:
+        """Ask the tray to pick/import (or drop) an image; the alias editor stays open with its text."""
+        edit = self._edit
+        if edit is None or key != self._edit_key:
+            return
+        self._modal = True
+        try:
+            (self.icon_reset_requested if reset else self.icon_change_requested).emit(key)
+        finally:
+            self._modal = False
+        if self._edit is not edit:          # the editor was closed meanwhile
+            return
+        self._sync_edit_extras()
+        if self.isVisible():
+            self.activateWindow()
+        edit.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _check_edit_focus(self) -> None:
+        """Focus left the editor by keyboard: the edit ends unless it went to the row's icon buttons."""
+        if self._edit is None or self._modal:
+            return
+        fw = QApplication.focusWidget()
+        if fw is not None and fw in (self._edit, self._edit_icon, self._edit_clear):
+            return
+        self._finish_edit(True)
 
     def _current_alias(self, key: str) -> str:
         m = self._model
@@ -840,8 +962,21 @@ class DevicePanel(QFrame):
                     self._finish_edit(True)
                     return True
             elif ev.type() == QEvent.Type.FocusOut:
+                reason = ev.reason()
+                if self._modal or reason == Qt.FocusReason.PopupFocusReason:
+                    return False        # file dialog / context menu of the line edit: keep editing
+                if reason in (Qt.FocusReason.TabFocusReason, Qt.FocusReason.BacktabFocusReason):
+                    QTimer.singleShot(0, self._check_edit_focus)    # may just be going to the icon buttons
+                    return False
                 self._finish_edit(True)
             return False
+        if self._edit is not None and obj is not None and obj in (self._edit_icon, self._edit_clear):
+            if ev.type() == QEvent.Type.KeyPress and ev.key() == Qt.Key.Key_Escape:
+                self._finish_edit(False)
+                return True
+            if ev.type() == QEvent.Type.FocusOut:
+                if not self._modal and ev.reason() != Qt.FocusReason.PopupFocusReason:
+                    QTimer.singleShot(0, self._check_edit_focus)
         if ev.type() == QEvent.Type.KeyPress:
             key = ev.key()
             if self.in_settings and (key in (Qt.Key.Key_Escape, Qt.Key.Key_Backspace)
@@ -1030,6 +1165,8 @@ class DevicePanel(QFrame):
 
     def hideEvent(self, ev) -> None:
         super().hideEvent(ev)
+        if self._edit is not None:      # never leave an alias editor open on a hidden panel (it blocks set_model)
+            self._finish_edit(True)
         self.hidden_at = time.monotonic()
         if self.in_settings:        # the next opening shows the device list again
             self.show_devices()
