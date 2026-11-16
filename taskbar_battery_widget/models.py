@@ -26,6 +26,7 @@ class Device:
     source: str = ""                # "hid" when read directly from a dongle, else ""
     last_seen: float | None = None  # epoch seconds of the last real reading (historical values only)
     stale: bool = False             # battery is the last known value, not a live reading
+    original_name: str = ""         # name before the user's alias was applied ("" = no alias)
 
 
 _KEY_RE = re.compile(r"^h:[0-9a-f]{16}$")

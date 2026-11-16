@@ -835,6 +835,20 @@ def draw_record(painter: QPainter, rect: QRectF, color: QColor, active: bool = T
     painter.restore()
 
 
+def draw_pencil(painter: QPainter, rect: QRectF, color: QColor, flag: bool = False) -> None:
+    """Pencil (edit alias), 24x24 design grid; `flag` is unused (shared icon helper signature)."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    side = min(rect.width(), rect.height())
+    painter.translate(rect.center().x() - side / 2, rect.center().y() - side / 2)
+    painter.scale(side / 24.0, side / 24.0)
+    painter.setPen(_stroke_pen(color))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    _poly(painter, [(4, 20), (5.2, 15), (16, 4.2), (19.8, 8), (9, 18.8)], close=True)
+    _poly(painter, [(13.6, 6.6), (17.4, 10.4)])
+    painter.restore()
+
+
 def _icon_from(draw, size: int, color: QColor, flag: bool) -> QIcon:
     icon = QIcon()
     for scale in (1, 2):
@@ -852,6 +866,11 @@ def _icon_from(draw, size: int, color: QColor, flag: bool) -> QIcon:
 def eye_icon(size: int, open: bool, color: QColor) -> QIcon:
     """QIcon with 1x and 2x pixmaps of the eye (open) / slashed eye (closed)."""
     return _icon_from(draw_eye, size, color, open)
+
+
+def pencil_icon(size: int, color: QColor) -> QIcon:
+    """QIcon with 1x and 2x pixmaps of the pencil."""
+    return _icon_from(draw_pencil, size, color, False)
 
 
 def record_icon(size: int, active: bool, color: QColor) -> QIcon:

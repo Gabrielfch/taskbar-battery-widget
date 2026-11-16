@@ -6,12 +6,12 @@ import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPixmap
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea,
                                QToolButton, QVBoxLayout, QWidget)
 
 from . import i18n, taskbar
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
-from .icons import (about_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, power_icon, record_icon,
+from .icons import (about_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon,
                     refresh_icon, show_all_icon)
 from .panel_model import PanelModel, PanelRow, section_title
 from .popup import place_popup
@@ -24,6 +24,7 @@ ICON_PX = 20
 BTN_ICON_PX = 18
 BTN_PX = 32               # minimum touch/click target of every button (logical px)
 ROW_MARGIN_L, ROW_MARGIN_R, ROW_SPACING, ROW_BORDER = 8, 4, 8, 2
+MAX_ALIAS_LEN = 48
 ARM_FALLBACK_MS = 800      # if the panel is still not armed this long after show_at, retry activation
 HIDE_CHECK_MS = 50        # re-check the application state this long after the focus window changed
 HIDE_GRACE_S = 0.3        # a tray click this soon after the panel closed is the click that closed it
@@ -76,6 +77,7 @@ class DevicePanel(QFrame):
     show_disconnected_toggled = Signal(bool)
     show_all_requested = Signal()
     logging_toggled = Signal(str, bool)
+    alias_changed = Signal(str, str)        # visibility key, new alias ("" = back to the real name)
     open_log_requested = Signal(str)
     refresh_requested = Signal()
     settings_requested = Signal(QRect)      # global rect of the gear button
@@ -97,6 +99,9 @@ class DevicePanel(QFrame):
         self._model: PanelModel | None = None
         self._logging_keys: frozenset[str] = frozenset()
         self._sig: tuple | None = None
+        self._edit: QLineEdit | None = None      # inline alias editor while one is open
+        self._edit_key = ""
+        self._edit_label: QLabel | None = None
         self._nav: list[QToolButton] = []        # buttons reached with Up/Down (one per row)
         self._rows: list[list[QToolButton]] = [] # enabled buttons of each row (Left/Right)
         self.hidden_at: float | None = None      # time.monotonic() of the last hide
@@ -145,6 +150,8 @@ class DevicePanel(QFrame):
         self._model = model
         self._logging_keys = logging_keys
         self.setAccessibleName(i18n.tr("devices"))
+        if self._edit is not None:      # never rebuild under an open alias editor: applied when it closes
+            return
         if sig == self._sig:
             return
         self._sig = sig
@@ -325,7 +332,7 @@ class DevicePanel(QFrame):
         icon.setFixedSize(ICON_PX, ICON_PX)
         h.addWidget(icon)
 
-        n_btns = (1 + (1 if self.show_logging else 0)
+        n_btns = (2 + (1 if self.show_logging else 0)
                   + (1 if self.show_logging and row.key in self._logging_keys else 0))
         avail = (PANEL_WIDTH - 2 * ROW_BORDER - ROW_MARGIN_L - ROW_MARGIN_R - ICON_PX
                  - BTN_PX * n_btns - ROW_SPACING * (n_btns + 1) - 2)
@@ -339,7 +346,12 @@ class DevicePanel(QFrame):
         name.setTextFormat(Qt.TextFormat.PlainText)
         name.setFixedWidth(avail)
         name.setText(QFontMetrics(name.font()).elidedText(row.name, Qt.TextElideMode.ElideRight, avail))
-        name.setToolTip(row.name)
+        if row.original_name:
+            tip = row.name + "\n" + _t("original_name", lang, name=row.original_name)
+            name.setToolTip(tip)
+            w.setToolTip(tip)
+        else:
+            name.setToolTip(row.name)
         cv.addWidget(name)
         status = QLabel(level_text(row))
         status.setTextFormat(Qt.TextFormat.PlainText)
@@ -394,6 +406,24 @@ class DevicePanel(QFrame):
                 self._buttons[(row.key, "open")] = op
                 h.addWidget(op)
                 buttons.append(op)
+
+        pen = QToolButton(self)
+        self._size_button(pen)
+        pen.setAutoRaise(True)
+        pen.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        pen.setIconSize(QSize(BTN_ICON_PX, BTN_ICON_PX))
+        pen.setToolTip(_t("tip_alias_edit" if row.original_name else "tip_alias", lang))
+        pen.setAccessibleName(_t("alias", lang, name=row.name))
+        pen.setAccessibleDescription(desc)
+        pen.setCursor(Qt.CursorShape.PointingHandCursor)
+        pen.setIcon(pencil_icon(BTN_ICON_PX, self._text if row.original_name
+                                else band_color("grey", self._dark)))
+        pen.installEventFilter(self)
+        self._buttons[(row.key, "alias")] = pen
+        pen.clicked.connect(lambda _=False, r=row, c=cv, n=name, a=avail, lg=lang:
+                            self._start_edit(r, c, n, a, lg))
+        h.addWidget(pen)
+        buttons.append(pen)
 
         eye = self._eye_button(_t("show_in_bar", lang, name=row.name), row.visible, (row.key, "eye"),
                                desc, tip_on=_t("tip_hide", lang), tip_off=_t("tip_show", lang))
@@ -531,8 +561,69 @@ class DevicePanel(QFrame):
                               else band_color("grey", self._dark)))
         self.logging_toggled.emit(key, on)
 
+    # ------------------------------------------------------------------ alias editing
+    def _start_edit(self, row: PanelRow, layout: QVBoxLayout, label: QLabel, width: int, lang: str) -> None:
+        if self._edit is not None:
+            self._finish_edit(True)
+            return
+        edit = QLineEdit(self)
+        edit.setMaxLength(MAX_ALIAS_LEN)
+        edit.setFixedWidth(width)
+        edit.setText(row.name if row.original_name else "")
+        edit.setPlaceholderText(row.original_name or row.name)
+        edit.setAccessibleName(_t("alias_edit", lang, name=row.original_name or row.name))
+        edit.setStyleSheet(f"QLineEdit {{ background: transparent; color: {_hex(self._text)}; "
+                           f"border: 1px solid {_hex(band_color('amber', self._dark))}; "
+                           f"border-radius: 3px; padding: 0 2px; }}")
+        edit.installEventFilter(self)
+        self._edit, self._edit_key, self._edit_label = edit, row.key, label
+        label.hide()
+        layout.insertWidget(0, edit)
+        edit.show()
+        edit.setFocus(Qt.FocusReason.OtherFocusReason)
+        edit.selectAll()
+
+    def _finish_edit(self, save: bool) -> None:
+        edit, key, label = self._edit, self._edit_key, self._edit_label
+        if edit is None:
+            return
+        self._edit = self._edit_label = None        # first: hiding it fires FocusOut again
+        text = edit.text().strip()
+        edit.removeEventFilter(self)
+        edit.hide()
+        edit.deleteLater()
+        if label is not None:
+            label.show()
+        btn = self._buttons.get((key, "alias"))
+        if btn is not None:
+            btn.setFocus(Qt.FocusReason.OtherFocusReason)
+        if save and text != self._current_alias(key):
+            self.alias_changed.emit(key, text)
+        elif self._model is not None:
+            self.set_model(self._model, self._logging_keys)     # apply what was deferred
+
+    def _current_alias(self, key: str) -> str:
+        m = self._model
+        if m is None:
+            return ""
+        for r in m.connected + m.known:
+            if r.key == key:
+                return r.name if r.original_name else ""
+        return ""
+
     # ------------------------------------------------------------------ keyboard
     def eventFilter(self, obj: QObject, ev: QEvent) -> bool:
+        if obj is self._edit and obj is not None:
+            if ev.type() == QEvent.Type.KeyPress:
+                if ev.key() == Qt.Key.Key_Escape:
+                    self._finish_edit(False)
+                    return True
+                if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    self._finish_edit(True)
+                    return True
+            elif ev.type() == QEvent.Type.FocusOut:
+                self._finish_edit(True)
+            return False
         if ev.type() == QEvent.Type.KeyPress:
             key = ev.key()
             if key == Qt.Key.Key_Escape:

@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, QPoint, QRect, Signal
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
+from . import aliases
 from . import colors
 from . import icons
 from . import startup
@@ -229,6 +230,7 @@ class TrayController(QObject):
             self._panel.show_disconnected_toggled.connect(self._on_show_disconnected)
             self._panel.show_all_requested.connect(self._on_show_all)
             self._panel.logging_toggled.connect(self._on_logging)
+            self._panel.alias_changed.connect(self._on_alias)
             self._panel.open_log_requested.connect(self.open_detail_log_requested)
             self._panel.refresh_requested.connect(self.refresh_requested)
             self._panel.settings_requested.connect(self.show_settings_menu)
@@ -301,6 +303,12 @@ class TrayController(QObject):
 
     def _on_visibility(self, key: str, visible: bool) -> None:
         visibility.set_hidden(self._cfg, key, not visible)
+        self._changed(ui_only=True)
+
+    def _on_alias(self, key: str, alias: str) -> None:
+        if not aliases.set_alias(self._cfg, key, alias):
+            self._refresh_panel_force()
+            return
         self._changed(ui_only=True)
 
     def _on_show_disconnected(self, value: bool) -> None:

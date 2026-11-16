@@ -288,6 +288,7 @@ def main() -> int:
 
     from . import taskbar
     from .alerts import AlertManager
+    from .aliases import apply_aliases, get_aliases
     from .config import Config
     from .detail_log import DetailLogger
     from .device_history import DeviceHistory
@@ -353,7 +354,8 @@ def main() -> int:
 
     def on_devices(devices) -> None:
         raw[:] = devices
-        devices = full_device_list(history, devices, cfg, time.time())
+        devices = apply_aliases(full_device_list(history, devices, cfg, time.time()),
+                                get_aliases(cfg))      # history/logs keep the real names
         latest[:] = devices
         detail_driver.set_devices(devices)
         push_rates()

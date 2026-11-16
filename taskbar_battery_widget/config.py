@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from .models import is_visibility_key, visibility_key
+from .naming import sanitize_name
 
 DEFAULTS = {
     "low_threshold": 20,
@@ -30,6 +31,7 @@ DEFAULTS = {
     "color_palette": "classic",     # one of PALETTES ("mono" mirrors color_mode == "mono")
     "custom_colors": {"high": "#6EDC78", "medium": "#F5C842", "low": "#FF9999"},
     "icon_style": "outline",        # one of ICON_STYLES
+    "device_aliases": {},           # visibility key -> user-chosen display name (see aliases.py)
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)
@@ -41,6 +43,8 @@ DEFAULTS = {
 }
 
 MAX_HIDDEN = 200
+MAX_ALIASES = 200
+MAX_ALIAS_LEN = 48
 MAX_DETAIL_DEVICES = 50
 MAX_TIMESTAMP = 4_102_444_800       # year 2100
 COLOR_MODES = ("levels", "mono")
@@ -137,6 +141,10 @@ def _valid(key, value) -> bool:
     if key == "floating_positions":
         return (isinstance(value, dict) and len(value) <= MAX_FLOATING
                 and all(_floating_entry(k, v) is not None for k, v in value.items()))
+    if key == "device_aliases":
+        return (isinstance(value, dict) and len(value) <= MAX_ALIASES
+                and all(is_visibility_key(k) and isinstance(v, str) and 0 < len(v) <= MAX_ALIAS_LEN
+                        and v == sanitize_name(v, MAX_ALIAS_LEN) for k, v in value.items()))
     if key in ("hidden_devices", "detail_log_devices"):
         limit = MAX_HIDDEN if key == "hidden_devices" else MAX_DETAIL_DEVICES
         return (isinstance(value, list) and len(value) <= limit
@@ -154,6 +162,23 @@ def _valid(key, value) -> bool:
     if key == "notification_cooldown_min":
         return value >= 1
     return value >= 0
+
+
+def clean_aliases(value) -> dict:
+    """Sanitised copy of a device_aliases value: bad keys/values dropped, names cleaned (no control
+    or markup characters, at most MAX_ALIAS_LEN chars), at most MAX_ALIASES entries kept."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict = {}
+    for k, v in value.items():
+        if len(out) >= MAX_ALIASES:
+            break
+        if not is_visibility_key(k) or not isinstance(v, str):
+            continue
+        alias = sanitize_name(v, MAX_ALIAS_LEN)
+        if alias:
+            out[k] = alias
+    return out
 
 
 class Config:
@@ -176,7 +201,9 @@ class Config:
         if isinstance(raw.get("detail_log_devices"), list):
             raw["detail_log_devices"] = raw["detail_log_devices"][:MAX_DETAIL_DEVICES]
         for key in DEFAULTS:
-            if key == "floating_positions" and isinstance(raw.get(key), dict):
+            if key == "device_aliases":
+                self._data[key] = clean_aliases(raw.get(key))
+            elif key == "floating_positions" and isinstance(raw.get(key), dict):
                 self._data[key] = _clean_floating(raw[key])    # bad entries dropped, the rest kept
             elif key in raw and _valid(key, raw[key]):
                 self._data[key] = raw[key]
@@ -216,6 +243,8 @@ class Config:
             raise ValueError(f"unknown config key: {key!r}")
         if key == "detail_log_devices" and isinstance(value, list):
             value = value[:MAX_DETAIL_DEVICES]      # over the limit: truncate instead of raising into the UI
+        if key == "device_aliases" and isinstance(value, dict) and len(value) <= MAX_ALIASES:
+            value = clean_aliases(value)
         if not _valid(key, value):
             raise ValueError(f"invalid value for {key!r}: {value!r}")
         if key == "floating_positions":

@@ -104,7 +104,7 @@ def test_button_descriptions_and_panel_name(panel):
     panel.set_model(model([dev("a", "Mouse", 10)]), logging_keys=[visibility_key("a")])
     assert panel.accessibleName() == "Devices"
     btns = [b for b in panel.findChildren(QToolButton) if b not in panel._toolbar_buttons()]
-    assert len(btns) == 3
+    assert len(btns) == 4       # rec, open, alias, eye
     for b in btns:
         assert b.accessibleDescription().startswith("Mouse, ")
     assert all(not f.accessibleName() for f in row_frames(panel))
@@ -117,11 +117,12 @@ def test_left_right_moves_inside_row_and_empty_focuses_panel(panel):
     panel.set_model(model([dev("a", "A"), dev("b", "B")]), logging_keys=[visibility_key("a")])
     panel.show_at(QPoint(300, 300))
     row = panel._rows[0]
-    assert len(row) == 3        # rec, open, eye
+    assert len(row) == 4        # rec, open, alias, eye
     eye = panel._nav[0]
     assert eye is row[-1] and panel.focusWidget() is eye
     QTest.keyClick(eye, Qt.Key.Key_Left)
-    assert panel.focusWidget() is row[1]
+    assert panel.focusWidget() is row[2]
+    QTest.keyClick(row[2], Qt.Key.Key_Left)
     QTest.keyClick(row[1], Qt.Key.Key_Left)
     QTest.keyClick(row[0], Qt.Key.Key_Left)         # clamps
     assert panel.focusWidget() is row[0]

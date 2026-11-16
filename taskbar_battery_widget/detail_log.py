@@ -137,7 +137,7 @@ class DetailLogger:
         # visibility_key is idempotent: a live device and its rebuilt "absent" twin share one file
         vk = visibility_key(device.id)
         key = hashlib.sha256((self._get_salt() + vk).encode("utf-8", "replace")).hexdigest()[:16]
-        return self.base / f"{_slug(device.name)}_{key}.csv"
+        return self.base / f"{_slug(device.original_name or device.name)}_{key}.csv"
 
     # ---- producer side ----
     def tick(self, devices: Iterable[Device], enabled_keys: Collection[str], now: float | None = None) -> None:

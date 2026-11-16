@@ -37,6 +37,7 @@ class PanelRow:
     style: RowStyle
     visible: bool           # False when the user hid it from the widget/tray
     status_text: str
+    original_name: str = ""     # real name when the user gave the device an alias, else ""
 
 
 @dataclass(frozen=True)
@@ -88,13 +89,14 @@ def _row(d: Device, hidden: set, threshold: int, dark: bool, by_level: bool, lan
         idle=bool(getattr(d, "idle", False)), stale=bool(getattr(d, "stale", False)),
         connected=bool(d.connected), style=row_style(d, threshold, dark, by_level),
         visible=key not in hidden,
-        status_text=status)
+        status_text=status,
+        original_name=sanitize_name(getattr(d, "original_name", "") or ""))
 
 
 def _row_sig(r: PanelRow) -> tuple:
     s = r.style
     return (r.key, r.name, r.kind, r.link, r.battery, r.charging, r.idle, r.stale, r.connected,
-            r.visible, r.status_text, s.fg.name(), s.bg.name(), s.band, s.cues)
+            r.visible, r.status_text, r.original_name, s.fg.name(), s.bg.name(), s.band, s.cues)
 
 
 def build_panel_model(devices, hidden_keys, show_disconnected: bool, threshold: int, dark: bool,
