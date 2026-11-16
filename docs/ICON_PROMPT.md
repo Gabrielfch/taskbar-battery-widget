@@ -6,7 +6,7 @@ one device: *Settings ▸ Personalization ▸ Custom icons…*, or click the dev
 Copy one of these prompts into an AI chat, fill in the `[brackets]`, and load the result in the app.
 
 **What the app accepts:** PNG, JPG, BMP, ICO or GIF (up to 2 MB and 2048×2048 px) and SVG (up to 512 KB; it is converted to a
-256×256 PNG when you import it, and SVGs with scripts, external links or `<!DOCTYPE>` are rejected). Use PNG or
+256×256 PNG when you import it, and an SVG is rebuilt from a safe subset: only `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `g`, `defs`, gradients and `clipPath`; anything else, such as `style`, `text`, filters, `use`, images, scripts or `<!DOCTYPE>`, makes it be rejected). Use PNG or
 SVG for a transparent background.
 
 ## Prompt for a chat that creates images
@@ -40,7 +40,10 @@ What it shows: [description, or "the device in the attached image"]
 Style: [flat silhouette / outline / retro pixel art...]
 
 Requirements:
-- viewBox="0 0 256 256", transparent background, no text, no filters or complex gradients.
+- viewBox="0 0 256 256", transparent background. Use ONLY these elements: path, rect, circle, ellipse, line,
+  polyline, polygon, g, linearGradient/radialGradient (with stop) and clipPath. No style attribute or <style>, no
+  text, filters, use, masks, patterns, images, stroke-dasharray or animation: set colours with the fill/stroke
+  attributes.
 - Centred shape filling about 85 % of the canvas, simple shapes and strokes of at least 16 units so it reads
   at 16–20 px.
 - Good contrast on dark (#202020) and light (#F3F3F3) backgrounds: add a thin outline of the opposite
