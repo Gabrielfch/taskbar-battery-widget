@@ -1,0 +1,42 @@
+name: Translation / language request
+description: Request a new language or suggest a correction to an existing translation
+labels: ["translation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Portuguese, French, Russian, Simplified Chinese and Japanese were machine-translated and may contain mistakes. Corrections are very welcome.
+        Please do not paste personal data.
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      description: "For example: Italian (it), German (de), or Portuguese (pt)."
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type
+      options:
+        - New language
+        - Correction to an existing translation
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current text (corrections only)
+      description: "The text as it appears now, or its key in taskbar_battery_widget/i18n.py (for example panel_known)."
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed text
+      description: "Keep placeholders such as {name} or {n} unchanged. For a new language you can paste the translated block of taskbar_battery_widget/i18n.py."
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context or screenshot (optional)
+      description: "Where the text appears, and why the change is better. You can drag a screenshot here."

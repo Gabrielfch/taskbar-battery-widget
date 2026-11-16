@@ -22,24 +22,29 @@ log = logging.getLogger(__name__)
 REFRESH_MS = 10 * 60 * 1000
 
 
-def format_remaining(hours: float) -> str:
-    """'≈ 40 min' (< 1 h), '≈ 5 h 30 min' / '≈ 6 h' (< 48 h), '≈ 3 d' (>= 48 h)."""
+def format_remaining(hours: float, lang: str | None = None) -> str:
+    """'≈ 40 min' (< 1 h), '≈ 5 h 30 min' / '≈ 6 h' (< 48 h), '≈ 3 d' (>= 48 h); units localized."""
+    lg = i18n.normalize_language(lang or i18n.get_language())
+
+    def u(key: str, n: int) -> str:
+        return i18n.tr_in(lg, key, n=n)
+
     minutes = max(1, round(hours * 60))
     if minutes < 60:
-        return f"≈ {minutes} min"
+        return f"≈ {u('dur_min', minutes)}"
     if hours < 10:
         halves = round(hours * 2)
         h, half = divmod(halves, 2)
-        return f"≈ {h} h 30 min" if half else f"≈ {h} h"
+        return f"≈ {u('dur_h', h)} {u('dur_min', 30)}" if half else f"≈ {u('dur_h', h)}"
     if hours < 48:
-        return f"≈ {round(hours)} h"
-    return f"≈ {round(hours / 24)} d"
+        return f"≈ {u('dur_h', round(hours))}"
+    return f"≈ {u('dur_d', round(hours / 24))}"
 
 
 def remaining_label(hours: float, charging: bool, lang: str | None = None) -> str:
     """'≈ 6 h left' / '≈ 6 h restantes' (discharging); 'full in ≈ 40 min' (charging)."""
     lg = lang or i18n.get_language()
-    t = format_remaining(hours)
+    t = format_remaining(hours, lg)
     return i18n.tr_in(lg, "remaining_full" if charging else "remaining_left", t=t)
 
 

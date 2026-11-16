@@ -56,7 +56,8 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
 - Turns red at or below a configurable low threshold; low-battery notifications with cooldown.
 - Estimated "charging" state, hides over fullscreen apps, tray menu (refresh, show disconnected,
   notifications, low threshold, start with Windows, quit).
-- Spanish / English UI depending on the system locale.
+- UI in 7 languages (English, Spanish, Portuguese, French, Russian, Simplified Chinese, Japanese), following
+  the Windows language by default; see [Languages](#languages).
 - *About* window (tray menu): version, license, third-party notices, links, logs folder, copyable technical
   info, and *Check for updates* (manual, or optional once-a-day automatic check). Installed copies can
   download and install a new release after signature and SHA-256 verification; portable/source copies only open the release page.
@@ -94,6 +95,35 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
     10 % drop).
 - Full-charge notification (*Settings ▸ Alerts ▸ Notify when fully charged*, on by default): once per charge,
   when a device reaches 100 % (or stops charging at 99 % or more).
+
+## Languages
+
+Available languages: English, Español (Spanish), Português (Portuguese, Brazilian), Français (French),
+Русский (Russian), 简体中文 (Simplified Chinese) and 日本語 (Japanese).
+
+Choose one in *Settings ▸ Personalization ▸ Language*. *Automatic* follows the Windows language and falls
+back to English when it is not one of the above. Dates, decimal separators and time units follow each language.
+
+> Portuguese, French, Russian, Simplified Chinese and Japanese were machine-translated (AI) and may contain
+> mistakes; corrections are welcome.
+
+### Request a language
+
+Open a [Translation / language request](https://github.com/Gabrielfch/taskbar-battery-widget/issues/new?template=translation.yml)
+issue to ask for a new language or to correct a text.
+
+### Contribute a translation
+
+1. Copy the `EN = {...}` block of `taskbar_battery_widget/i18n.py` and translate every value, keeping the
+   keys and the `{placeholders}` (such as `{name}` or `{n}`) unchanged.
+2. Register it: add the language to `LANGUAGES`, assign your table to a name (for example `IT = {...}`) and add
+   it to `_TABLES`. If its dates or decimals differ from English, add it to `DATE_STYLE` / `DECIMAL_COMMA`.
+3. Run `.venv\Scripts\python.exe -m pytest tests\test_i18n_languages.py` (checks that all keys and placeholders match).
+4. Open a pull request, or paste the translated block in an issue using the translation template.
+
+### Translation credits
+
+Your name here — help review a language!
 
 ## Compatibility
 

@@ -226,9 +226,10 @@ def test_widget_ignores_bogus_scale(qapp):
 
 # ------------------------------------------------------------------ language
 def test_language_registry_and_fallback():
-    assert set(i18n.LANGUAGES) == {"es", "en"} and i18n.LANGUAGES["es"] == "Español"
-    assert LANGUAGES == ("auto", "es", "en")
-    assert i18n.normalize_language("es-MX") == "es" and i18n.normalize_language("pt-BR") == "en"
+    assert set(i18n.LANGUAGES) == {"es", "en", "pt", "fr", "ru", "zh", "ja"}
+    assert i18n.LANGUAGES["es"] == "Español"
+    assert LANGUAGES == ("auto",) + tuple(i18n.LANGUAGES)
+    assert i18n.normalize_language("es-MX") == "es" and i18n.normalize_language("de-DE") == "en"
     assert i18n.normalize_language(None) == "en"
     assert i18n.tr_in("zz", "quit") == "Quit"
     assert i18n.tr_in("es", "quit") == "Salir"
@@ -260,7 +261,7 @@ def test_language_choice_in_panel_changes_texts_live(qapp, tray, monkeypatch):
     v = p.settings_view
     assert v.title_text() == "Personalization" and p._toolbar["quit"].toolTip() == "Quit"
     labels = {o.value: o.label for o in tray._settings.find("language").options()}
-    assert labels == {"auto": "Automatic (system)", "es": "Español", "en": "English"}
+    assert labels == {"auto": "Automatic (system)", **i18n.LANGUAGES}
     QTest.mouseClick(v.row("language"), Qt.MouseButton.LeftButton)
     QTest.mouseClick(v.row("language:es"), Qt.MouseButton.LeftButton)
     assert tray._cfg.get("language") == "es" and i18n.get_language() == "es"

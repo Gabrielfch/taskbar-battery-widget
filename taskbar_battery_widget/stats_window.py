@@ -32,8 +32,16 @@ DEFAULT_RANGE = "7d"
 
 # ---------------------------------------------------------------- formatting
 
-def format_duration(hours: float | None) -> str:
-    """'0 min', '45 min', '5 h 30 min', '1 d 4 h'; '—' for None."""
+def _lang(lang: str | None) -> str:
+    return i18n.normalize_language(lang or i18n.get_language())
+
+
+def _dur(key: str, n: int, lang: str | None) -> str:
+    return i18n.tr_in(_lang(lang), key, n=n)
+
+
+def format_duration(hours: float | None, lang: str | None = None) -> str:
+    """'0 min', '45 min', '5 h 30 min', '1 d 4 h' (units localized); '—' for None."""
     if hours is None:
         return DASH
     minutes = max(0, round(hours * 60))
@@ -42,15 +50,16 @@ def format_duration(hours: float | None) -> str:
         h = round(rest / 60)
         if h >= 24:
             d, h = d + 1, 0
-        return f"{d} d {h} h" if h else f"{d} d"
+        return f"{_dur('dur_d', d, lang)} {_dur('dur_h', h, lang)}" if h else _dur("dur_d", d, lang)
     if minutes >= 60:
         h, m = divmod(minutes, 60)
-        return f"{h} h {m} min" if m else f"{h} h"
-    return f"{minutes} min"
+        return f"{_dur('dur_h', h, lang)} {_dur('dur_min', m, lang)}" if m else _dur("dur_h", h, lang)
+    return _dur("dur_min", minutes, lang)
 
 
-def _is_es(lang: str | None) -> bool:
-    return (lang or i18n.get_language()) == "es"
+def decimal_text(text: str, lang: str | None = None) -> str:
+    """Use the decimal comma in the languages that write it (es, pt, fr, ru)."""
+    return text.replace(".", ",") if _lang(lang) in i18n.DECIMAL_COMMA else text
 
 
 def _fromts(ts: float) -> _dt.datetime | None:
@@ -61,10 +70,11 @@ def _fromts(ts: float) -> _dt.datetime | None:
 
 
 def format_day(day: _dt.date | _dt.datetime, lang: str | None = None, year: bool = False) -> str:
-    """Spanish day/month, English month/day; optional 2-digit year."""
-    if _is_es(lang):
-        return day.strftime("%d/%m/%y" if year else "%d/%m")
-    return day.strftime("%m/%d/%y" if year else "%m/%d")
+    """Date in the language's order (d/m/y, m/d/y or y/m/d); optional 2-digit year."""
+    order, sep = i18n.DATE_STYLE.get(_lang(lang), ("mdy", "/"))
+    codes = {"d": "%d", "m": "%m", "y": "%y"}
+    parts = [codes[c] for c in order if year or c != "y"]
+    return day.strftime(sep.join(parts))
 
 
 def format_when(ts: float | None, lang: str | None = None) -> str:
@@ -98,16 +108,18 @@ def axis_label_sample(span_s: float) -> str:
     return "00/00/00" if span_s > 300 * 86400 else "00/00"
 
 
-def format_rate(rate: float | None) -> str:
-    return DASH if rate is None else f"{rate:.1f} %/h"
+def format_rate(rate: float | None, lang: str | None = None) -> str:
+    if rate is None:
+        return DASH
+    return decimal_text(f"{rate:.1f}", lang) + " " + i18n.tr_in(_lang(lang), "unit_rate")
 
 
 def format_cycles(cycles: float, charge_count: int, lang: str | None = None) -> str:
-    """'2.1' ('2,1' in Spanish); the dash when no charge was seen."""
+    """'2.1' ('2,1' with a decimal comma); the dash when no charge was seen."""
     if not charge_count:
         return DASH
     text = f"{cycles:.1f}"
-    return text.replace(".", ",") if _is_es(lang) else text
+    return decimal_text(text, lang)
 
 
 def format_pct(v: float | None, signed: bool = False) -> str:
