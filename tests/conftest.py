@@ -20,6 +20,38 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+def _destroy_top_level_widgets() -> None:
+    """Delete every top-level widget the tests left behind while the QApplication is still alive.
+
+    Tests create hundreds of panels, menus and widgets without closing them. Left alone, their C++
+    objects are torn down during interpreter finalization, after (or while) the QApplication goes away,
+    which intermittently aborts the process with an access violation once all tests have passed
+    (CI: "1944 passed" followed by exit code 1).
+    """
+    import gc
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    gc.collect()
+    for w in app.topLevelWidgets():
+        try:
+            w.hide()
+            w.deleteLater()
+        except RuntimeError:            # already deleted on the C++ side
+            pass
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    gc.collect()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _clean_qt_shutdown():
+    yield
+    _destroy_top_level_widgets()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_module_state():
     """Reset module-level registries so a deliberately hung thread or a cache entry from one test
