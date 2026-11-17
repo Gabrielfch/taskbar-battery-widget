@@ -7,6 +7,7 @@ GET_REGISTER request for the two battery registers (0x07 status, 0x0D charge) an
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 import re
@@ -28,6 +29,7 @@ HIDPP_PAGE = 0xFF00
 USAGE_SHORT, USAGE_LONG = 0x0001, 0x0002
 
 F_ROOT = 0x0000
+F_DEVICE_INFO = 0x0003
 F_DEVICE_NAME = 0x0005
 F_BATTERY_STATUS = 0x1000
 F_BATTERY_VOLTAGE = 0x1001
@@ -38,6 +40,9 @@ BATTERY_FEATURES = (F_UNIFIED_BATTERY, F_BATTERY_STATUS, F_BATTERY_VOLTAGE, F_AD
 # Read-only whitelist: feature id -> functions this app may ever send. Anything else is refused.
 ALLOWED_FUNCTIONS: dict[int, frozenset[int]] = {
     F_ROOT: frozenset({0, 1}),              # getFeature, ping
+    # Device Information fn0 getDeviceInfo is a pure read (entityCount, unitId, transport, modelId). It
+    # is used only to recognise that a USB-cabled device and its receiver entry are the same unit.
+    F_DEVICE_INFO: frozenset({0}),
     F_DEVICE_NAME: frozenset({0, 1, 2}),    # count, name chunk, type
     F_UNIFIED_BATTERY: frozenset({1}),      # get_status
     F_BATTERY_STATUS: frozenset({0}),
@@ -272,6 +277,16 @@ def assemble_name(chunks: list[bytes], length: int) -> str:
     return raw.split(b"\x00", 1)[0].decode("ascii", "replace").strip()
 
 
+def decode_unit_id(params: bytes) -> str | None:
+    """getDeviceInfo reply: [entityCount, unitId[4], transport[2], modelId[6]...] -> 'xxxxxxxx'."""
+    if len(params) < 5:
+        return None
+    uid = bytes(params[1:5])
+    if uid in (b"\x00\x00\x00\x00", b"\xff\xff\xff\xff"):
+        return None                              # unset / placeholder: would match unrelated units
+    return uid.hex()
+
+
 def kind_from_device_type(code: int | None) -> str | None:
     return DEVICE_TYPES.get(code) if code is not None else None
 
@@ -460,6 +475,16 @@ class Channel:
             return None
         return rep.params[0]
 
+    def read_unit_id(self, device_index: int, timeout: float = 0.8) -> str | None:
+        """Device Information getDeviceInfo -> unit id as 8 hex chars, or None. A serial: never log it."""
+        idx = self.get_feature_index(device_index, F_DEVICE_INFO, timeout)
+        if idx is None:
+            return None
+        rep = self.request(device_index, idx, 0, b"", timeout, feature_id=F_DEVICE_INFO)
+        if rep is None or rep.error is not None:
+            return None
+        return decode_unit_id(rep.params)
+
     def _request_register(self, device_index: int, register: int, timeout: float) -> Reply | None:
         """Send one whitelisted HID++ 1.0 GET_REGISTER (short report) and wait for its answer."""
         pkt = build_hidpp1_get_register(device_index, register)      # raises before anything is sent
@@ -600,6 +625,11 @@ def _scan_group(group: dict, handle_factory=None, cancel: threading.Event | None
                 info["probed_at"] = now             # failures are cached for INFO_RETRY_TTL_S
                 info["name"] = ch.read_name(idx) or info.get("name")
                 info["type"] = ch.read_type(idx)
+            if info.get("unit") is None and \
+                    now - info.get("unit_at", -INFO_RETRY_TTL_S - 1) > INFO_RETRY_TTL_S:
+                info["unit_at"] = now               # a missing unit id is not retried for the TTL
+                info["unit"] = ch.read_unit_id(idx)
+            unit = info.get("unit")
             reading = ch.read_battery(idx, info)
             name = sanitize_name(info.get("name") or group.get("product") or "") or "Logitech device"
             kind = kind_from_device_type(info.get("type")) or kind_from_name(name)
@@ -615,11 +645,57 @@ def _scan_group(group: dict, handle_factory=None, cancel: threading.Event | None
                 else:
                     _info_cache.pop(ckey, None)
             link = "2.4ghz" if receiver else "usb"
-            devices.append(Device(
+            dev = Device(
                 id=f"logi:{group['pid']:04x}:{idx:02x}{id_suffix}", name=name, kind=kind,
                 battery=reading[0] if reading else None, connected=True,
-                charging=bool(reading[1]) if reading else False, link=link))
+                charging=bool(reading[1]) if reading else False, link=link)
+            dev._unit_id = unit                     # private, not a dataclass field: never serialized
+            devices.append(dev)
     return devices
+
+
+_absorbed_ids: frozenset[str] = frozenset()
+
+
+def take_absorbed_ids() -> frozenset[str]:
+    """Ids of USB entries merged into a receiver entry by the latest `scan_logitech`."""
+    return _absorbed_ids
+
+
+def merge_same_unit(devices: list[Device]) -> list[Device]:
+    """One entry per physical unit when it is seen both through a receiver and over its USB cable.
+
+    The receiver entry keeps its id and name (alias, icon, hidden state and logs follow the id); the
+    USB entry supplies battery/charging when it has a reading, and the link becomes "usb". Entries
+    without a unit id, or a USB entry without its receiver entry, are left untouched.
+    """
+    global _absorbed_ids
+    by_unit: dict[str, list[Device]] = {}
+    for d in devices:
+        u = getattr(d, "_unit_id", None)
+        if u:
+            by_unit.setdefault(u, []).append(d)
+    drop: set[int] = set()
+    repl: dict[int, Device] = {}
+    absorbed: set[str] = set()
+    for group in by_unit.values():
+        via_rx = [d for d in group if d.link != "usb"]
+        via_usb = [d for d in group if d.link == "usb"]
+        if not via_rx or not via_usb:
+            continue
+        base, usb = via_rx[0], next((d for d in via_usb if d.battery is not None), via_usb[0])
+        merged = dataclasses.replace(base, link="usb", connected=True)
+        if usb.battery is not None:
+            merged.battery, merged.charging = usb.battery, usb.charging
+        repl[id(base)] = merged
+        drop.update(id(d) for d in group if d is not base)
+        absorbed.update(d.id for d in via_usb)
+    out = [repl.get(id(d), d) for d in devices if id(d) not in drop]
+    for d in out:
+        if hasattr(d, "_unit_id"):
+            del d._unit_id
+    _absorbed_ids = frozenset(absorbed)
+    return out
 
 
 def scan_logitech(infos, handle_factory=None, cancel: threading.Event | None = None) -> list[Device]:
@@ -660,4 +736,4 @@ def scan_logitech(infos, handle_factory=None, cancel: threading.Event | None = N
         else:
             cancel.set()                            # overran: drop its result, stop its requests
             log.warning("HID++ group scan overran its budget; result dropped")
-    return out
+    return merge_same_unit(out)

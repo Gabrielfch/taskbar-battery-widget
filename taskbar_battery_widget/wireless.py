@@ -525,6 +525,10 @@ def _scan_locked() -> list[Device]:
         else:
             fresh += list(c.value or [])
     with _lock:
+        if "logitech" in named:                 # a USB entry merged into its receiver entry must not
+            from .hidpp import take_absorbed_ids    # linger as an idle ghost from the cache
+            for gone in take_absorbed_ids():
+                _cache.pop(gone, None)
         out = apply_cache(_cache, fresh, present, time.monotonic(), grace=_idle_grace_s)
     return _filter_links(dedupe_logitech(out))
 

@@ -78,7 +78,7 @@ def test_non_whitelisted_function_or_feature_is_rejected_without_writing():
     with channel_for(h) as ch:
         for fid, fn in ((hidpp.F_UNIFIED_BATTERY, 0), (hidpp.F_UNIFIED_BATTERY, 2),
                         (hidpp.F_BATTERY_VOLTAGE, 1), (hidpp.F_DEVICE_NAME, 3),
-                        (hidpp.F_ROOT, 2), (0x1814, 0), (0x0003, 0)):
+                        (hidpp.F_ROOT, 2), (0x1814, 0), (0x0003, 1)):
             with pytest.raises(HidppSafetyError):
                 ch.request(1, 5, fn, feature_id=fid)
         with pytest.raises(HidppSafetyError):                       # getFeature of a non-listed id
