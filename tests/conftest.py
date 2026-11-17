@@ -52,6 +52,39 @@ def _clean_qt_shutdown():
     _destroy_top_level_widgets()
 
 
+_FULL_GC_EVERY = 50
+_gc_tests = 0
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _gc_only_on_main_thread():
+    """Keep Python's cyclic garbage collector off worker threads.
+
+    Automatic collection runs in whichever thread happens to allocate, and the suite's worker threads
+    (DeviceMonitor, wireless scans, asyncio helpers) do. Garbage from earlier tests includes Qt widgets
+    and QObjects caught in reference cycles; collecting them there destroys Qt objects off the GUI
+    thread, which intermittently hung CI (timeout mid-suite) or crashed the process. Automatic
+    collection is switched off for the session and done explicitly on the main thread between tests.
+    """
+    import gc
+    was_enabled = gc.isenabled()
+    gc.collect()
+    gc.disable()
+    yield
+    gc.collect()
+    if was_enabled:
+        gc.enable()
+
+
+@pytest.fixture(autouse=True)
+def _collect_garbage_between_tests(_gc_only_on_main_thread):
+    yield
+    import gc
+    global _gc_tests
+    _gc_tests += 1
+    gc.collect() if _gc_tests % _FULL_GC_EVERY == 0 else gc.collect(1)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_module_state():
     """Reset module-level registries so a deliberately hung thread or a cache entry from one test
