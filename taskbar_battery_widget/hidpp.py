@@ -15,6 +15,7 @@ import threading
 import time
 from dataclasses import dataclass
 
+from . import unit_links
 from .hid_win import GuardedCall
 from .models import Device
 from .naming import sanitize_name
@@ -657,6 +658,15 @@ def _scan_group(group: dict, handle_factory=None, cancel: threading.Event | None
 _absorbed_ids: frozenset[str] = frozenset()
 
 
+def forget_links_for(key_or_id: str) -> int:
+    """Forget the remembered unit -> receiver relations of a forgotten device (id or visibility key)."""
+    try:
+        return unit_links.default().forget(key_or_id)
+    except Exception:
+        log.debug("could not forget unit links", exc_info=True)
+        return 0
+
+
 def take_absorbed_ids() -> frozenset[str]:
     """Ids of USB entries merged into a receiver entry by the latest `scan_logitech`."""
     return _absorbed_ids
@@ -678,9 +688,24 @@ def merge_same_unit(devices: list[Device]) -> list[Device]:
     drop: set[int] = set()
     repl: dict[int, Device] = {}
     absorbed: set[str] = set()
-    for group in by_unit.values():
+    links = unit_links.default()
+    taken_ids = {d.id for d in devices}
+    for u, group in by_unit.items():
         via_rx = [d for d in group if d.link != "usb"]
         via_usb = [d for d in group if d.link == "usb"]
+        for d in via_rx:                            # remember which receiver slot this unit lives in
+            links.learn(u, d.id, d.name)
+        if via_usb and not via_rx:
+            # plugged in to charge: it left its receiver. Give it back the receiver id it had.
+            hit = links.lookup(u)
+            if hit and hit[0] not in taken_ids:
+                usb = next((d for d in via_usb if d.battery is not None), via_usb[0])
+                repl[id(usb)] = dataclasses.replace(usb, id=hit[0], name=hit[1] or usb.name,
+                                                    link="usb", connected=True)
+                drop.update(id(d) for d in via_usb if d is not usb)
+                absorbed.update(d.id for d in via_usb)
+                taken_ids.add(hit[0])
+            continue
         if not via_rx or not via_usb:
             continue
         base, usb = via_rx[0], next((d for d in via_usb if d.battery is not None), via_usb[0])

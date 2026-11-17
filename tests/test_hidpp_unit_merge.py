@@ -198,3 +198,130 @@ def test_unit_id_cached_and_not_logged(caplog):
     assert n == 1                                   # resolved once, then served from the cache
     dev = hidpp.scan_logitech(infos, fac)[0]
     assert G915_UNIT not in repr(dev)
+
+
+# ---------------------------------------------------------------- remembered unit -> receiver id
+import json
+
+from taskbar_battery_widget import unit_links, wireless
+
+
+def _kb_only(which):
+    infos, fac, ifaces = keyboard_setup()
+    return [i for i in infos if (i.pid == 0xC547) == (which == "rx")], fac
+
+
+def _links_json():
+    p = unit_links.default()._path()
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def test_usb_only_after_receiver_scan_takes_receiver_id():
+    rx, fac = _kb_only("rx")
+    first = hidpp.scan_logitech(rx, fac)
+    assert [d.id for d in first] == ["logi:c547:01"] and first[0].link == "2.4ghz"
+    usb, fac = _kb_only("usb")
+    devs = hidpp.scan_logitech(usb, fac)
+    assert len(devs) == 1
+    d = devs[0]
+    assert d.id == "logi:c547:01" and d.name == first[0].name
+    assert d.link == "usb" and d.charging is True and d.battery == hidpp.voltage_to_percent(4000)
+    assert hidpp.take_absorbed_ids() == {"logi:c33e:ff"}
+    # back on the receiver: unchanged
+    back = hidpp.scan_logitech(rx, fac)
+    assert [(x.id, x.link) for x in back] == [("logi:c547:01", "2.4ghz")]
+
+
+def test_remembered_relation_persists_and_json_has_no_unit(caplog):
+    rx, fac = _kb_only("rx")
+    with caplog.at_level(logging.DEBUG):
+        hidpp.scan_logitech(rx, fac)
+    txt = _links_json()
+    assert G915_UNIT not in txt and G915_UNIT not in caplog.text
+    salt = unit_links.default()._salt_path().read_text()
+    assert G915_UNIT not in salt
+    data = json.loads(txt)["links"]
+    assert len(data) == 1 and next(iter(data.values()))["id"] == "logi:c547:01"
+    fresh = unit_links.UnitLinks()                  # new instance reads the same files
+    assert fresh.lookup(G915_UNIT)[0] == "logi:c547:01"
+    assert fresh.lookup("deadbeef") is None
+
+
+@pytest.mark.parametrize("payload", [
+    "not json", "[]", '{"links": []}', '{"links": {"zz": {"id": "logi:c547:01", "name": "x"}}}',
+    '{"links": {"0123456789abcdef": {"id": "bt:AA:BB", "name": "x"}}}',
+    '{"links": {"0123456789abcdef": {"id": "logi:c547:01", "name": 5}}}',
+    '{"links": {"0123456789abcdef": "x"}}', "[" * 5000])
+def test_corrupt_map_is_ignored(payload):
+    ul = unit_links.default()
+    ul._path().parent.mkdir(parents=True, exist_ok=True)
+    ul._path().write_text(payload, encoding="utf-8")
+    ul.reset()
+    assert ul.lookup(G915_UNIT) is None
+    ul.learn(G915_UNIT, "logi:c547:01", "KB")        # and it recovers
+    assert ul.lookup(G915_UNIT) == ("logi:c547:01", "KB")
+
+
+def test_map_is_capped_at_64():
+    ul = unit_links.default()
+    for i in range(80):
+        ul.learn(f"{i:08x}", f"logi:c547:{i % 6 + 1:02x}:{i:06x}", "n")
+    assert len(json.loads(_links_json())["links"]) == 64
+    assert ul.lookup(f"{79:08x}") is not None and ul.lookup(f"{0:08x}") is None
+
+
+def test_forget_removes_relation_by_id_and_key():
+    from taskbar_battery_widget.models import visibility_key
+    rx, fac = _kb_only("rx")
+    hidpp.scan_logitech(rx, fac)
+    assert hidpp.forget_links_for(visibility_key("logi:c547:01")) == 1
+    assert unit_links.default().lookup(G915_UNIT) is None
+    usb, fac = _kb_only("usb")
+    assert [d.id for d in hidpp.scan_logitech(usb, fac)] == ["logi:c33e:ff"]
+    hidpp.scan_logitech(rx, fac)
+    assert hidpp.forget_links_for("logi:c547:01") == 1
+
+
+def test_keyboard_and_mouse_both_charging_by_cable():
+    kb_infos, _, kb_if = keyboard_setup()
+    infos = kb_infos + infos_for(0xC539, "USB Receiver", "b1") + infos_for(0xC086, "G903 LIGHTSPEED", "b2")
+    ifaces = dict(kb_if)
+    ifaces[0xC539] = Iface([Unit(2, "G903 LIGHTSPEED Wireless Gaming Mouse", G903_UNIT)])
+    ifaces[0xC086] = Iface([Unit(0xFF, "G903 LIGHTSPEED Wireless Gaming Mouse", G903_UNIT, charging=True)])
+    rx_only = [i for i in infos if i.pid in (0xC547, 0xC539)]
+    usb_only = [i for i in infos if i.pid in (0xC33E, 0xC086)]
+    fac = factory(ifaces)
+    hidpp.scan_logitech(rx_only, fac)
+    devs = hidpp.scan_logitech(usb_only, fac)
+    assert sorted(d.id for d in devs) == ["logi:c539:02", "logi:c547:01"]
+    assert all(d.link == "usb" for d in devs)
+    assert hidpp.take_absorbed_ids() == {"logi:c33e:ff", "logi:c086:ff"}
+
+
+def test_without_remembered_relation_behaviour_is_unchanged():
+    usb, fac = _kb_only("usb")
+    devs = hidpp.scan_logitech(usb, fac)
+    assert [d.id for d in devs] == ["logi:c33e:ff"] and hidpp.take_absorbed_ids() == frozenset()
+
+
+def test_does_not_steal_an_id_in_use_by_another_unit():
+    rx, fac = _kb_only("rx")
+    hidpp.scan_logitech(rx, fac)
+    hidpp._info_cache.clear()
+    hidpp._info_cache.clear()                               # forget the cached unit of slot 1
+    infos, fac2, _ = keyboard_setup(rx_unit="11223344")     # slot 1 now holds a different unit
+    devs = hidpp.scan_logitech(infos, fac2)
+    assert sorted(d.id for d in devs) == ["logi:c33e:ff", "logi:c547:01"]
+
+
+def test_cache_grace_entry_is_replaced_by_the_usb_one():
+    rx, fac = _kb_only("rx")
+    cache = {}
+    fresh = hidpp.scan_logitech(rx, fac)
+    wireless.apply_cache(cache, fresh, {"046d:c547"}, 100.0, grace=600.0)
+    usb, fac = _kb_only("usb")
+    fresh = hidpp.scan_logitech(usb, fac)
+    for gone in hidpp.take_absorbed_ids():
+        cache.pop(gone, None)
+    out = wireless.apply_cache(cache, fresh, {"046d:c547", "046d:c33e"}, 110.0, grace=600.0)
+    assert [(d.id, d.link, d.idle) for d in out] == [("logi:c547:01", "usb", False)]

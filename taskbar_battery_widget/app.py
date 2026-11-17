@@ -431,6 +431,11 @@ def main() -> int:
         except Exception:
             log.exception("could not forget the device in the history")
         stats_windows.close_key(key)
+        try:
+            from .hidpp import forget_links_for
+            forget_links_for(key)
+        except Exception:
+            log.exception("could not forget the unit links of the device")
         if delete_log:
             try:
                 detail_logger.delete_for_key(key)
