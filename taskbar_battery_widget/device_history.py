@@ -232,6 +232,16 @@ class DeviceHistory:
                 except OSError:
                     pass
 
+    def forget(self, key: str) -> bool:
+        """Drop a known device (and its session state) and write the file now. False if it was not known."""
+        if not isinstance(key, str):
+            return False
+        self._rt.pop(key, None)
+        if self._known.pop(key, None) is None:
+            return False
+        self._save(time.time())
+        return True
+
     def flush(self, now: float | None = None) -> None:
         if self._dirty or self._ts_dirty:
             self._save(time.time() if now is None else now)

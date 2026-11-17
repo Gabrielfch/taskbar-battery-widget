@@ -22,6 +22,7 @@ from . import visibility
 from .colors import battery_color
 from .i18n import tr
 from .icons import make_tray_icon
+from .models import visibility_key
 from .panel_model import build_panel_model
 from .settings_model import SettingsCallbacks, build_settings_model
 
@@ -61,7 +62,7 @@ def apply_appearance(cfg) -> None:
     if setter is not None:
         setter(cfg.get("icon_style"))
     custom_icons.set_maps(cfg.get("custom_icons_kind"), cfg.get("custom_icons_device"))
-    animation.clock().set_enabled(bool(cfg.get("animations_enabled")))
+    animation.clock().set_mode(cfg.get("animations"))
 
 
 class TrayController(QObject):
@@ -71,6 +72,7 @@ class TrayController(QObject):
     ui_settings_changed = Signal()      # visibility / recording only: re-filter, no device rescan
     open_detail_log_requested = Signal(str)     # visibility key of the device whose log to open
     open_detail_folder_requested = Signal()
+    device_forgotten = Signal(str, bool)        # visibility key, delete its detailed log: the app drops history / files
     detail_log_started = Signal(str)     # recording turned on for this visibility key: write a sample now
 
     def __init__(self, cfg, parent=None):
@@ -89,6 +91,7 @@ class TrayController(QObject):
         self._warned_placement = set()  # warning reasons already shown this session
         self._floating_hinted = False   # the "drag it" hint is shown once per session
         self._current_key_fn = None
+        self._detail_files_fn = None    # key -> bool: the device has a detailed log on disk
         self._floating_anchor_fn = None
         self._has_taskbar_fn = None
         self._settings = self._build_settings()
@@ -150,7 +153,8 @@ class TrayController(QObject):
         return build_settings_model(self._cfg, SettingsCallbacks(
             set_bool=self._set_bool, set_threshold=self._set_threshold,
             set_palette=self._set_palette, set_icon_style=self._set_icon_style,
-            set_panel_size=self._set_panel_size, set_ui_scale=self._set_ui_scale,
+            set_panel_size=self._set_panel_size, set_animations=self._set_animations,
+            set_ui_scale=self._set_ui_scale,
             set_language=self._set_language, set_startup=self._set_startup,
             open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
             open_detail_folder=self.open_detail_folder_requested.emit,
@@ -328,6 +332,44 @@ class TrayController(QObject):
         custom_icons.cleanup_unused(set(self._cfg.get("custom_icons_kind").values())
                                     | set(self._cfg.get("custom_icons_device").values()))
 
+    def set_detail_files_fn(self, fn) -> None:
+        """`fn(visibility key) -> bool`, set by the app: does the device have a detailed log on disk."""
+        self._detail_files_fn = fn
+
+    def _has_detail_files(self, key: str) -> bool:
+        fn = self._detail_files_fn
+        return bool(fn(key)) if fn is not None else False
+
+    def _on_forget(self, key: str, delete_log: bool) -> None:
+        """Forget a known device: its alias, icon, hidden / recording flags and (via the app) its history."""
+        if not isinstance(key, str) or not key:
+            return
+        if any(d.connected and visibility_key(d.id) == key for d in self._devices):
+            return                                  # it connected while the question was open
+        cfg = self._cfg
+        try:
+            aliases_ = dict(cfg.get("device_aliases"))
+            if aliases_.pop(key, None) is not None:
+                cfg.set("device_aliases", aliases_)
+            icons_ = dict(cfg.get("custom_icons_device"))
+            if icons_.pop(key, None) is not None:
+                cfg.set("custom_icons_device", icons_)
+            hidden = [k for k in cfg.get("hidden_devices") if k != key]
+            if len(hidden) != len(cfg.get("hidden_devices")):
+                cfg.set("hidden_devices", hidden)
+            recording = self._detail_keys()
+            if key in recording:
+                recording = [k for k in recording if k != key]
+                cfg.set("detail_log_devices", recording)
+                if not recording and cfg.get("detail_log_enabled"):
+                    cfg.set("detail_log_enabled", False)
+        except ValueError:
+            log.exception("could not clean the settings of a forgotten device")
+        custom_icons.cleanup_unused(set(cfg.get("custom_icons_kind").values())
+                                    | set(cfg.get("custom_icons_device").values()))
+        self.device_forgotten.emit(key, bool(delete_log))       # history first: the refresh below must not re-add it
+        self._appearance_changed()
+
     def _appearance_changed(self) -> None:
         apply_appearance(self._cfg)
         self._update_icon()
@@ -355,6 +397,8 @@ class TrayController(QObject):
             self._panel.alias_changed.connect(self._on_alias)
             self._panel.icon_change_requested.connect(self._on_icon_change)
             self._panel.icon_reset_requested.connect(self._on_icon_reset)
+            self._panel.forget_requested.connect(self._on_forget)
+            self._panel.set_log_exists_fn(self._has_detail_files)
             self._panel.open_log_requested.connect(self.open_detail_log_requested)
             self._panel.refresh_requested.connect(self.refresh_requested)
             self._panel.settings_requested.connect(self.show_settings_menu)
@@ -472,8 +516,11 @@ class TrayController(QObject):
 
     def _set_bool(self, key: str, value: bool) -> None:
         self._cfg.set(key, bool(value))
-        if key == "animations_enabled":
-            animation.clock().set_enabled(bool(value))      # live: the widget and the panel pause / resume at once
+        self.settings_changed.emit()
+
+    def _set_animations(self, mode: str) -> None:
+        self._cfg.set("animations", str(mode))
+        animation.clock().set_mode(mode)        # live: the widget and the panel pause / resume at once
         self.settings_changed.emit()
 
     def _set_threshold(self, value: int) -> None:

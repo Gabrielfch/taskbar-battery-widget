@@ -849,6 +849,23 @@ def draw_pencil(painter: QPainter, rect: QRectF, color: QColor, flag: bool = Fal
     painter.restore()
 
 
+def draw_trash(painter: QPainter, rect: QRectF, color: QColor, flag: bool = False) -> None:
+    """Trash can (forget a device), 24x24 design grid; `flag` is unused (shared icon helper signature)."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    side = min(rect.width(), rect.height())
+    painter.translate(rect.center().x() - side / 2, rect.center().y() - side / 2)
+    painter.scale(side / 24.0, side / 24.0)
+    painter.setPen(_stroke_pen(color))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    _poly(painter, [(4, 7), (20, 7)])                                   # lid
+    _poly(painter, [(9.5, 7), (9.5, 4.5), (14.5, 4.5), (14.5, 7)])      # handle
+    _poly(painter, [(6, 7), (7, 20), (17, 20), (18, 7)])                # bin
+    _poly(painter, [(10, 11), (10, 16)])
+    _poly(painter, [(14, 11), (14, 16)])
+    painter.restore()
+
+
 def draw_close(painter: QPainter, rect: QRectF, color: QColor, flag: bool = False) -> None:
     """Small cross (remove), 24x24 design grid; `flag` is unused (shared icon helper signature)."""
     painter.save()
@@ -885,6 +902,11 @@ def eye_icon(size: int, open: bool, color: QColor) -> QIcon:
 def pencil_icon(size: int, color: QColor) -> QIcon:
     """QIcon with 1x and 2x pixmaps of the pencil."""
     return _icon_from(draw_pencil, size, color, False)
+
+
+def trash_icon(size: int, color: QColor) -> QIcon:
+    """QIcon with 1x and 2x pixmaps of the trash can."""
+    return _icon_from(draw_trash, size, color, False)
 
 
 def close_icon(size: int, color: QColor) -> QIcon:

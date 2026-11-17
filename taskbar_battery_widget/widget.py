@@ -273,7 +273,7 @@ class TaskbarWidget(QWidget):
         self._clock.tick.connect(self._on_anim_tick)
         self._clock.state_changed.connect(self._on_anim_state)
         if cfg is not None:
-            self._clock.set_enabled(bool(self._cfg_get("animations_enabled", True)))
+            self._clock.set_mode(self._cfg_get("animations", "system"))
         self._rebuild()
         self._connect_screen_signals()
 
@@ -281,7 +281,7 @@ class TaskbarWidget(QWidget):
     def set_config(self, cfg) -> None:
         self._cfg = cfg
         self._overrides.clear()
-        self._clock.set_enabled(bool(self._cfg_get("animations_enabled", True)))
+        self._clock.set_mode(self._cfg_get("animations", "system"))
         self._rebuild()
         self.update_position()
 

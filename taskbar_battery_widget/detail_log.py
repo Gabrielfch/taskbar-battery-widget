@@ -139,6 +139,37 @@ class DetailLogger:
         key = hashlib.sha256((self._get_salt() + vk).encode("utf-8", "replace")).hexdigest()[:16]
         return self.base / f"{_slug(device.original_name or device.name)}_{key}.csv"
 
+    def files_for_key(self, vkey: str) -> list[Path]:
+        """Existing CSV files of a device (``.csv`` and rotated ``.csv.N``), found by the hash in the name.
+        Only regular files directly inside the devices folder are returned."""
+        if not isinstance(vkey, str) or not vkey:
+            return []
+        h = hashlib.sha256((self._get_salt() + vkey).encode("utf-8", "replace")).hexdigest()[:16]
+        pat = re.compile(r"[A-Za-z0-9_-]*_" + h + r"\.csv(\.\d+)?")
+        out: list[Path] = []
+        try:
+            for f in self.base.iterdir():
+                if pat.fullmatch(f.name) and f.is_file() and not f.is_symlink():
+                    out.append(f)
+        except OSError:
+            return []
+        return sorted(out)
+
+    def delete_for_key(self, vkey: str) -> int:
+        """Delete a device's CSV and backups; returns how many files went. Nothing else is touched."""
+        n = 0
+        for f in self.files_for_key(vkey):
+            try:
+                f.unlink()
+                n += 1
+            except OSError as e:
+                log.warning("detail log: cannot delete %s (%s)", f.name, e)
+            with self._lock:
+                self._paths.discard(f)
+                self._last_minute.pop(f, None)
+                self._failed.discard(f)
+        return n
+
     # ---- producer side ----
     def tick(self, devices: Iterable[Device], enabled_keys: Collection[str], now: float | None = None) -> None:
         try:

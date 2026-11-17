@@ -721,6 +721,15 @@ class StatsWindows:
         win.activateWindow()
         return win
 
+    def close_key(self, key: str) -> None:
+        """Close (and drop) the window of one device, if it is open."""
+        w = self._windows.pop(key, None)
+        if w is not None:
+            try:
+                w.shutdown()
+            except RuntimeError:
+                pass
+
     def close_all(self) -> None:
         for w in self._windows.values():
             try:

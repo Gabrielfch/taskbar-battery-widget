@@ -422,6 +422,23 @@ def main() -> int:
         stats_windows.open(key, dev.name, detail_logger.path_for(dev), open_detail_folder)
 
     tray.open_detail_log_requested.connect(open_stats)
+
+    def forget_device(key: str, delete_log: bool) -> None:
+        """A known device was forgotten in the panel: drop it from the history, close its statistics window and,
+        when asked, delete its CSV files."""
+        try:
+            history.forget(key)
+        except Exception:
+            log.exception("could not forget the device in the history")
+        stats_windows.close_key(key)
+        if delete_log:
+            try:
+                detail_logger.delete_for_key(key)
+            except Exception:
+                log.exception("could not delete the detailed log of a forgotten device")
+
+    tray.device_forgotten.connect(forget_device)
+    tray.set_detail_files_fn(lambda key: bool(detail_logger.files_for_key(key)))
     # first sample right away when recording starts (then one per minute)
     tray.detail_log_started.connect(lambda key: detail_logger.tick(latest, {key}))
     tray.detail_log_started.connect(lambda _key: estimator.refresh_if_new())

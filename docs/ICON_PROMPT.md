@@ -9,6 +9,8 @@ Copy one of these prompts into an AI chat, fill in the `[brackets]`, and load th
 256×256 PNG when you import it, and an SVG is rebuilt from a safe subset: only `path`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `g`, `defs`, gradients and `clipPath`; anything else, such as `style`, `text`, filters, `use`, images, scripts or `<!DOCTYPE>`, makes it be rejected). Use PNG or
 SVG for a transparent background.
 
+**Animated icons:** a GIF or WebP also works (up to 2 MB, 48 frames, 15 fps, 10 s). Keep it to a few frames, a short seamless loop and a transparent background; it is converted to a PNG strip on import, and the animation pauses when Animations is set to *Never* or follows Windows with effects off.
+
 ## Prompt for a chat that creates images
 
 ```text

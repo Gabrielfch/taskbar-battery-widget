@@ -6,13 +6,13 @@ import time
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QScrollArea, QSizePolicy,
                                QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
-from . import animation, custom_icons, i18n, taskbar
+from . import animation, custom_icons, dialogs, i18n, taskbar
 from .config import PANEL_SIZE_FRACTION, UI_SCALES
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
-from .icons import (about_icon, close_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon,
+from .icons import (about_icon, close_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon, trash_icon,
                     refresh_icon, show_all_icon)
 from .panel_model import PanelModel, PanelRow, section_title
 from .popup import place_popup
@@ -166,6 +166,7 @@ class DevicePanel(QFrame):
     quit_requested = Signal()
     icon_change_requested = Signal(str)     # visibility key: the tray asks for an image and saves it
     icon_reset_requested = Signal(str)      # visibility key: drop that device's own custom icon
+    forget_requested = Signal(str, bool)    # visibility key, also delete its detailed log (already confirmed)
 
     def __init__(self, parent=None, dark: bool | None = None, show_logging: bool = False):
         # Not a Qt.Popup: the About dialog and the other windows must open above the panel without
@@ -188,6 +189,7 @@ class DevicePanel(QFrame):
         self._edit_icon: QToolButton | None = None      # clickable icon / remove cross of the row being edited
         self._edit_clear: QToolButton | None = None
         self._row_ctx: dict[str, tuple] = {}            # key -> (row layout, icon label, row, icon colour)
+        self._log_exists_fn = None                      # key -> bool: has a detailed log on disk (forget dialog)
         self._modal = False                             # a file dialog / message box of the tray is open
         self._nav: list[QToolButton] = []        # buttons reached with Up/Down (one per row)
         self._rows: list[list[QToolButton]] = [] # enabled buttons of each row (Left/Right)
@@ -716,6 +718,22 @@ class DevicePanel(QFrame):
         h.addWidget(pen)
         buttons.append(pen)
 
+        if not row.connected:       # known (not connected) devices can be forgotten
+            fg = QToolButton(self)
+            self._size_button(fg)
+            fg.setAutoRaise(True)
+            fg.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            fg.setIconSize(QSize(self._bicon, self._bicon))
+            fg.setToolTip(_t("tip_forget", lang))
+            fg.setAccessibleName(_t("forget", lang, name=row.name))
+            fg.setAccessibleDescription(desc)
+            fg.setCursor(Qt.CursorShape.PointingHandCursor)
+            fg.setIcon(trash_icon(self._bicon, band_color("grey", self._dark)))
+            fg.installEventFilter(self)
+            self._buttons[(row.key, "forget")] = fg
+            fg.clicked.connect(lambda _=False, r=row: self._on_forget(r))
+            h.addWidget(fg)
+            buttons.append(fg)
         eye = self._eye_button(_t("show_in_bar", lang, name=row.name), row.visible, (row.key, "eye"),
                                desc, tip_on=_t("tip_hide", lang), tip_off=_t("tip_show", lang))
         if not eye_enabled:
@@ -728,6 +746,35 @@ class DevicePanel(QFrame):
         buttons.append(eye)
         self._add_row([b for b in buttons if b.isEnabled()], primary=eye if eye_enabled else None)
         return w
+
+    def set_log_exists_fn(self, fn) -> None:
+        """`fn(visibility key) -> bool`: the device has a detailed log on disk (shows the delete option)."""
+        self._log_exists_fn = fn
+
+    def _confirm_forget(self, name: str, has_log: bool) -> tuple[bool, bool]:
+        """Modal question; returns (confirmed, also delete the detailed log). Cancel is the default."""
+        box = QMessageBox(QMessageBox.Icon.Warning, i18n.tr("forget_title"), i18n.tr("forget_text", name=name), parent=self)
+        ok = box.addButton(i18n.tr("forget_btn"), QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton(i18n.tr("forget_cancel"), QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.setEscapeButton(cancel)
+        check = None
+        if has_log:
+            check = QCheckBox(i18n.tr("forget_log"), box)
+            check.setChecked(False)
+            box.setCheckBox(check)
+        with dialogs.app_dialog_guard():
+            box.exec()
+        return box.clickedButton() is ok, bool(check is not None and check.isChecked())
+
+    def _on_forget(self, row: PanelRow) -> None:
+        try:
+            has_log = bool(self._log_exists_fn(row.key)) if self._log_exists_fn else False
+        except Exception:  # noqa: BLE001
+            has_log = False
+        ok, wipe = self._confirm_forget(row.name, has_log)
+        if ok:
+            self.forget_requested.emit(row.key, wipe)
 
     def _add_row(self, buttons: list[QToolButton], primary: QToolButton | None = None) -> None:
         """Register the focusable buttons of one row (Left/Right inside it, Up/Down between rows)."""

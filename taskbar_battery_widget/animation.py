@@ -3,8 +3,8 @@
 Nothing here draws. Widgets register a *demand* callable that answers "how soon do I need to repaint?"
 (milliseconds, or None when nothing of theirs is animated and visible). The clock owns the only QTimer:
 
-* it runs only while someone has a demand, animations are enabled in the settings and Windows has its own
-  animations on (SPI_GETCLIENTAREAANIMATION, cached and re-read about once a minute);
+* it runs only while someone has a demand and the mode allows it: "off" never, "system" while Windows has its
+  own animations on (SPI_GETCLIENTAREAANIMATION, cached and re-read about once a minute), "always" regardless;
 * its interval is the nearest demand, never below MIN_INTERVAL_MS (<= 15 ticks per second);
 * on every tick it emits ``tick(now_ms)``; the receivers repaint only what is animated.
 
@@ -90,6 +90,7 @@ class AnimationClock(QObject):
         self._system_fn = system_fn          # None: animation.system_animations_enabled (looked up per call)
         self._epoch = time_fn()
         self._enabled = True
+        self._follow_system = True
         self._system_ok = True
         self._system_at: float | None = None
         self._clients: list = []             # [(weakref to owner, weak method)]
@@ -102,8 +103,16 @@ class AnimationClock(QObject):
     def enabled(self) -> bool:
         return self._enabled
 
+    def set_mode(self, mode) -> None:
+        """"always" | "system" | "off" (anything else counts as "system")."""
+        self._enabled = mode != "off"
+        self._follow_system = mode != "always"
+        self._system_at = None
+        self.refresh()
+
     def set_enabled(self, on: bool) -> None:
         self._enabled = bool(on)
+        self._follow_system = True
         self._system_at = None              # a settings change also re-reads the Windows value
         self.refresh()
 
@@ -119,8 +128,8 @@ class AnimationClock(QObject):
         return self._system_ok
 
     def allowed(self) -> bool:
-        """Animations may run: enabled in the settings and not switched off in Windows."""
-        return self._enabled and self.system_ok()
+        """Animations may run: not "off", and (unless "always") not switched off in Windows."""
+        return self._enabled and (not self._follow_system or self.system_ok())
 
     @property
     def running(self) -> bool:

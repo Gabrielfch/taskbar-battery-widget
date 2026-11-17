@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .config import COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES, LANGUAGES, PANEL_SIZES, UI_SCALES
+from .config import ANIMATION_MODES, COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES, LANGUAGES, PANEL_SIZES, UI_SCALES
 from .i18n import LANGUAGES as I18N_LANGUAGES, tr
 
 DEFAULT_FLOATING_ANCHOR = "bottom-right"
@@ -38,6 +38,7 @@ class SettingsCallbacks:
     monitor_has_taskbar: Callable[[], bool] = lambda: True          # does the widget's monitor have a taskbar
     open_custom_icons: Callable[[], None] = lambda: None            # custom icon images dialog
     set_panel_size: Callable[[str], None] = lambda size: None       # one of config.PANEL_SIZES
+    set_animations: Callable[[str], None] = lambda mode: None       # one of config.ANIMATION_MODES
     set_ui_scale: Callable[[int], None] = lambda pct: None          # one of config.UI_SCALES
     set_language: Callable[[str], None] = lambda lang: None         # one of config.LANGUAGES
     open_tutorial: Callable[[], None] = lambda: None                # the six-step tour
@@ -191,6 +192,10 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
     def static_options(values, label_of) -> Callable[[], list]:
         return lambda: [Option(v, label_of(v)) for v in values]
 
+    def animation_options() -> list:
+        return [Option(m, tr("animations_" + m), tip=tr("animations_tip") if m == "system" else "")
+                for m in ANIMATION_MODES]
+
     sources = Page(id="sources", title_key="menu_sources", icon="sources", children=[
         cfg_toggle("wireless_enabled", "wireless_devices"),
         cfg_toggle("bluetooth_enabled", "bluetooth_source"),
@@ -290,7 +295,8 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
                options=static_options(ICON_STYLES, lambda n: tr("icon_" + n)),
                get=lambda: cfg.get("icon_style"), set=lambda v: cb.set_icon_style(str(v))),
         Action(id="custom_icons", label_key="custom_icons_menu", run=lambda: cb.open_custom_icons()),
-        cfg_toggle("animations_enabled", "animations", "animations_tip"),
+        Choice(id="animations", label_key="animations", options=animation_options,
+               get=lambda: cfg.get("animations"), set=lambda v: cb.set_animations(str(v))),
         Choice(id="panel_size", label_key="menu_panel_size",
                options=static_options(PANEL_SIZES, lambda n: tr("panel_size_" + n)),
                get=lambda: cfg.get("panel_size"), set=lambda v: cb.set_panel_size(str(v))),

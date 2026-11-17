@@ -36,7 +36,7 @@ DEFAULTS = {
     "device_aliases": {},           # visibility key -> user-chosen display name (see aliases.py)
     "custom_icons_kind": {},        # device kind -> imported image file name (see custom_icons.py)
     "custom_icons_device": {},      # visibility key -> imported image file name
-    "animations_enabled": True,     # animated custom icons and the charging / critical pulses (see animation.py)
+    "animations": "system",         # "always" | "system" (follow Windows) | "off": animated icons and the pulses
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)
@@ -66,6 +66,7 @@ ICON_STYLES = ("outline", "filled", "simple", "retro", "battery", "none")
 CUSTOM_COLOR_KEYS = ("high", "medium", "low")
 HEX_COLOR_RE = re.compile(r"#[0-9A-Fa-f]{6}")
 PANEL_SIZES = ("compact", "normal", "large")
+ANIMATION_MODES = ("always", "system", "off")
 PANEL_SIZE_FRACTION = {"compact": 0.40, "normal": 0.50, "large": 0.65}   # of the screen's available height
 UI_SCALES = (90, 100, 115, 130)
 LANGUAGES = ("auto",) + tuple(_i18n_languages)   # "auto" + every language registered in i18n.LANGUAGES
@@ -153,6 +154,8 @@ def _valid(key, value) -> bool:
                 and all(isinstance(v, str) and HEX_COLOR_RE.fullmatch(v) for v in value.values()))
     if key == "panel_size":
         return isinstance(value, str) and value in PANEL_SIZES
+    if key == "animations":
+        return isinstance(value, str) and value in ANIMATION_MODES
     if key == "language":
         return isinstance(value, str) and value in LANGUAGES
     if key == "last_seen_version":
@@ -269,6 +272,11 @@ class Config:
         if "beta_readers" not in raw and raw.get("experimental_readers") is True:
             self._data["beta_readers"] = True
             migrated_beta = True
+        if "animations" not in raw and isinstance(raw.get("animations_enabled"), bool):
+            self._data["animations"] = "system" if raw["animations_enabled"] else "off"
+            migrated_beta = True
+        if "animations_enabled" in raw:
+            migrated_beta = True                # drop the obsolete key from the file
         if "experimental_readers" in raw:
             migrated_beta = True                # drop the obsolete key from the file
         for lkey in ("hidden_devices", "detail_log_devices"):

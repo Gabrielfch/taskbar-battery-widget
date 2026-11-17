@@ -272,10 +272,10 @@ def test_switch_off_stops_the_clock_and_on_resumes(env):
     _animated_icon(env)
     _plain(env)
     assert env["clock"].running
-    env["cfg"].set("animations_enabled", False)
+    env["cfg"].set("animations", "off")
     env["wd"].set_config(env["cfg"])
     assert not env["clock"].running
-    env["cfg"].set("animations_enabled", True)
+    env["cfg"].set("animations", "system")
     env["wd"].set_config(env["cfg"])
     assert env["clock"].running
 
@@ -341,7 +341,7 @@ def test_widget_draws_the_frame_of_the_clock_time_and_the_first_when_off(env):
         t.t = base + dt
         seen.append(_frame_colour(env))
     assert seen[0] != seen[1] != seen[2] and seen[0] != seen[2]
-    env["cfg"].set("animations_enabled", False)
+    env["cfg"].set("animations", "off")
     env["wd"].set_config(env["cfg"])
     shots = set()
     for dt in (0.0, 0.15, 0.45):
@@ -374,7 +374,7 @@ def test_charging_pulse_changes_between_ticks_and_is_still_when_off(env):
     t.t = base + 1.0
     dim = env["wd"].grab().toImage()
     assert full != dim
-    env["cfg"].set("animations_enabled", False)
+    env["cfg"].set("animations", "off")
     env["wd"].set_config(env["cfg"])
     assert not env["clock"].running
     t.t = base
@@ -407,7 +407,7 @@ def test_critical_level_pulses_but_not_while_charging(env):
     t.t = base + 0.75
     b = env["wd"].grab().toImage()
     assert a != b
-    env["cfg"].set("animations_enabled", False)
+    env["cfg"].set("animations", "off")
     env["wd"].set_config(env["cfg"])
     assert not env["clock"].running
     t.t = base
@@ -416,7 +416,7 @@ def test_critical_level_pulses_but_not_while_charging(env):
     d = env["wd"].grab().toImage()
     assert c == d == a                                      # still look == pulse trough
     _plain(env, 5, charging=True)
-    env["cfg"].set("animations_enabled", True)
+    env["cfg"].set("animations", "system")
     env["wd"].set_config(env["cfg"])
     assert not env["wd"]._pills[0].alert                    # charging is not critical
 
@@ -465,7 +465,7 @@ def test_panel_animates_only_while_open_on_the_device_list(env, qapp):
         icon = p._row_ctx[visibility_key("1")][1]
         shown = QColor.fromRgba(icon.pixmap().toImage().pixel(10, 10)).getRgb()[:3]
         assert shown[1] > 200 and shown[0] < 60                  # frame 1 (green) at 150 ms
-        env["cfg"].set("animations_enabled", False)
+        env["cfg"].set("animations", "off")
         env["clock"].set_enabled(False)
         assert not env["clock"].running
         first = QColor.fromRgba(icon.pixmap().toImage().pixel(10, 10)).getRgb()[:3]
@@ -505,24 +505,46 @@ def test_panel_settings_page_pauses_the_icons(env, qapp):
 
 
 # ------------------------------------------------------------------ settings wiring
-def test_setting_defaults_and_toggle(tmp_path):
-    from taskbar_battery_widget.settings_model import SettingsCallbacks, Toggle, build_settings_model
+def test_setting_defaults_and_choice(tmp_path):
+    from taskbar_battery_widget.settings_model import Choice, SettingsCallbacks, build_settings_model
     cfg = Config(tmp_path / "c.json")
-    assert cfg.get("animations_enabled") is True
+    assert cfg.get("animations") == "system"
     calls = []
-    cb = SettingsCallbacks(set_bool=lambda k, v: calls.append((k, v)), set_threshold=lambda v: None,
+    cb = SettingsCallbacks(set_bool=lambda k, v: None, set_threshold=lambda v: None,
                            set_palette=lambda v: None, set_startup=lambda v: None, open_device_log=lambda: None,
-                           open_logs_folder=lambda: None, startup_enabled=lambda: False)
+                           open_logs_folder=lambda: None, startup_enabled=lambda: False,
+                           set_animations=calls.append)
     m = build_settings_model(cfg, cb)
-    node = m.find("animations_enabled")
-    assert isinstance(node, Toggle) and m.parent_of("animations_enabled").id == "personalization"
-    assert node.get() is True and node.tip() and node.tip_key == "animations_tip"
-    node.set(False)
-    assert calls == [("animations_enabled", False)]
-    cfg.set("animations_enabled", False)
-    assert node.get() is False
+    node = m.find("animations")
+    assert isinstance(node, Choice) and m.parent_of("animations").id == "personalization"
+    assert [o.value for o in node.options()] == ["always", "system", "off"]
+    assert node.get() == "system" and any(o.tip for o in node.options())
+    node.set("always")
+    assert calls == ["always"]
+    cfg.set("animations", "off")
+    assert node.get() == "off"
     with pytest.raises(ValueError):
-        cfg.set("animations_enabled", "yes")
+        cfg.set("animations", "yes")
+
+
+def test_legacy_animations_enabled_is_migrated(tmp_path):
+    import json
+    for old, new in ((False, "off"), (True, "system")):
+        p = tmp_path / f"c{old}.json"
+        p.write_text(json.dumps({"animations_enabled": old}), encoding="utf-8")
+        cfg = Config(p)
+        assert cfg.get("animations") == new
+        assert "animations_enabled" not in json.loads(p.read_text(encoding="utf-8"))
+
+
+def test_always_mode_ignores_the_windows_setting():
+    c = an.AnimationClock(system_fn=lambda: False)
+    c.set_mode("system")
+    assert not c.allowed()
+    c.set_mode("always")
+    assert c.allowed()
+    c.set_mode("off")
+    assert not c.allowed()
 
 
 def test_tray_toggle_switches_the_clock_live(qapp, tmp_path):
@@ -531,8 +553,8 @@ def test_tray_toggle_switches_the_clock_live(qapp, tmp_path):
     apply_appearance(cfg)
     assert an.clock().enabled
     t = TrayController(cfg)
-    t._set_bool("animations_enabled", False)
-    assert not an.clock().enabled and cfg.get("animations_enabled") is False
-    cfg.set("animations_enabled", True)
+    t._set_animations("off")
+    assert not an.clock().enabled and cfg.get("animations") == "off"
+    cfg.set("animations", "system")
     apply_appearance(cfg)
     assert an.clock().enabled

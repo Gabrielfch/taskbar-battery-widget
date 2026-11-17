@@ -87,6 +87,9 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
 - Custom icons (*Settings ▸ Personalization ▸ Custom icons…*, or click the icon while editing an alias): PNG, JPG,
   BMP, ICO, GIF or SVG. An SVG (up to 512 KB; only basic shapes, paths, gradients and clip paths: no styles, text, filters, `<use>`, images or scripts, otherwise it is rejected) is converted to a 256×256 PNG on
   import. To create an icon with an AI chat, see the ready-made prompts in [docs/ICON_PROMPT.md](docs/ICON_PROMPT.md).
+- Animated custom icons: a GIF or WebP with several frames works as an icon (up to 2 MB, 48 frames, 15 fps and 10 s; it is converted to a PNG strip on import, so the original file is not kept).
+- Animations (*Settings ▸ Personalization ▸ Animations*): **Always**, **Follow Windows** (default; respects *Settings ▸ Accessibility ▸ Visual effects*) or **Never**. They drive animated icons, a soft pulse on the charging bolt and a slow pulse on the critical-battery pill. They pause in fullscreen apps and when nothing animated is visible.
+- Forget device: in *Known devices* the trash button removes a device that is not connected, with its alias, custom icon and settings (after a confirmation; optionally also its detailed log). If it connects again it appears as new.
 - Placement (*Settings ▸ Personalization ▸ Position*):
   - **Taskbar, right** (next to the tray, default) or **left** (needs centred Windows icons; otherwise the app
     warns and uses the right). Works with the taskbar on any edge; on vertical taskbars the pills go to the

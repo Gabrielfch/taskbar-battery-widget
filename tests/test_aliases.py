@@ -148,7 +148,7 @@ def test_pencil_per_row_and_before_eye(panel):
     panel.set_model(model([dev("a", "A"), dev("b", "B", connected=False)]))
     assert len(pencils(panel)) == 2
     for row in (r for r in panel._rows if len(r) > 1):
-        names = [b.accessibleName() for b in row]
+        names = [b.accessibleName() for b in row if not b.accessibleName().startswith("Forget ")]
         assert names[-1].startswith("Show ") and names[-2].startswith("Set an alias for")
     assert pencils(panel)[0].toolTip() == "Alias"
 
