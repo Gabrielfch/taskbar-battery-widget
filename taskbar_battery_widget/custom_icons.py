@@ -44,7 +44,7 @@ MAX_ANIM_FRAMES = 48        # frames kept (uniform subsampling above this)
 MIN_FRAME_MS = 66           # <= 15 fps
 MAX_FRAME_MS = 2000
 MAX_ANIM_TOTAL_MS = 10_000  # total duration of the source (after clamping each delay)
-MAX_ANIM_PIXELS = 160_000_000   # source width * height * frames: bounds the decoding work
+MAX_ANIM_PIXELS = 60_000_000  # source width * height * frames: bounds the decoding work
 ANIM_READ_TIMEOUT = 6.0     # seconds spent decoding before the import is abandoned
 MAX_ANIM_JSON = 2048
 _ANIM_FORMATS = {"gif", "webp"}
@@ -326,6 +326,17 @@ def _svg_to_png(data: bytes) -> bytes:
     return box["png"]
 
 
+def import_image_busy(src) -> str:
+    """`import_image` with the wait cursor shown while the image is decoded."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+    try:
+        return import_image(src)
+    finally:
+        QApplication.restoreOverrideCursor()
+
+
 def import_image(src) -> str:
     src = Path(src)
     ext = src.suffix.lower()
@@ -350,11 +361,18 @@ def import_image(src) -> str:
         if anim is not None:
             return _store_animation(*anim)
         reader, _buf = _open_reader(data)       # (the buffer must outlive the reader)
-        if _format_of(reader) == "webp":        # a still WebP is stored as a PNG
+        fmt = _format_of(reader)
+        if fmt == "webp":                       # a still WebP is stored as a PNG
             data = _png_bytes(_decode(data, ERR_UNREADABLE, {"webp"}))
             ext = ".png"
+        elif fmt in _ALLOWED_FORMATS:
+            # The stored extension always follows the real content, not the name the user gave it.
+            if not (fmt in ("jpg", "jpeg") and ext in (".jpg", ".jpeg")):
+                ext = "." + fmt
     _decode(data, ERR_UNREADABLE)
     name = hashlib.sha256(data).hexdigest()[:16] + ext
+    if not safe_name(name):
+        raise IconImportError(ERR_UNREADABLE)
     try:
         d = icons_dir()
         d.mkdir(parents=True, exist_ok=True)

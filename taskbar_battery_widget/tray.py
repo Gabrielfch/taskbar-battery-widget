@@ -293,6 +293,9 @@ class TrayController(QObject):
                 self._cfg.set("custom_icons_device", by_device)
             except ValueError:
                 log.exception("could not save the custom icons")
+                from PySide6.QtWidgets import QMessageBox
+                with app_dialog_guard():
+                    QMessageBox.warning(None, tr("custom_icons_title"), tr("icon_err_unreadable"))
             self._appearance_changed()
         custom_icons.cleanup_unused(set(self._cfg.get("custom_icons_kind").values())
                                     | set(self._cfg.get("custom_icons_device").values()))
@@ -308,7 +311,7 @@ class TrayController(QObject):
         if not path:
             return
         try:
-            name = custom_icons.import_image(path)
+            name = custom_icons.import_image_busy(path)
         except custom_icons.IconImportError as e:
             with app_dialog_guard():
                 QMessageBox.warning(parent, tr("custom_icons_title"), tr(e.code))
@@ -328,6 +331,10 @@ class TrayController(QObject):
             self._cfg.set("custom_icons_device", by_device)
         except ValueError:
             log.exception("could not save the custom icon")
+            from PySide6.QtWidgets import QMessageBox
+            from .dialogs import app_dialog_guard
+            with app_dialog_guard():
+                QMessageBox.warning(self._panel, tr("custom_icons_title"), tr("icon_err_unreadable"))
         self._appearance_changed()
         custom_icons.cleanup_unused(set(self._cfg.get("custom_icons_kind").values())
                                     | set(self._cfg.get("custom_icons_device").values()))

@@ -97,7 +97,7 @@ class CustomIconsDialog(QDialog):
         if not path:
             return
         try:
-            name = custom_icons.import_image(path)
+            name = custom_icons.import_image_busy(path)
         except custom_icons.IconImportError as e:
             with app_dialog_guard():
                 QMessageBox.warning(self, self._tr("custom_icons_title"), self._tr(e.code))

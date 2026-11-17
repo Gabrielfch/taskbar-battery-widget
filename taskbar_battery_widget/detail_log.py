@@ -158,7 +158,26 @@ class DetailLogger:
     def delete_for_key(self, vkey: str) -> int:
         """Delete a device's CSV and backups; returns how many files went. Nothing else is touched."""
         n = 0
-        for f in self.files_for_key(vkey):
+        files = self.files_for_key(vkey)
+        # Pending rows of this device must not recreate the CSV: drop them from the writer queue first.
+        h = hashlib.sha256((self._get_salt() + vkey).encode("utf-8", "replace")).hexdigest()[:16]
+        pat = re.compile(r"[A-Za-z0-9_-]*_" + h + r"\.csv")
+        with self._lock:
+            keep = []
+            while True:
+                try:
+                    item = self._q.get_nowait()
+                except queue.Empty:
+                    break
+                if item is not None and pat.fullmatch(item[0].name):
+                    continue
+                keep.append(item)
+            for item in keep:
+                try:
+                    self._q.put_nowait(item)
+                except queue.Full:
+                    pass
+        for f in files:
             try:
                 f.unlink()
                 n += 1

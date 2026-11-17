@@ -404,8 +404,16 @@ class DevicePanel(QFrame):
             if name is None or not custom_icons.is_animated(name):
                 continue
             try:
-                if ctx[1].isVisible():
-                    out.append((key, name))
+                icon = ctx[1]
+                if not icon.isVisible():
+                    continue
+                vp = self._scroll.viewport()
+                if self._stack.currentWidget() is self._scroll and vp.width() > 0 and vp.height() > 0:
+                    # only rows that are actually inside the scroll viewport
+                    rect = QRect(icon.mapTo(vp, QPoint(0, 0)), icon.size())
+                    if not rect.intersects(vp.rect()):
+                        continue
+                out.append((key, name))
             except RuntimeError:        # the row was deleted
                 continue
         return out
