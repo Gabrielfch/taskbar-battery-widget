@@ -26,7 +26,7 @@ from .remaining import remaining_text
 from .popup import HOVER_DELAY_MS, HoverPopup, PopupContent, build_popup_content, place_popup, stale_text
 from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, REASON_LEFT_NEEDS_CENTERED,  # noqa: F401
                         REASON_NO_TASKBAR_FLOATING, Env,
-                        Placement, ScreenInfo, center_rect_y, compute_placement, lookup_floating,
+                        Placement, ScreenInfo, center_rect_y, choose_placement, compute_placement, lookup_floating,
                         pill_height_for, resolve_screen, snap_anchor, taskbar_for_screen)
 from .win_window import (_ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
                          popup_menu_foreground, set_click_through, shift_down)
@@ -255,6 +255,7 @@ class TaskbarWidget(QWidget):
         self._hover_timer.setSingleShot(True)
         self._hover_timer.setInterval(HOVER_DELAY_MS)
         self._hover_timer.timeout.connect(self._show_popup)
+        self._fs_override = False       # fullscreen app on this monitor: the "in fullscreen" spot is in use
         self._passive = False           # shown over a fullscreen app: click-through unless Shift is held
         self._shift_held = False
         self._shift_timer = QTimer(self)
@@ -715,6 +716,12 @@ class TaskbarWidget(QWidget):
         fallback = (not floating and tinfo is None and any(i.kind == "primary" for i in infos))
         placement = self._build_placement(choice, sinfo, fallback)
         env = self._build_env(tinfo, sinfo, placement, fallback)
+        fs_placement = choose_placement(env, placement, self._cfg_eff("fullscreen_placement", "same"),
+                                        self._cfg_eff("fullscreen_floating_positions", {}), sinfo.key, choice)
+        self._fs_override = fs_placement is not placement
+        if self._fs_override:       # float on this monitor while the fullscreen app is up; back afterwards
+            placement, floating, tinfo = fs_placement, True, None
+            env = replace(env, info=None, floating_fallback=False)
         res = compute_placement(env, placement)
         self._note_reason(res.reason)
         floating = floating or res.reason == REASON_NO_TASKBAR_FLOATING
@@ -983,7 +990,7 @@ class TaskbarWidget(QWidget):
     def _clamp_drag(self, pos: QPoint, cursor: QPoint) -> QPoint:
         """Keep the dragged window inside the available area of the monitor under the cursor."""
         screen = self._cur_screen
-        if self._is_floating():     # free to cross monitors; a taskbar-mode fallback stays on its own monitor
+        if self._is_floating() and not self._fs_override:   # free to cross monitors; a fallback / fullscreen spot stays on its monitor
             for info, _q in self._screens():
                 gx, gy, gw, gh = info.geometry
                 if gx <= cursor.x() < gx + gw and gy <= cursor.y() < gy + gh:
@@ -1076,6 +1083,9 @@ class TaskbarWidget(QWidget):
 
     def _finish_drag(self) -> None:
         """Snap the dropped widget to the nearest anchor of the monitor under it and remember it."""
+        if self._fs_override and self._cur_screen is not None:
+            self._finish_fullscreen_drag(self._cur_screen)
+            return
         pairs = self._screens()
         centre = self.geometry().center()
         target = None
@@ -1094,6 +1104,19 @@ class TaskbarWidget(QWidget):
         new_choice = choice if taskbar_mode else ("primary" if (choice == "primary" and target.primary)
                                                   else target.key)
         self._save_floating(target.key, {"anchor": anchor, "dx": dx, "dy": dy}, new_choice)
+
+    def _finish_fullscreen_drag(self, screen: ScreenInfo) -> None:
+        """Drop over a fullscreen app: remember the spot for this monitor in fullscreen_floating_positions
+        only (the normal position is untouched). A fixed-anchor choice becomes "floating" with the new spot."""
+        anchor, dx, dy = snap_anchor((self.x(), self.y(), self.width(), self.height()), screen.available)
+        positions = self._cfg_eff("fullscreen_floating_positions", {})
+        positions = dict(positions) if isinstance(positions, dict) else {}
+        positions[screen.key] = {"anchor": anchor, "dx": dx, "dy": dy}
+        self._store("fullscreen_floating_positions", positions, {})
+        if self._cfg_eff("fullscreen_placement", "same") != "floating":
+            self._store("fullscreen_placement", "floating", "same")
+        self._last_geom = None
+        self.update_position()
 
     def set_floating_anchor(self, anchor: str) -> None:
         """Keyboard alternative to dragging: park the bar on `anchor` of the current monitor (no offset)."""

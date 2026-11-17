@@ -154,7 +154,8 @@ class TrayController(QObject):
             open_detail_folder=self.open_detail_folder_requested.emit,
             startup_enabled=lambda: startup.is_enabled(),
             set_placement=self._set_placement, set_monitor=self._set_monitor,
-            reset_position=self._reset_position, list_screens=self._list_screens,
+            reset_position=self._reset_position, set_fullscreen_placement=self._set_fullscreen_placement,
+            list_screens=self._list_screens,
             open_custom_icons=self.open_custom_icons,
             open_tutorial=lambda: self.open_tutorial(), open_whats_new=lambda: self.open_whats_new(),
             set_floating_anchor=self._set_floating_anchor, current_key=self._current_key,
@@ -545,6 +546,10 @@ class TrayController(QObject):
         if switched:
             self.settings_changed.emit()
 
+    def _set_fullscreen_placement(self, choice: str) -> None:
+        self._cfg.set("fullscreen_placement", str(choice))
+        self.settings_changed.emit()
+
     def _set_monitor(self, key: str) -> None:
         self._cfg.set("placement_monitor", str(key))
         self.settings_changed.emit()
@@ -557,6 +562,10 @@ class TrayController(QObject):
         for k in {"primary", str(key) if key is not None else "primary"}:
             positions.pop(k, None)
         self._cfg.set("floating_positions", positions)
+        fs = dict(self._cfg.get("fullscreen_floating_positions") or {})    # the fullscreen spot too
+        for k in {"primary", str(key) if key is not None else "primary"}:
+            fs.pop(k, None)
+        self._cfg.set("fullscreen_floating_positions", fs)
         self.settings_changed.emit()
 
     def show_placement_warning(self, reason: str) -> None:

@@ -140,6 +140,22 @@ def lookup_floating(positions: dict, screen_key: str, monitor_choice: str = "pri
     return DEFAULT_FLOATING
 
 
+def choose_placement(env: Env, placement: Placement, fs_choice: str, fs_positions: dict,
+                     screen_key: str, monitor_choice: str = "primary") -> Placement:
+    """The placement to use right now: `placement` itself, or (fullscreen app on the widget's monitor, the
+    widget kept visible and `fs_choice` not "same") a floating one: "floating" uses the position stored in
+    `fs_positions` for this screen (default if none), an anchor name sits on that anchor without offset."""
+    if not (env.fullscreen and env.show_in_fullscreen) or fs_choice == "same":
+        return placement
+    if fs_choice == "floating":
+        anchor, dx, dy = lookup_floating(fs_positions, screen_key, monitor_choice)
+    elif fs_choice in FLOATING_ANCHORS:
+        anchor, dx, dy = fs_choice, 0, 0
+    else:
+        return placement
+    return Placement("floating", placement.anchor, placement.monitor, anchor, dx, dy)
+
+
 def _anchor_xy(anchor: str, avail: tuple, w: int, h: int) -> tuple:
     """Top-left of a (w, h) rect sitting on `anchor` of `avail` (x, y, w, h), before the offset."""
     ax, ay, aw, ah = avail

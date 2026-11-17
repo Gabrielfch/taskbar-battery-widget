@@ -44,6 +44,8 @@ DEFAULTS = {
     "placement_monitor": "primary", # "primary" or a monitor key (models-style key, see MONITOR_KEY_RE)
     "floating_positions": {},       # monitor key ("primary" or key) -> {"anchor", "dx", "dy"}
     "show_in_fullscreen": False,    # keep the widget visible over fullscreen windows
+    "fullscreen_placement": "same", # "same" | "floating" | one of FLOATING_ANCHORS: spot used over a fullscreen app
+    "fullscreen_floating_positions": {},    # like floating_positions, used when fullscreen_placement is "floating"
     "panel_size": "normal",         # one of PANEL_SIZES: height of the device panel (share of the screen)
     "ui_scale": 100,                # one of UI_SCALES (percent): fonts, rows, buttons and pills
     "language": "auto",             # one of LANGUAGES: "auto" follows the system language
@@ -70,6 +72,7 @@ PLACEMENT_MODES = ("taskbar", "floating")
 TASKBAR_ANCHORS = ("right", "left")
 FLOATING_ANCHORS = ("top-left", "top-center", "top-right", "middle-left", "middle-right",
                     "bottom-left", "bottom-center", "bottom-right")
+FULLSCREEN_PLACEMENTS = ("same", "floating") + FLOATING_ANCHORS
 MAX_FLOATING = 16                   # entries in floating_positions
 MAX_OFFSET = 10000                  # |dx| and |dy| are clamped to this
 MONITOR_KEY_RE = re.compile(r"[0-9a-f#]{1,40}")
@@ -161,7 +164,9 @@ def _valid(key, value) -> bool:
         return isinstance(value, str) and value in TASKBAR_ANCHORS
     if key == "placement_monitor":
         return _valid_monitor_key(value)
-    if key == "floating_positions":
+    if key == "fullscreen_placement":
+        return isinstance(value, str) and value in FULLSCREEN_PLACEMENTS
+    if key in ("floating_positions", "fullscreen_floating_positions"):
         return (isinstance(value, dict) and len(value) <= MAX_FLOATING
                 and all(_floating_entry(k, v) is not None for k, v in value.items()))
     if key == "device_aliases":
@@ -248,7 +253,7 @@ class Config:
                 self._data[key] = clean_aliases(raw.get(key))
             elif key in ("custom_icons_kind", "custom_icons_device"):
                 self._data[key] = clean_custom_icons(raw.get(key), key == "custom_icons_kind")
-            elif key == "floating_positions" and isinstance(raw.get(key), dict):
+            elif key in ("floating_positions", "fullscreen_floating_positions") and isinstance(raw.get(key), dict):
                 self._data[key] = _clean_floating(raw[key])    # bad entries dropped, the rest kept
             elif key in raw and _valid(key, raw[key]):
                 self._data[key] = raw[key]
@@ -296,7 +301,7 @@ class Config:
             if key in ("device_aliases", "custom_icons_kind", "custom_icons_device"):
                 raise ValueError(f"invalid value for {key!r}")      # never echo personal data
             raise ValueError(f"invalid value for {key!r}: {value!r}")
-        if key == "floating_positions":
+        if key in ("floating_positions", "fullscreen_floating_positions"):
             value = _clean_floating(value)              # clamps dx/dy
         self._data[key] = _copy(value)
         self.save()

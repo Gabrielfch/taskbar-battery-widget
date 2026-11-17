@@ -36,7 +36,8 @@ def opts(t, node_id):
 def test_tree_en_and_es(qapp, tmp_path):
     cfg, t = make(tmp_path, qapp)
     pos = t._settings.find("position")
-    assert labels(pos) == ["Position", "Floating position", "Monitor", "Visible in fullscreen", "Reset position"]
+    assert labels(pos) == ["Position", "Floating position", "Monitor", "Visible in fullscreen", "In fullscreen",
+                           "Reset position"]
     assert [o.label for o in t._settings.find("placement").options()] == [
         "Taskbar, right", "Taskbar, left", "Floating (draggable)"]
     assert opts(t, "placement")["left"].tip == "Needs centred Windows icons"
@@ -44,7 +45,8 @@ def test_tree_en_and_es(qapp, tmp_path):
     set_language("es")
     t2 = TrayController(Config(tmp_path / "d.json"))
     assert labels(t2._settings.find("position")) == [
-        "Posición", "Posición flotante", "Monitor", "Visible en pantalla completa", "Restablecer posición"]
+        "Posición", "Posición flotante", "Monitor", "Visible en pantalla completa", "En pantalla completa",
+        "Restablecer posición"]
     assert [o.label for o in t2._settings.find("placement").options()] == [
         "Barra de tareas, derecha", "Barra de tareas, izquierda", "Flotante (arrastrable)"]
     assert [o.label for o in t2._settings.find("float_anchor").options()] == [

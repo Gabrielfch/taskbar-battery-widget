@@ -30,6 +30,7 @@ class SettingsCallbacks:
     set_placement: Callable[[str], None] = lambda choice: None      # "right" | "left" | "floating"
     set_monitor: Callable[[str], None] = lambda key: None           # "primary" or a monitor key
     reset_position: Callable[[], None] = lambda: None
+    set_fullscreen_placement: Callable[[str], None] = lambda choice: None   # config.FULLSCREEN_PLACEMENTS
     list_screens: Callable[[], list] = lambda: []                   # [(key, label)]
     set_floating_anchor: Callable[[str], None] = lambda anchor: None
     current_key: Callable[[], object] = lambda: None                # monitor key the widget is on
@@ -244,7 +245,16 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
         return opts
 
     def reset_enabled() -> bool:
-        return placement_choice(cfg) == "floating" or not _safe(cb.monitor_has_taskbar, True)
+        return (placement_choice(cfg) == "floating" or not _safe(cb.monitor_has_taskbar, True)
+                or _safe(lambda: cfg.get("fullscreen_placement"), "same") == "floating")
+
+    def fs_options() -> list:
+        # Needs "Visible in fullscreen": without it every option is disabled and says why.
+        on = bool(_safe(lambda: cfg.get("show_in_fullscreen"), False))
+        tip = "" if on else tr("fs_pos_needs_visible")
+        values = [("same", tr("fs_pos_same")), ("floating", tr("pos_floating"))]
+        values += [(a, tr(f"anchor_{a}")) for a in FLOATING_ANCHORS]
+        return [Option(v, lbl, enabled=on, tip=tip) for v, lbl in values]
 
     position = Page(id="position", title_key="menu_position", icon="position", children=[
         Choice(id="placement", label_key="menu_position", options=placement_options,
@@ -255,6 +265,9 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
         Choice(id="monitor", label_key="menu_monitor", options=monitor_options,
                get=lambda: str(cfg.get("placement_monitor")), set=lambda v: cb.set_monitor(str(v))),
         cfg_toggle("show_in_fullscreen", "show_in_fullscreen"),
+        Choice(id="fullscreen_placement", label_key="menu_fs_position", options=fs_options,
+               get=lambda: _safe(lambda: cfg.get("fullscreen_placement"), "same"),
+               set=lambda v: cb.set_fullscreen_placement(str(v))),
         Separator(id="position_sep"),
         Action(id="reset_position", label_key="reset_position", run=lambda: cb.reset_position(),
                enabled=reset_enabled),

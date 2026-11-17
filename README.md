@@ -98,6 +98,9 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
     back to the bottom-right corner.
   - **Visible in fullscreen** (off by default). Over a fullscreen app the widget lets clicks pass through and
     shows no hover card; hold **Shift** to use it.
+  - **In fullscreen** (needs *Visible in fullscreen*): keep the usual position, or float on that monitor at a
+    fixed corner/edge or at a draggable spot of its own (hold **Shift** and drag); it returns to the usual
+    position when the fullscreen app closes. *Reset position* also forgets that spot.
 - Optional detailed log per device: one CSV row per minute in `%LOCALAPPDATA%\TaskbarBatteryWidget\logs\devices\`
   (max. 4 MB per device, no MAC addresses or serial numbers).
   - **Statistics** (the *…* button of a recording device): number of charges, equivalent charge cycles,
