@@ -14,6 +14,7 @@ from PySide6.QtGui import (QAccessible, QAccessibleEvent, QColor, QCursor, QFont
                            QPainterPath, QPen)
 from PySide6.QtWidgets import QMenu, QWidget
 
+from . import animation
 from . import custom_icons
 from . import taskbar
 from .colors import TASKBAR_BASE, band_color, battery_color, pill_tint, row_style
@@ -267,6 +268,12 @@ class TaskbarWidget(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self.update_position)
+        self._clock = animation.clock()     # shared; runs only while something visible is animated
+        self._clock.register(self, self._anim_demand)
+        self._clock.tick.connect(self._on_anim_tick)
+        self._clock.state_changed.connect(self._on_anim_state)
+        if cfg is not None:
+            self._clock.set_enabled(bool(self._cfg_get("animations_enabled", True)))
         self._rebuild()
         self._connect_screen_signals()
 
@@ -274,6 +281,7 @@ class TaskbarWidget(QWidget):
     def set_config(self, cfg) -> None:
         self._cfg = cfg
         self._overrides.clear()
+        self._clock.set_enabled(bool(self._cfg_get("animations_enabled", True)))
         self._rebuild()
         self.update_position()
 
@@ -419,6 +427,7 @@ class TaskbarWidget(QWidget):
         if self._flash_left == 0:
             self._flash_timer.stop()
             self._flash_keys = set()
+            self._clock.refresh()       # the critical pulse resumes after the one-off blink
         self.update()
 
     def _flashing(self, pill: _Pill) -> bool:
@@ -530,6 +539,7 @@ class TaskbarWidget(QWidget):
         self._rects, (tw, th) = layout_pills(widths, self._pill_h, self._vertical)
         self.setFixedSize(QSize(max(tw, 1), max(th, 1)))
         self.update()
+        self._clock.refresh()       # the animated pills may have changed
 
     # ------------------------------------------------------------------ positioning
     def _screens(self) -> list:
@@ -757,6 +767,7 @@ class TaskbarWidget(QWidget):
             _assert_topmost(int(self.winId()))
             if self._popup is not None and self._popup.isVisible():
                 self._popup.raise_topmost()
+        self._clock.refresh()       # also re-reads the Windows animation setting once a minute
 
     def _note_reason(self, reason: str) -> None:
         """Emit placement_warning once each time the placement starts needing a fallback."""
@@ -782,6 +793,8 @@ class TaskbarWidget(QWidget):
             return
         self._passive = on
         self._shift_held = False
+        self._clock.refresh()       # over a fullscreen app nothing animates
+        self.update()
         self._hide_popup()
         if self._hover != -1:
             self._hover = -1
@@ -851,12 +864,15 @@ class TaskbarWidget(QWidget):
         if self._dragging or self._press_global is not None:
             self._cancel_drag()         # hidden mid-drag: the release can no longer reach us
         super().hideEvent(e)
+        self._clock.refresh()
 
     def closeEvent(self, e) -> None:
         self._hide_popup()
         self._timer.stop()
         self._flash_timer.stop()
         self._zguard.stop()
+        self._clock.unregister(self)
+        self._clock.refresh()
         super().closeEvent(e)
 
     def showEvent(self, e) -> None:
@@ -865,6 +881,48 @@ class TaskbarWidget(QWidget):
             self._styled = True
             _apply_ex_styles(int(self.winId()))
         _assert_topmost(int(self.winId()))
+        self._clock.refresh()
+
+    # ------------------------------------------------------------------ animation
+    def _anim_live(self) -> bool:
+        """Animated content moves: enabled, not switched off by Windows, and not in the passive fullscreen state."""
+        return self._clock.allowed() and not self._passive and self.isVisible()
+
+    def _anim_plan(self, now: int) -> list[tuple[int, int]]:
+        """[(pill index, ms until it needs repainting)] for every pill animated right now."""
+        style = get_icon_style()
+        out = []
+        for i, pill in enumerate(self._pills):
+            ms = None
+            name = None
+            if pill.kind != "overflow":
+                name = self._custom_file(pill, 0)
+                if name is not None and custom_icons.is_animated(name):
+                    ms = custom_icons.ms_to_next_frame(name, now)
+                if pill.charging and (style != "battery" or name is None):
+                    ms = animation.PULSE_INTERVAL_MS if ms is None else min(ms, animation.PULSE_INTERVAL_MS)
+            if pill.alert and self._flash_left == 0:
+                ms = animation.PULSE_INTERVAL_MS if ms is None else min(ms, animation.PULSE_INTERVAL_MS)
+            if ms is not None:
+                out.append((i, ms))
+        return out
+
+    def _anim_demand(self):
+        """Clock callback: ms until the next repaint, or None (hidden, passive, nothing animated)."""
+        if not self._pills or not self._anim_live():
+            return None
+        plan = self._anim_plan(self._clock.now_ms())
+        return min(ms for _, ms in plan) if plan else None
+
+    def _on_anim_tick(self, now: int) -> None:
+        if not self._anim_live():
+            return
+        for i, _ms in self._anim_plan(now):
+            x, y, w, h = self._rects[i]
+            self.update(QRect(int(x) - 1, int(y) - 1, int(w) + 2, int(h) + 2))
+
+    def _on_anim_state(self) -> None:
+        self.update()       # paused / resumed: redraw (still or moving)
 
     # ------------------------------------------------------------------ painting
     def _colors(self):
@@ -899,13 +957,18 @@ class TaskbarWidget(QWidget):
         p.setFont(self._font())
         icon = self._icon_size()
         style = get_icon_style()
+        now = self._clock.now_ms() if self._anim_live() else None      # None: paused, draw the still look
         for i, (pill, (x, y, w, h)) in enumerate(zip(self._pills, self._rects)):
             r = QRectF(x, y, w, h)
             level_color = self.pill_color(pill)
             color = self._text_color(pill, fg, dark)
             hover = i == self._hover
+            pulse = animation.alert_pulse(now) if pill.alert and self._flash_left == 0 else 0.0
             if pill.alert:
-                fill = pill_tint("low_hover" if hover or self._flashing(pill) else "low", dark)
+                if hover or self._flashing(pill):
+                    fill = pill_tint("low_hover", dark)
+                else:
+                    fill = animation.alert_fill(dark, pulse)
             else:
                 fill = pill_tint("hover" if hover else "normal", dark)
             p.setPen(Qt.PenStyle.NoPen)
@@ -918,7 +981,9 @@ class TaskbarWidget(QWidget):
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.drawRoundedRect(r.adjusted(1, 1, -1, -1), h / 2.5, h / 2.5)
             if pill.alert:      # non-colour cue for "very low": 1 px outline
-                pen = QPen(color)
+                edge_c = QColor(color)
+                edge_c.setAlpha(animation.alert_border_alpha(pulse))
+                pen = QPen(edge_c)
                 pen.setWidthF(1.0)
                 p.setPen(pen)
                 p.setBrush(Qt.BrushStyle.NoBrush)
@@ -936,8 +1001,9 @@ class TaskbarWidget(QWidget):
                 icon_color = QColor(icon_color)
                 icon_color.setAlpha(IDLE_ALPHA)
             custom = self._custom_file(pill, icon)
+            chg = animation.charge_pulse(now) if pill.charging else 1.0     # charging bolt: opacity 60-100 %
             if custom is not None:      # user image: drawn in every style (also "none"), dimmed like the icon
-                custom_icons.draw_custom_icon(p, ir, custom, icon_color.alphaF())
+                custom_icons.draw_custom_icon(p, ir, custom, icon_color.alphaF(), now)
                 text_x = x + self._pad + icon + self._gap
             elif style == "none":
                 text_x = x + self._pad
@@ -946,7 +1012,10 @@ class TaskbarWidget(QWidget):
                     accent = QColor(color)      # the level colour drives the gauge / the retro accent
                     accent.setAlpha(icon_color.alpha())
                     icon_color = accent
+                if style == "battery":      # the gauge carries its own bolt: the whole icon breathes
+                    p.setOpacity(chg)
                 draw_kind_icon(p, pill.kind, ir, icon_color, pill.level, pill.charging, style)
+                p.setOpacity(1.0)
                 text_x = x + self._pad + icon + self._gap
             if pill.idle:
                 moon = QColor(fg)
@@ -975,8 +1044,10 @@ class TaskbarWidget(QWidget):
                                          BAR_H), BAR_H / 2, BAR_H / 2)
             if own_bolt:
                 bh = icon * 0.8
+                p.setOpacity(chg)
                 draw_bolt(p, QRectF(x + w - self._pad - bolt, y + (h - bh) / 2, bolt, bh),
                           QColor(110, 220, 120) if not self._light else QColor(30, 150, 60))
+                p.setOpacity(1.0)
         p.end()
 
     # ------------------------------------------------------------------ interaction

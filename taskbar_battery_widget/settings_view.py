@@ -430,6 +430,9 @@ class SettingsView(QWidget):
             row = self._make_row(node.id, "toggle", node.label(), indicator="check", parent=body)
             row.setChecked(on)
             row.setAccessibleName(node.label())
+            if node.tip_key:
+                row.setToolTip(node.tip())
+                row.setAccessibleDescription(node.tip())
             row.clicked.connect(lambda _c=False, t=node: self._toggle(t))
             v.addWidget(row)
         elif isinstance(node, Action):

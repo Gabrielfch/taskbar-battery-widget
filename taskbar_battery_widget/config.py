@@ -36,6 +36,7 @@ DEFAULTS = {
     "device_aliases": {},           # visibility key -> user-chosen display name (see aliases.py)
     "custom_icons_kind": {},        # device kind -> imported image file name (see custom_icons.py)
     "custom_icons_device": {},      # visibility key -> imported image file name
+    "animations_enabled": True,     # animated custom icons and the charging / critical pulses (see animation.py)
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)

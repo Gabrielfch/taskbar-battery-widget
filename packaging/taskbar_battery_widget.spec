@@ -39,6 +39,8 @@ EXCLUDES = [
 ]
 
 # Binaries/data that are never needed by a QtCore/QtGui/QtWidgets-only app.
+# imageformats\qgif and imageformats\qwebp are NOT dropped on purpose: animated custom icons are read from GIF
+# and (animated) WebP files (qwebp is ~0.5 MB). Qt's PNG plugin has no APNG support, so APNG is not offered.
 DROP = (
     "opengl32sw", "qt6quick", "qt6qml", "qt6pdf", "qt6network", "qt6opengl",
     "qt6virtualkeyboard", "qt6webengine", "qt6multimedia", "qt6charts", "qt6datavis",

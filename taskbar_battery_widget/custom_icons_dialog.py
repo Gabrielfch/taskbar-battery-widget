@@ -11,7 +11,7 @@ from .icons import draw_kind_icon
 from .dialogs import app_dialog_guard
 from .models import KINDS
 
-IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.ico *.gif *.svg)"
+IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.ico *.gif *.webp *.svg)"
 _PREVIEW = 28
 
 

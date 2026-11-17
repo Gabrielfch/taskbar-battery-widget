@@ -6,7 +6,9 @@ image is missing or broken the caller falls back to the built-in icon.
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
+import json
 import os
 import re
 import tempfile
@@ -16,21 +18,38 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageReader, QPainter, QPixmap
 
 from .device_history import base_dir
 
-ALLOWED_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".ico", ".gif", ".svg")
+ALLOWED_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".ico", ".gif", ".webp", ".svg")
 MAX_BYTES = 2 * 1024 * 1024
 MAX_SVG_BYTES = 512 * 1024
 MAX_SVG_DIM = 4096          # logical size / viewBox limit of an imported SVG
 SVG_OUT_PX = 256            # an SVG is rendered once, at import, to a PNG of this size
 MAX_DIM = 2048
-_SAFE_NAME = re.compile(r"[0-9a-f]{16}\.(png|jpg|jpeg|bmp|ico|gif)")
+# Stored names: "<sha16>.<ext>" for a still image, "<sha16>.anim.png" for an animation (a horizontal strip of
+# 64x64 frames) with its timings in the sidecar "<sha16>.anim.json" (never referenced by the config).
+_SAFE_NAME = re.compile(r"[0-9a-f]{16}\.(?:png|jpg|jpeg|bmp|ico|gif|anim\.png)")
+_SAFE_SIDECAR = re.compile(r"[0-9a-f]{16}\.anim\.json")
 _ALLOWED_FORMATS = {"png", "jpg", "jpeg", "bmp", "ico", "gif"}
 _TMP_MAX_AGE = 3600
 _CACHE_MAX = 128
+
+# Animated icons (GIF / WebP): limits applied while reading the source and on the stored strip.
+ANIM_FRAME_PX = 64          # every frame is fitted into a 64x64 transparent square
+MAX_ANIM_READ = 200         # more source frames than this: rejected
+MAX_ANIM_FRAMES = 48        # frames kept (uniform subsampling above this)
+MIN_FRAME_MS = 66           # <= 15 fps
+MAX_FRAME_MS = 2000
+MAX_ANIM_TOTAL_MS = 10_000  # total duration of the source (after clamping each delay)
+MAX_ANIM_PIXELS = 160_000_000   # source width * height * frames: bounds the decoding work
+ANIM_READ_TIMEOUT = 6.0     # seconds spent decoding before the import is abandoned
+MAX_ANIM_JSON = 2048
+_ANIM_FORMATS = {"gif", "webp"}
+_ANIM_CACHE_MAX = 8
+_ANIM_PX_CACHE_MAX = 24
 
 # Error codes (translate with the i18n keys of the same name).
 ERR_EXTENSION = "icon_err_extension"
@@ -38,6 +57,7 @@ ERR_TOO_BIG = "icon_err_too_big"
 ERR_DIMENSIONS = "icon_err_dimensions"
 ERR_UNREADABLE = "icon_err_unreadable"
 ERR_IO = "icon_err_io"
+ERR_ANIM_LONG = "icon_err_anim_long"
 
 
 class IconImportError(Exception):
@@ -53,7 +73,23 @@ def icons_dir() -> Path:
 
 
 def safe_name(value) -> bool:
+    """A file name the config may reference (still image or ``.anim.png`` strip)."""
     return isinstance(value, str) and _SAFE_NAME.fullmatch(value) is not None
+
+
+def safe_file(value) -> bool:
+    """Any file this module creates in the icons folder: an icon name or an ``.anim.json`` sidecar."""
+    return safe_name(value) or (isinstance(value, str) and _SAFE_SIDECAR.fullmatch(value) is not None)
+
+
+def is_animated(value) -> bool:
+    """True for the name of an animated icon (a pure name check; the file is not touched)."""
+    return safe_name(value) and value.endswith(".anim.png")
+
+
+def sidecar_name(filename: str) -> str:
+    """``<sha16>.anim.png`` -> ``<sha16>.anim.json``."""
+    return filename[:-len(".png")] + ".json"
 
 
 def _open_reader(data: bytes):
@@ -66,17 +102,21 @@ def _open_reader(data: bytes):
     return reader, buf
 
 
-def _format_ok(reader) -> bool:
+def _format_of(reader) -> str:
     try:
-        return bytes(reader.format()).decode("ascii", "ignore").lower() in _ALLOWED_FORMATS
+        return bytes(reader.format()).decode("ascii", "ignore").lower()
     except Exception:
-        return False
+        return ""
 
 
-def _decode(data: bytes, err: str):
+def _format_ok(reader, allowed=_ALLOWED_FORMATS) -> bool:
+    return _format_of(reader) in allowed
+
+
+def _decode(data: bytes, err: str, allowed=_ALLOWED_FORMATS):
     """Validate `data` (allowed raster format, size limits) and return the decoded QImage."""
     reader, buf = _open_reader(data)
-    if not reader.canRead() or not _format_ok(reader):
+    if not reader.canRead() or not _format_ok(reader, allowed):
         raise IconImportError(err)
     size = reader.size()
     if size.isValid() and (size.width() > MAX_DIM or size.height() > MAX_DIM):
@@ -305,31 +345,302 @@ def import_image(src) -> str:
     if ext == ".svg":
         data = _svg_to_png(data)        # from here on it is an ordinary PNG
         ext = ".png"
+    else:
+        anim = _animation_from(data)    # GIF / WebP with several frames -> strip + timings
+        if anim is not None:
+            return _store_animation(*anim)
+        reader, _buf = _open_reader(data)       # (the buffer must outlive the reader)
+        if _format_of(reader) == "webp":        # a still WebP is stored as a PNG
+            data = _png_bytes(_decode(data, ERR_UNREADABLE, {"webp"}))
+            ext = ".png"
     _decode(data, ERR_UNREADABLE)
     name = hashlib.sha256(data).hexdigest()[:16] + ext
     try:
         d = icons_dir()
         d.mkdir(parents=True, exist_ok=True)
-        dest = d / name
-        if not dest.exists():
-            # unique temp file in the same directory (no fixed name to collide on), flushed to disk, then
-            # atomically moved into place; the exact bytes that were validated (no second read of src)
-            fd, tmp_name = tempfile.mkstemp(dir=d, prefix=name + ".", suffix=".tmp")
-            try:
-                with os.fdopen(fd, "wb") as fh:
-                    fh.write(data)
-                    fh.flush()
-                    os.fsync(fh.fileno())
-                os.replace(tmp_name, dest)
-            except BaseException:
-                try:
-                    os.unlink(tmp_name)
-                except OSError:
-                    pass
-                raise
+        _write_new(d, name, data)
     except OSError:
         raise IconImportError(ERR_IO) from None
     return name
+
+
+def _write_new(d: Path, name: str, data: bytes) -> None:
+    """Write `data` as d/name unless it exists: unique temp file in the same directory (no fixed name to
+    collide on), flushed to disk, then atomically moved into place. The exact bytes that were validated."""
+    dest = d / name
+    if dest.exists():
+        return
+    fd, tmp_name = tempfile.mkstemp(dir=d, prefix=name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, dest)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _png_bytes(img: QImage) -> bytes:
+    buf = QBuffer()
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    if not img.save(buf, "PNG"):
+        raise IconImportError(ERR_UNREADABLE)
+    return bytes(buf.data())
+
+
+# --- animated icons --------------------------------------------------------------------------------------
+def _fit_frame(img: QImage) -> QImage:
+    """`img` fitted (aspect ratio kept) and centred in a transparent 64x64 square."""
+    n = ANIM_FRAME_PX
+    scaled = img.scaled(n, n, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    out = QImage(n, n, QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(QColor(0, 0, 0, 0))
+    p = QPainter(out)
+    p.drawImage((n - scaled.width()) // 2, (n - scaled.height()) // 2, scaled)
+    p.end()
+    return out
+
+
+def _plan_frames(delays: list[int]) -> tuple[list[int], list[int]]:
+    """(source index kept, delay) lists for at most MAX_ANIM_FRAMES frames.
+
+    Above the limit the frames are picked uniformly and each one lasts as long as the source frames it
+    stands for (so the loop keeps its duration); every delay ends up inside [MIN_FRAME_MS, MAX_FRAME_MS].
+    """
+    n = len(delays)
+    if n <= MAX_ANIM_FRAMES:
+        return list(range(n)), list(delays)
+    idx = [i * n // MAX_ANIM_FRAMES for i in range(MAX_ANIM_FRAMES)]
+    ends = idx[1:] + [n]
+    return idx, [max(MIN_FRAME_MS, min(MAX_FRAME_MS, sum(delays[a:b]))) for a, b in zip(idx, ends)]
+
+
+def _animation_from(data: bytes):
+    """(frames, delays) of an animated GIF / WebP, or None when `data` is not an animation (one frame or a
+    format without animation). Frames are 64x64 QImages, delays in ms. Limits are checked before decoding
+    and while reading; anything over them raises IconImportError."""
+    reader, buf = _open_reader(data)
+    if not reader.canRead() or _format_of(reader) not in _ANIM_FORMATS or not reader.supportsAnimation():
+        return None
+    count = reader.imageCount()
+    if count == 1:
+        return None
+    if count > MAX_ANIM_READ:
+        raise IconImportError(ERR_ANIM_LONG)
+    size = reader.size()
+    if size.isValid():
+        if size.width() > MAX_DIM or size.height() > MAX_DIM:
+            raise IconImportError(ERR_DIMENSIONS)
+        if size.width() * size.height() * (count if count > 0 else MAX_ANIM_READ) > MAX_ANIM_PIXELS:
+            raise IconImportError(ERR_DIMENSIONS)
+    started = time.monotonic()
+    frames: list[QImage] = []
+    delays: list[int] = []
+    while reader.canRead():
+        if len(frames) >= MAX_ANIM_READ:
+            raise IconImportError(ERR_ANIM_LONG)
+        img = reader.read()
+        if img.isNull():
+            break
+        if img.width() > MAX_DIM or img.height() > MAX_DIM:
+            raise IconImportError(ERR_DIMENSIONS)
+        if not frames:      # the size of a format that does not announce it is known only now
+            if img.width() * img.height() * (count if count > 0 else MAX_ANIM_READ) > MAX_ANIM_PIXELS:
+                raise IconImportError(ERR_DIMENSIONS)
+        if time.monotonic() - started > ANIM_READ_TIMEOUT:
+            raise IconImportError(ERR_UNREADABLE)
+        delays.append(max(MIN_FRAME_MS, min(MAX_FRAME_MS, int(reader.nextImageDelay()))))
+        frames.append(_fit_frame(img))
+    if not frames:
+        raise IconImportError(ERR_UNREADABLE)
+    if len(frames) == 1:
+        return None
+    if sum(delays) > MAX_ANIM_TOTAL_MS:
+        raise IconImportError(ERR_ANIM_LONG)
+    keep, kept_delays = _plan_frames(delays)
+    return [frames[i] for i in keep], kept_delays
+
+
+def _store_animation(frames: list[QImage], delays: list[int]) -> str:
+    """Write the strip (64*N x 64 PNG) and its timings; returns the ``.anim.png`` name."""
+    n = len(frames)
+    sheet = QImage(ANIM_FRAME_PX * n, ANIM_FRAME_PX, QImage.Format.Format_ARGB32_Premultiplied)
+    sheet.fill(QColor(0, 0, 0, 0))
+    p = QPainter(sheet)
+    for i, fr in enumerate(frames):
+        p.drawImage(i * ANIM_FRAME_PX, 0, fr)
+    p.end()
+    png = _png_bytes(sheet)
+    meta = json.dumps({"v": 1, "delays": delays}, separators=(",", ":")).encode("ascii")
+    name = hashlib.sha256(png + b"\0" + meta).hexdigest()[:16] + ".anim.png"
+    try:
+        d = icons_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        _write_new(d, sidecar_name(name), meta)     # timings first: a strip is never visible without them
+        _write_new(d, name, png)
+    except OSError:
+        raise IconImportError(ERR_IO) from None
+    return name
+
+
+class _Anim:
+    """A validated, decoded strip: the sheet plus cumulative end times of its frames."""
+    __slots__ = ("sheet", "delays", "cum", "total")
+
+    def __init__(self, sheet: QImage, delays: list[int]):
+        self.sheet = sheet
+        self.delays = delays
+        self.cum = []
+        t = 0
+        for d in delays:
+            t += d
+            self.cum.append(t)
+        self.total = t
+
+    @property
+    def count(self) -> int:
+        return len(self.delays)
+
+
+def _valid_delays(obj) -> list[int] | None:
+    if not isinstance(obj, dict) or set(obj) != {"v", "delays"} or obj["v"] != 1 or isinstance(obj["v"], bool):
+        return None
+    d = obj["delays"]
+    if not isinstance(d, list) or not 2 <= len(d) <= MAX_ANIM_FRAMES:
+        return None
+    for v in d:
+        if not isinstance(v, int) or isinstance(v, bool) or not MIN_FRAME_MS <= v <= MAX_FRAME_MS:
+            return None
+    if sum(d) > MAX_ANIM_TOTAL_MS:
+        return None
+    return list(d)
+
+
+def _read_anim(filename: str) -> _Anim | None:
+    """Load and validate a strip + sidecar; None when anything is wrong (missing, odd size, bad timings)."""
+    d = icons_dir()
+    try:
+        side = d / sidecar_name(filename)
+        if side.stat().st_size > MAX_ANIM_JSON or (d / filename).stat().st_size > MAX_BYTES:
+            return None
+        delays = _valid_delays(json.loads(side.read_bytes().decode("ascii")))
+        if delays is None:
+            return None
+        reader, buf = _open_reader((d / filename).read_bytes())
+        n = len(delays)
+        if not reader.canRead() or _format_of(reader) != "png":
+            return None
+        if reader.size() != QSize(ANIM_FRAME_PX * n, ANIM_FRAME_PX):
+            return None
+        sheet = reader.read()
+        if sheet.isNull() or sheet.width() != ANIM_FRAME_PX * n or sheet.height() != ANIM_FRAME_PX:
+            return None
+        return _Anim(sheet.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied), delays)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+
+
+# stamp (png mtime, sidecar mtime) -> decoded strip
+_anims: OrderedDict = OrderedDict()
+# (filename, size_px, dpr, stamp) -> list of scaled frames (None = not built yet)
+_anim_px: OrderedDict = OrderedDict()
+
+
+def _stamp(filename: str):
+    """Change marker of an icon file: its mtime, or (png, sidecar) mtimes for an animation."""
+    d = icons_dir()
+    mt = _mtime(d / filename)
+    if mt is None or not is_animated(filename):
+        return mt
+    side = _mtime(d / sidecar_name(filename))
+    return None if side is None else (mt, side)
+
+
+def _anim_for(filename: str) -> _Anim | None:
+    stamp = _stamp(filename)
+    if stamp is None:
+        return None
+    hit = _anims.get(filename)
+    if hit is not None and hit[0] == stamp:
+        _anims.move_to_end(filename)
+        return hit[1]
+    if _failed.get(filename) == stamp:
+        return None
+    anim = _read_anim(filename)
+    if anim is None:
+        _failed[filename] = stamp
+        _anims.pop(filename, None)
+        return None
+    _failed.pop(filename, None)
+    _anims[filename] = (stamp, anim)
+    while len(_anims) > _ANIM_CACHE_MAX:
+        _anims.popitem(last=False)
+    return anim
+
+
+def frame_index(anim: _Anim, now_ms: int | None) -> int:
+    """Index of the frame shown at `now_ms` (None = paused: the first one)."""
+    if now_ms is None or anim.total <= 0:
+        return 0
+    return bisect.bisect_right(anim.cum, int(now_ms) % anim.total)
+
+
+def ms_to_next_frame(filename: str, now_ms: int) -> int | None:
+    """Milliseconds until the frame shown at `now_ms` ends; None when `filename` is not a usable animation."""
+    try:
+        anim = _anim_for(filename) if is_animated(filename) else None
+        if anim is None:
+            return None
+        t = int(now_ms) % anim.total
+        return max(1, anim.cum[bisect.bisect_right(anim.cum, t)] - t)
+    except Exception:
+        return None
+
+
+def frame_for(filename: str, now_ms: int | None, size_px: int, dpr: float = 1.0) -> QPixmap | None:
+    """The pixmap to draw for `filename` at time `now_ms`. A still image ignores the time; an animation shows
+    the frame due at that time, or its first frame when `now_ms` is None (paused). Never raises."""
+    try:
+        if not is_animated(filename):
+            return pixmap_for(filename, size_px, dpr)
+        return _anim_frame(filename, now_ms, int(size_px), dpr)
+    except Exception:
+        return None
+
+
+def _anim_frame(filename: str, now_ms: int | None, size_px: int, dpr: float) -> QPixmap | None:
+    dpr = float(dpr) if dpr and dpr > 0 else 1.0
+    if size_px <= 0:
+        return None
+    anim = _anim_for(filename)
+    if anim is None:
+        return None
+    stamp = _stamp(filename)
+    px = max(1, int(round(size_px * dpr)))
+    key = (filename, px, round(dpr, 3), stamp)
+    frames = _anim_px.get(key)
+    if frames is None:
+        for k in [k for k in _anim_px if k[0] == filename and k[3] != stamp]:
+            del _anim_px[k]
+        frames = _anim_px[key] = [None] * anim.count
+        while len(_anim_px) > _ANIM_PX_CACHE_MAX:
+            _anim_px.popitem(last=False)
+    else:
+        _anim_px.move_to_end(key)
+    i = frame_index(anim, now_ms)
+    pm = frames[i]
+    if pm is None:
+        cell = anim.sheet.copy(i * ANIM_FRAME_PX, 0, ANIM_FRAME_PX, ANIM_FRAME_PX)
+        pm = QPixmap.fromImage(cell.scaled(px, px, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                           Qt.TransformationMode.SmoothTransformation))
+        pm.setDevicePixelRatio(dpr)
+        frames[i] = pm
+    return pm
 
 
 def resolve(kind: str, key: str, by_kind: dict, by_device: dict) -> str | None:
@@ -394,6 +705,8 @@ def clear_cache() -> None:
     _cache.clear()
     _failed.clear()
     _usable.clear()
+    _anims.clear()
+    _anim_px.clear()
 
 
 def usable(filename: str) -> bool:
@@ -401,6 +714,8 @@ def usable(filename: str) -> bool:
     try:
         if not safe_name(filename):
             return False
+        if is_animated(filename):
+            return _anim_for(filename) is not None
         path = icons_dir() / filename
         mt = _mtime(path)
         if mt is None:
@@ -430,6 +745,8 @@ def pixmap_for(filename: str, size_px: int, dpr: float) -> QPixmap | None:
         dpr = float(dpr) if dpr and dpr > 0 else 1.0
         if size_px <= 0:
             return None
+        if is_animated(filename):       # a still request for an animation: its first frame
+            return _anim_frame(filename, None, size_px, dpr)
         path = icons_dir() / filename
         mt = _mtime(path)
         if mt is None:
@@ -469,7 +786,9 @@ def pixmap_for(filename: str, size_px: int, dpr: float) -> QPixmap | None:
         return None
 
 
-def draw_custom_icon(painter: QPainter, rect, filename: str, opacity: float = 1.0) -> bool:
+def draw_custom_icon(painter: QPainter, rect, filename: str, opacity: float = 1.0,
+                     now_ms: int | None = None) -> bool:
+    """Draw the icon in `rect`. `now_ms` picks the frame of an animation (None = paused: first frame)."""
     try:
         r = QRectF(rect)
         side = min(r.width(), r.height())
@@ -480,7 +799,7 @@ def draw_custom_icon(painter: QPainter, rect, filename: str, opacity: float = 1.
             dpr = float(painter.device().devicePixelRatioF())
         except Exception:
             pass
-        px = pixmap_for(filename, int(round(side)), dpr)
+        px = frame_for(filename, now_ms, int(round(side)), dpr)
         if px is None:
             return False
         painter.save()
@@ -510,6 +829,8 @@ def cleanup_unused(used: set[str]) -> None:
                     continue
                 if safe_name(f.name):
                     doomed = f.name not in keep
+                elif _SAFE_SIDECAR.fullmatch(f.name):       # timings go with their strip
+                    doomed = f.name[:-len(".json")] + ".png" not in keep
                 elif f.suffix == ".tmp":
                     doomed = now - f.stat().st_mtime > _TMP_MAX_AGE
                 else:

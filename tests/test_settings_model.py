@@ -42,7 +42,7 @@ OLD_MENU = {
     "sources": {"wireless_enabled", "bluetooth_enabled"},
     "alerts": {"notifications_enabled", "full_charge_alert", "low_threshold"},
     "logs": {"open_device_log", "open_logs_folder", "detail_log_enabled", "open_detail_folder"},
-    "personalization": {"palette", "icon_style", "custom_icons", "position",
+    "personalization": {"palette", "icon_style", "custom_icons", "animations_enabled", "position",
                         "panel_size", "ui_scale", "language"},
     "position": {"placement", "float_anchor", "monitor", "show_in_fullscreen", "fullscreen_placement",
                  "reset_position"},
@@ -57,7 +57,7 @@ def test_parity_with_old_menu():
         assert isinstance(page, Page)
         assert {c.id for c in page.children if not isinstance(c, Separator)} == expected, page_id
     kinds = {Toggle: {"wireless_enabled", "bluetooth_enabled", "notifications_enabled", "full_charge_alert",
-                      "detail_log_enabled", "start_with_windows", "show_in_fullscreen"},
+                      "detail_log_enabled", "start_with_windows", "show_in_fullscreen", "animations_enabled"},
              Choice: {"low_threshold", "palette", "icon_style", "placement", "float_anchor", "monitor", "fullscreen_placement",
                        "panel_size", "ui_scale", "language"},
              Action: {"open_device_log", "open_logs_folder", "open_detail_folder", "custom_icons",

@@ -79,9 +79,13 @@ class Toggle(Node):
     label_key: str
     get: Callable[[], bool]
     set: Callable[[bool], None]
+    tip_key: str = ""               # optional short hint (tooltip / accessible description)
 
     def label(self) -> str:
         return tr(self.label_key)
+
+    def tip(self) -> str:
+        return tr(self.tip_key) if self.tip_key else ""
 
 
 @dataclass(eq=False, kw_only=True)
@@ -180,9 +184,9 @@ def _safe(fn, default):
 def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
     """The whole Settings tree. Every value is read lazily, so the view only has to call the getters again."""
 
-    def cfg_toggle(key: str, label_key: str) -> Toggle:
+    def cfg_toggle(key: str, label_key: str, tip_key: str = "") -> Toggle:
         return Toggle(id=key, label_key=label_key, get=lambda: bool(cfg.get(key)),
-                      set=lambda v: cb.set_bool(key, bool(v)))
+                      set=lambda v: cb.set_bool(key, bool(v)), tip_key=tip_key)
 
     def static_options(values, label_of) -> Callable[[], list]:
         return lambda: [Option(v, label_of(v)) for v in values]
@@ -286,6 +290,7 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
                options=static_options(ICON_STYLES, lambda n: tr("icon_" + n)),
                get=lambda: cfg.get("icon_style"), set=lambda v: cb.set_icon_style(str(v))),
         Action(id="custom_icons", label_key="custom_icons_menu", run=lambda: cb.open_custom_icons()),
+        cfg_toggle("animations_enabled", "animations", "animations_tip"),
         Choice(id="panel_size", label_key="menu_panel_size",
                options=static_options(PANEL_SIZES, lambda n: tr("panel_size_" + n)),
                get=lambda: cfg.get("panel_size"), set=lambda v: cb.set_panel_size(str(v))),

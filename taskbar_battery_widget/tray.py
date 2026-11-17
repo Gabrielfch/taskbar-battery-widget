@@ -11,6 +11,7 @@ from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from . import aliases
+from . import animation
 from . import colors
 from . import custom_icons
 from . import i18n
@@ -60,6 +61,7 @@ def apply_appearance(cfg) -> None:
     if setter is not None:
         setter(cfg.get("icon_style"))
     custom_icons.set_maps(cfg.get("custom_icons_kind"), cfg.get("custom_icons_device"))
+    animation.clock().set_enabled(bool(cfg.get("animations_enabled")))
 
 
 class TrayController(QObject):
@@ -470,6 +472,8 @@ class TrayController(QObject):
 
     def _set_bool(self, key: str, value: bool) -> None:
         self._cfg.set(key, bool(value))
+        if key == "animations_enabled":
+            animation.clock().set_enabled(bool(value))      # live: the widget and the panel pause / resume at once
         self.settings_changed.emit()
 
     def _set_threshold(self, value: int) -> None:

@@ -39,6 +39,8 @@ def _isolate_module_state():
         from taskbar_battery_widget import custom_icons
         custom_icons.set_maps({}, {})
         custom_icons.clear_cache()
+        from taskbar_battery_widget import animation
+        animation.reset()
 
     _reset()
     yield
@@ -59,6 +61,13 @@ def _no_real_taskbar(request, monkeypatch):
     monkeypatch.setattr(taskbar, "monitor_stable_id", lambda name: "")
     # the real foreground app (a game, a presentation) must not decide test outcomes
     monkeypatch.setattr(taskbar, "is_fullscreen_foreground", lambda *a, **k: False)
+
+
+@pytest.fixture(autouse=True)
+def _windows_animations_on(monkeypatch):
+    """The developer's own "Show animations in Windows" setting must not decide test outcomes."""
+    from taskbar_battery_widget import animation
+    monkeypatch.setattr(animation, "system_animations_enabled", lambda: True)
 
 
 @pytest.fixture(autouse=True)

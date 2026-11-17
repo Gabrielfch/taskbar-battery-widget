@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication,
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QScrollArea, QSizePolicy,
                                QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
-from . import custom_icons, i18n, taskbar
+from . import animation, custom_icons, i18n, taskbar
 from .config import PANEL_SIZE_FRACTION, UI_SCALES
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
 from .icons import (about_icon, close_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon,
@@ -109,9 +109,10 @@ class _ElidedLabel(QLabel):
 
 
 def _kind_pixmap(kind: str, color: QColor, dpr: float, level: int | None = None,
-                 charging: bool = False, key: str = "", size: int = ICON_PX) -> QPixmap:
+                 charging: bool = False, key: str = "", size: int = ICON_PX, now_ms: int | None = None) -> QPixmap:
     """Row icon; the "none" style (widget only) falls back to outline: the panel needs the kind.
-    A user image (device > kind) replaces the built-in icon; the colour's alpha is its opacity."""
+    A user image (device > kind) replaces the built-in icon; the colour's alpha is its opacity.
+    `now_ms` picks the frame of an animated image (None = paused: its first frame)."""
     style = get_icon_style()
     if style == "none":
         style = "outline"
@@ -122,7 +123,7 @@ def _kind_pixmap(kind: str, color: QColor, dpr: float, level: int | None = None,
     p = QPainter(pm)
     rect = QRectF(0, 0, size, size)
     custom = custom_icons.file_for(kind, key)
-    if not (custom and custom_icons.draw_custom_icon(p, rect, custom, color.alphaF())):
+    if not (custom and custom_icons.draw_custom_icon(p, rect, custom, color.alphaF(), now_ms)):
         draw_kind_icon(p, kind, rect, color, level, charging, style)
     p.end()
     return pm
@@ -209,6 +210,10 @@ class DevicePanel(QFrame):
         self._size = "normal"                    # config panel_size
         self._scale_pct = 100                    # config ui_scale (percent)
         self._k = 1.0
+        self._clock = animation.clock()      # animated row icons; stops when the panel is closed
+        self._clock.register(self, self._anim_demand)
+        self._clock.tick.connect(self._on_anim_tick)
+        self._clock.state_changed.connect(self._on_anim_state)
 
         self._scroll = QScrollArea(self)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -361,6 +366,7 @@ class DevicePanel(QFrame):
         self._toolbar["settings"].setChecked(True)
         self._chain_settings_tab_order()
         self._refit(keep_edge=True)
+        self._clock.refresh()       # the rows are hidden behind the Settings page
         if self.isVisible():
             self._settings_view.focus_first()
 
@@ -371,6 +377,7 @@ class DevicePanel(QFrame):
             self._stack.setCurrentWidget(self._scroll)
             self._settings_view.reset()
         self._toolbar["settings"].setChecked(False)
+        self._clock.refresh()
         if was:
             self._refit(keep_edge=True)
             if self.isVisible():
@@ -381,6 +388,48 @@ class DevicePanel(QFrame):
         """Re-read the values shown on the open Settings page (no-op on the device list)."""
         if self.in_settings:
             self._settings_view.refresh()
+
+    # ------------------------------------------------------------------ animated row icons
+    def _anim_now(self) -> int | None:
+        """Clock time while animations may run, None (paused: still image) otherwise."""
+        return self._clock.now_ms() if self._clock.allowed() else None
+
+    def _animated_rows(self) -> list[tuple[str, str]]:
+        """[(row key, icon file)] of the visible rows whose icon is an animation."""
+        out = []
+        for key, ctx in self._row_ctx.items():
+            name = custom_icons.file_for(ctx[2].kind, key)
+            if name is None or not custom_icons.is_animated(name):
+                continue
+            try:
+                if ctx[1].isVisible():
+                    out.append((key, name))
+            except RuntimeError:        # the row was deleted
+                continue
+        return out
+
+    def _anim_demand(self):
+        if not self.isVisible() or self.in_settings or not self._clock.allowed():
+            return None
+        now = self._clock.now_ms()
+        waits = [custom_icons.ms_to_next_frame(name, now) for _key, name in self._animated_rows()]
+        waits = [w for w in waits if w is not None]
+        return min(waits) if waits else None
+
+    def _paint_animated_rows(self, now: int | None) -> None:
+        dpr = self.devicePixelRatioF() or 1.0
+        for key, _name in self._animated_rows():
+            _h, icon, row, color = self._row_ctx[key]
+            icon.setPixmap(_kind_pixmap(row.kind, color, dpr, row.battery, row.charging, row.key, self._icon, now))
+
+    def _on_anim_tick(self, now: int) -> None:
+        if self.isVisible() and not self.in_settings:
+            self._paint_animated_rows(now)
+
+    def _on_anim_state(self) -> None:
+        """Paused or resumed: paused rows go back to their first frame."""
+        if self.isVisible() and not self.in_settings:
+            self._paint_animated_rows(self._anim_now())
 
     def _on_settings_layout(self) -> None:
         if self.in_settings:
@@ -578,7 +627,8 @@ class DevicePanel(QFrame):
         dpr = self.devicePixelRatioF() or 1.0
         icon = QLabel()
         self._row_ctx[row.key] = (h, icon, row, icon_color)
-        icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr, row.battery, row.charging, row.key, self._icon))
+        icon.setPixmap(_kind_pixmap(row.kind, icon_color, dpr, row.battery, row.charging, row.key, self._icon,
+                                    self._anim_now()))
         icon.setFixedSize(self._icon, self._icon)
         h.addWidget(icon)
 
@@ -747,6 +797,7 @@ class DevicePanel(QFrame):
         bar.setValue(scroll_pos)
         if focus_key in self._buttons:
             self._buttons[focus_key].setFocus(Qt.FocusReason.OtherFocusReason)
+        self._clock.refresh()
 
     def _chain_tab_order(self) -> None:
         order = list(self._buttons.values())      # creation order == visual order
@@ -1194,6 +1245,7 @@ class DevicePanel(QFrame):
             self._screen_hooked = True
             wh.screenChanged.connect(self._on_screen_changed)
         self._on_screen_changed()       # icons are drawn for the screen the panel is on now
+        self._clock.refresh()
 
     def _on_screen_changed(self, *_a) -> None:
         """Icons are pixmaps at the current devicePixelRatio: drop the cached signature and rebuild."""
@@ -1214,6 +1266,7 @@ class DevicePanel(QFrame):
         self.hidden_at = time.monotonic()
         if self.in_settings:        # the next opening shows the device list again
             self.show_devices()
+        self._clock.refresh()       # a closed panel animates nothing
         hwnd, self._posted_hwnd = self._posted_hwnd, 0
         if hwnd:
             try:
