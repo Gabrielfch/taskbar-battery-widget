@@ -15,9 +15,9 @@ from taskbar_battery_widget.models import Device, visibility_key
 from taskbar_battery_widget.panel_model import build_panel_model
 from taskbar_battery_widget.tray import TrayController
 
-ORDER = ["refresh", "show_all", "settings", "about", "quit"]
-LABELS = {"en": ["Refresh", "Show all in the taskbar", "Settings", "About", "Quit"],
-          "es": ["Actualizar", "Mostrar todos en la barra", "Configuración", "Acerca de", "Salir"]}
+ORDER = ["refresh", "show_all", "settings", "personalization", "about", "quit"]
+LABELS = {"en": ["Refresh", "Show all in the taskbar", "Settings", "Personalization", "About", "Quit"],
+          "es": ["Actualizar", "Mostrar todos en la barra", "Configuración", "Personalización", "Acerca de", "Salir"]}
 
 
 def setup_function(_):
@@ -62,10 +62,11 @@ def test_toolbar_actions_emit(panel):
     panel.about_requested.connect(lambda: got.append("about"))
     panel.quit_requested.connect(lambda: got.append("quit"))
     panel.settings_requested.connect(lambda r: got.append(("settings", r.size().width())))
+    panel.personalization_requested.connect(lambda: got.append("personalization"))
     panel.set_model(model([dev("a")], hidden=[visibility_key("a")]))
     for k in ORDER:
         panel._toolbar[k].click()
-    assert got == ["refresh", "show_all", ("settings", 32), "about", "quit"]
+    assert got == ["refresh", "show_all", ("settings", 32), "personalization", "about", "quit"]
 
 
 def test_show_all_disabled_when_nothing_hidden(panel):
@@ -91,8 +92,12 @@ def test_keyboard_toolbar(panel):
     QTest.keyClick(t["show_all"], Qt.Key.Key_Right)
     assert t["settings"].hasFocus()
     QTest.keyClick(t["settings"], Qt.Key.Key_Right)
+    assert t["personalization"].hasFocus()
+    QTest.keyClick(t["personalization"], Qt.Key.Key_Right)
     assert t["about"].hasFocus()
     QTest.keyClick(t["about"], Qt.Key.Key_Left)
+    assert t["personalization"].hasFocus()
+    QTest.keyClick(t["personalization"], Qt.Key.Key_Left)
     assert t["settings"].hasFocus()
     QTest.keyClick(t["settings"], Qt.Key.Key_Up)             # back to the device rows
     assert panel._nav[-1].hasFocus()

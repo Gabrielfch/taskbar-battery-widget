@@ -6,8 +6,8 @@ import os
 import subprocess
 import time
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QCursor
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from . import aliases
@@ -49,6 +49,20 @@ def has_file_association(ext: str) -> bool:
         return False
 
 
+def apply_color_scheme(theme) -> None:
+    """Give the Qt application the chosen light / dark scheme, so the windows that take their colours from the
+    application palette (About, statistics, tutorial, dialogs) follow it; "auto" hands it back to Windows."""
+    try:
+        scheme = {"light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}.get(theme, Qt.ColorScheme.Unknown)
+        hints = QGuiApplication.styleHints()
+        if hints is not None:
+            # always set it: colorScheme() reports the EFFECTIVE scheme (Windows' own when nothing is pinned),
+            # so comparing would skip pinning "dark" while Windows happens to be dark
+            hints.setColorScheme(scheme)
+    except Exception:  # noqa: BLE001 - an older Qt without the setter: the windows keep the Windows look
+        log.debug("could not set the colour scheme", exc_info=True)
+
+
 def apply_appearance(cfg) -> None:
     """Push the colour palette and icon style from the config into the drawing modules."""
     palette = cfg.get("color_palette")
@@ -63,6 +77,7 @@ def apply_appearance(cfg) -> None:
         setter(cfg.get("icon_style"))
     custom_icons.set_maps(cfg.get("custom_icons_kind"), cfg.get("custom_icons_device"))
     animation.clock().set_mode(cfg.get("animations"))
+    apply_color_scheme(cfg.get("app_theme"))
 
 
 class TrayController(QObject):
@@ -154,6 +169,7 @@ class TrayController(QObject):
             set_bool=self._set_bool, set_threshold=self._set_threshold,
             set_palette=self._set_palette, set_icon_style=self._set_icon_style,
             set_panel_size=self._set_panel_size, set_animations=self._set_animations,
+            set_app_theme=self._set_app_theme,
             set_ui_scale=self._set_ui_scale,
             set_language=self._set_language, set_startup=self._set_startup,
             open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
@@ -394,7 +410,7 @@ class TrayController(QObject):
     def _ensure_panel(self):
         if self._panel is None:
             from .device_panel import DevicePanel
-            self._panel = DevicePanel(dark=self._dark, show_logging=True)
+            self._panel = DevicePanel(dark=self._ui_dark(), show_logging=True)
             self._panel.set_settings_model(self._settings)
             self._apply_panel_metrics()
             self._panel.visibility_toggled.connect(self._on_visibility)
@@ -409,6 +425,8 @@ class TrayController(QObject):
             self._panel.open_log_requested.connect(self.open_detail_log_requested)
             self._panel.refresh_requested.connect(self.refresh_requested)
             self._panel.settings_requested.connect(self.show_settings_menu)
+            self._panel.personalization_requested.connect(self.show_personalization)
+            self._panel.theme_toggle_requested.connect(self._on_theme_toggle)
             self._panel.about_requested.connect(self._on_panel_about)
             self._panel.quit_requested.connect(self._on_panel_quit)
         return self._panel
@@ -423,14 +441,14 @@ class TrayController(QObject):
     def _push_model(self, p) -> None:
         model = build_panel_model(
             self._devices, visibility.hidden_keys(self._cfg), bool(self._cfg.get("show_disconnected")),
-            int(self._cfg.get("low_threshold")), self._dark, self._cfg.get("color_mode") != "mono", radio_on=self._radio_on,
+            int(self._cfg.get("low_threshold")), self._ui_dark(), self._cfg.get("color_mode") != "mono", radio_on=self._radio_on,
             rates=self._rates)
         p.set_model(model, self._detail_keys())
 
     def open_panel(self, anchor=None) -> None:
         """Open the device panel at `anchor` (QRect/QPoint); default: the tray icon, else the cursor."""
         p = self._ensure_panel()
-        p.set_dark(self._dark)
+        p.set_dark(self._ui_dark())
         self._push_model(p)
         if anchor is None:
             g = self._tray.geometry()
@@ -454,6 +472,15 @@ class TrayController(QObject):
         if not p.isVisible():
             self.open_panel()
         p.show_settings()
+
+    def show_personalization(self) -> None:
+        """Settings > Personalization inside the device panel, opened from the toolbar: Back returns to the
+        device list."""
+        p = self._ensure_panel()
+        p.set_settings_model(self._settings)
+        if not p.isVisible():
+            self.open_panel()
+        p.show_settings("personalization", direct=True)
 
     def _on_activated(self, reason) -> None:
         # on Windows the right click arrives as Context (no context menu is set): same as a left click
@@ -529,6 +556,25 @@ class TrayController(QObject):
         self._cfg.set("animations", str(mode))
         animation.clock().set_mode(mode)        # live: the widget and the panel pause / resume at once
         self.settings_changed.emit()
+
+    def _ui_dark(self) -> bool:
+        """Dark look of the panel and its Settings pages: the chosen theme, or the taskbar's when "auto"."""
+        theme = self._cfg.get("app_theme")
+        return self._dark if theme == "auto" else theme == "dark"
+
+    def _set_app_theme(self, theme: str) -> None:
+        """Light / dark / automatic, applied live: the panel is restyled now, the app windows follow the new
+        colour scheme and the (floating) pills are redrawn."""
+        self._cfg.set("app_theme", str(theme))
+        apply_color_scheme(self._cfg.get("app_theme"))
+        if self._panel is not None:
+            self._panel.set_dark(self._ui_dark())
+            self._refresh_panel()
+        self.ui_settings_changed.emit()     # redraw the pills only: no device rescan
+
+    def _on_theme_toggle(self) -> None:
+        """The sun / moon button: switch to the other look and remember it (leaves "auto")."""
+        self._set_app_theme("light" if self._ui_dark() else "dark")
 
     def _set_threshold(self, value: int) -> None:
         self._cfg.set("low_threshold", int(value))
@@ -671,7 +717,7 @@ class TrayController(QObject):
             self._dark = dark
             self._update_icon()
             if self._panel is not None:
-                self._panel.set_dark(dark)
+                self._panel.set_dark(self._ui_dark())
                 self._refresh_panel()
 
     def _update_icon(self) -> None:

@@ -37,6 +37,7 @@ DEFAULTS = {
     "custom_icons_kind": {},        # device kind -> imported image file name (see custom_icons.py)
     "custom_icons_device": {},      # visibility key -> imported image file name
     "animations": "system",         # "always" | "system" (follow Windows) | "off": animated icons and the pulses
+    "app_theme": "auto",            # "auto" (follow Windows) | "light" | "dark": look of the panel and the app windows
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)
@@ -67,6 +68,7 @@ CUSTOM_COLOR_KEYS = ("high", "medium", "low")
 HEX_COLOR_RE = re.compile(r"#[0-9A-Fa-f]{6}")
 PANEL_SIZES = ("compact", "normal", "large")
 ANIMATION_MODES = ("always", "system", "off")
+APP_THEMES = ("auto", "light", "dark")
 PANEL_SIZE_FRACTION = {"compact": 0.40, "normal": 0.50, "large": 0.65}   # of the screen's available height
 UI_SCALES = (90, 100, 115, 130)
 LANGUAGES = ("auto",) + tuple(_i18n_languages)   # "auto" + every language registered in i18n.LANGUAGES
@@ -156,6 +158,8 @@ def _valid(key, value) -> bool:
         return isinstance(value, str) and value in PANEL_SIZES
     if key == "animations":
         return isinstance(value, str) and value in ANIMATION_MODES
+    if key == "app_theme":
+        return isinstance(value, str) and value in APP_THEMES
     if key == "language":
         return isinstance(value, str) and value in LANGUAGES
     if key == "last_seen_version":

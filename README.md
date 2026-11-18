@@ -69,7 +69,9 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   Stored in `%LOCALAPPDATA%\TaskbarBatteryWidget\last_known.json` (max. 200 devices, purged after 90 days).
 - Device panel: left or right click on the tray icon (or right click on the pills) opens a scrollable panel
   with *Connected* and *Known* devices. An eye icon per device shows or hides it on the taskbar; an icon
-  toolbar at the bottom gives *Refresh*, *Show all*, *Settings*, *About* and *Quit*. The panel stays open
+  toolbar at the bottom gives *Refresh*, *Show all*, *Settings*, *Personalization* (a palette button that opens
+  that page directly; its back arrow returns to the device list), *About* and *Quit*. A sun / moon button at the
+  top right of the panel switches between the light and the dark theme in one click. The panel stays open
   while the *Settings* menu, *About* or a statistics window is open, and closes when you click outside the app.
 - *Settings* (gear button) opens inside the panel and is navigated there: a back arrow returns to the previous
   page, pages open with a chevron, check boxes toggle in place and choice lists unfold below and stay open.
@@ -77,6 +79,10 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   default), *Alerts*, *Logs*, *Start with Windows*, *Personalization*, *Tutorial* and *What's new*.
 - The panel has a fixed size, a fraction of the screen height (*Personalization ▸ Panel size*: compact, normal,
   large), and scrolls when the list or a page is longer.
+- Theme (*Settings ▸ Personalization ▸ Theme*): **Automatic** (default, follows Windows), **Light** or **Dark**. It
+  applies at once to the panel, its Settings pages and the app windows that use the system colours (About,
+  statistics, tutorial, dialogs). The taskbar pills keep following the taskbar's own colours, except when the
+  widget is floating, where they use the chosen theme. The sun / moon button of the panel sets it to light or dark.
 - Personalization: colour palettes (classic, colour-blind friendly, pastel, high contrast, mono, or your own
   colours with automatic contrast correction), device icon styles (outline, filled, simple, retro pixel art,
   battery, none), interface scale (90–130 %, also for the taskbar pills) and language.

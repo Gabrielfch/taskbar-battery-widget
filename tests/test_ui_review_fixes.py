@@ -103,7 +103,8 @@ def test_long_status_buttons_inside_row_and_viewport(panel):
 def test_button_descriptions_and_panel_name(panel):
     panel.set_model(model([dev("a", "Mouse", 10)]), logging_keys=[visibility_key("a")])
     assert panel.accessibleName() == "Devices"
-    btns = [b for b in panel.findChildren(QToolButton) if b not in panel._toolbar_buttons()]
+    btns = [b for b in panel.findChildren(QToolButton) if b not in panel._toolbar_buttons()
+            and b.objectName() != "themeBtn"]
     assert len(btns) == 4       # rec, open, alias, eye
     for b in btns:
         assert b.accessibleDescription().startswith("Mouse, ")

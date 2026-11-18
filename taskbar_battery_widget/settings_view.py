@@ -184,6 +184,7 @@ class SettingsView(QWidget):
         self._dark = bool(dark)
         self._colors = _Colors.make(self._dark)
         self._path: list[Page] = [model.root]
+        self._direct = False                    # opened from outside Settings: Back leaves to the device list
         self._open: str | None = None           # id of the Choice whose accordion is open
         self._rows: dict[str, _Row] = {}
         self._order: list[QAbstractButton] = []     # focus order: back button, then the rows
@@ -236,6 +237,8 @@ class SettingsView(QWidget):
             self._model = model
             ids = [pg.id for pg in self._path]
             self._path = model.path_to(ids[-1]) if ids else [model.root]
+            if self._direct and ids and ids[0] in [pg.id for pg in self._path]:
+                self._path = self._path[[pg.id for pg in self._path].index(ids[0]):]
             self._open = None
         self._rebuild()
 
@@ -289,11 +292,17 @@ class SettingsView(QWidget):
     def reset(self) -> None:
         """Back to the root page with every accordion folded (used when the panel closes)."""
         self._path = [self._model.root]
+        self._direct = False
         self._open = None
         self._rebuild()
 
-    def show_page(self, page_id: str = "root") -> None:
+    def show_page(self, page_id: str = "root", direct: bool = False) -> None:
+        """Show a page. With `direct` the navigation stack holds only that page, so Back leaves to the device
+        list (the page was opened from outside Settings, e.g. the Personalization toolbar button)."""
         self._path = self._model.path_to(page_id)
+        self._direct = bool(direct)
+        if direct and len(self._path) > 1:
+            self._path = self._path[-1:]
         self._open = None
         self._rebuild()
         self.layout_changed.emit()

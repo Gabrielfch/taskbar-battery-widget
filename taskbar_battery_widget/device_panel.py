@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLa
 from . import animation, custom_icons, dialogs, i18n, taskbar
 from .config import PANEL_SIZE_FRACTION, UI_SCALES
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
-from .icons import (about_icon, close_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, pencil_icon, power_icon, record_icon, trash_icon,
-                    refresh_icon, show_all_icon)
+from .icons import (about_icon, close_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, glyph_icon, moon_icon, pencil_icon,
+                    power_icon, record_icon, trash_icon, refresh_icon, show_all_icon, sun_icon)
 from .panel_model import PanelModel, PanelRow, section_title
 from .popup import place_popup
 
@@ -162,6 +162,8 @@ class DevicePanel(QFrame):
     open_log_requested = Signal(str)
     refresh_requested = Signal()
     settings_requested = Signal(QRect)      # global rect of the gear button; the tray answers with show_settings()
+    personalization_requested = Signal()    # the palette button: the tray answers with show_settings("personalization")
+    theme_toggle_requested = Signal()       # the sun / moon button: the tray flips light <-> dark and saves it
     about_requested = Signal()
     quit_requested = Signal()
     icon_change_requested = Signal(str)     # visibility key: the tray asks for an image and saves it
@@ -209,6 +211,7 @@ class DevicePanel(QFrame):
         self._edge = "bottom"                    # screen edge the panel was opened from
         self._settings_view = None               # SettingsView, created on the first show_settings()
         self._settings_model = None
+        self._direct = False                     # the open Settings page was opened by the Personalization button
         self._size = "normal"                    # config panel_size
         self._scale_pct = 100                    # config ui_scale (percent)
         self._k = 1.0
@@ -247,6 +250,11 @@ class DevicePanel(QFrame):
             self._sig = None
             if self._model is not None:
                 self.set_model(self._model, self._logging_keys)
+
+    @property
+    def dark(self) -> bool:
+        """Effective look of the panel (what the sun / moon button shows: moon = dark)."""
+        return self._dark
 
     @property
     def panel_size(self) -> str:
@@ -349,8 +357,9 @@ class DevicePanel(QFrame):
         if self._settings_view is not None:
             self._settings_view.set_model(model)
 
-    def show_settings(self, page_id: str = "root") -> None:
-        """Replace the device list by the Settings page `page_id` (default: the root page)."""
+    def show_settings(self, page_id: str = "root", direct: bool = False) -> None:
+        """Replace the device list by the Settings page `page_id` (default: the root page). With `direct` the
+        page is the first level: the back arrow returns to the device list instead of the Settings root."""
         if self._settings_model is None:
             return
         if self._edit is not None:
@@ -363,9 +372,11 @@ class DevicePanel(QFrame):
             v.rebuilt.connect(self._chain_settings_tab_order)
             self._settings_view = v
             self._stack.addWidget(v)
-        self._settings_view.show_page(page_id)
+        self._settings_view.show_page(page_id, direct=direct)
         self._stack.setCurrentWidget(self._settings_view)
-        self._toolbar["settings"].setChecked(True)
+        self._direct = bool(direct)
+        self._toolbar["settings"].setChecked(not direct)
+        self._toolbar["personalization"].setChecked(direct)
         self._chain_settings_tab_order()
         self._refit(keep_edge=True)
         self._clock.refresh()       # the rows are hidden behind the Settings page
@@ -378,7 +389,9 @@ class DevicePanel(QFrame):
         if self._settings_view is not None:
             self._stack.setCurrentWidget(self._scroll)
             self._settings_view.reset()
+        self._direct = False
         self._toolbar["settings"].setChecked(False)
+        self._toolbar["personalization"].setChecked(False)
         self._clock.refresh()
         if was:
             self._refit(keep_edge=True)
@@ -504,7 +517,7 @@ class DevicePanel(QFrame):
             f"border-radius: 5px; padding: 2px; }}"
             f"QToolButton:hover {{ background: {hover}; }}"
             f"QToolButton:focus {{ border: 2px solid {focus}; }}"
-            f"QToolButton#gearBtn:checked {{ background: {checked}; }}"
+            f"QToolButton#gearBtn:checked, QToolButton#personalizationBtn:checked {{ background: {checked}; }}"
             f"QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}"
             f"QScrollBar::handle:vertical {{ background: {handle}; min-height: 24px; "
             f"border-radius: 4px; margin: 1px; }}"
@@ -523,6 +536,7 @@ class DevicePanel(QFrame):
         specs = (("refresh", self.refresh_requested.emit),
                  ("show_all", self.show_all_requested.emit),
                  ("settings", self._emit_settings),
+                 ("personalization", self._emit_personalization),
                  ("about", self.about_requested.emit),
                  ("quit", self.quit_requested.emit))
         for name, slot in specs:
@@ -539,6 +553,9 @@ class DevicePanel(QFrame):
             if name == "settings":
                 b.setObjectName("gearBtn")
                 b.setCheckable(True)            # marked while the Settings page is shown
+            if name == "personalization":
+                b.setObjectName("personalizationBtn")
+                b.setCheckable(True)            # marked while Personalization was opened from here
             if name == "quit":
                 h.addStretch(1)
             h.addWidget(b)
@@ -547,16 +564,30 @@ class DevicePanel(QFrame):
     def _emit_settings(self) -> None:
         """The gear alternates between the device list and the Settings page."""
         b = self._toolbar["settings"]
+        if self.in_settings and self._direct:       # Personalization was opened from its own button: the gear opens the root
+            self.settings_requested.emit(QRect(b.mapToGlobal(QPoint(0, 0)), b.size()))
+            if self.in_settings and self._direct:
+                self.show_settings()
+            return
         if self.in_settings:
             self.show_devices()
             return
         self.settings_requested.emit(QRect(b.mapToGlobal(QPoint(0, 0)), b.size()))
         b.setChecked(self.in_settings)          # the tray may not have shown it
 
+    def _emit_personalization(self) -> None:
+        b = self._toolbar["personalization"]
+        if self.in_settings and self._direct:
+            self.show_devices()                     # the button toggles, like the gear
+            return
+        self.personalization_requested.emit()
+        b.setChecked(self.in_settings and self._direct)
+
     def _refresh_toolbar(self, lang: str) -> None:
         grey = band_color("grey", self._dark)
         labels = {"refresh": i18n.tr_in(lang, "refresh"), "show_all": i18n.tr_in(lang, "show_all"),
                   "settings": i18n.tr_in(lang, "menu_settings"),
+                  "personalization": i18n.tr_in(lang, "menu_personalization"),
                   "about": i18n.tr_in(lang, "panel_about"), "quit": i18n.tr_in(lang, "quit")}
         for name, b in self._toolbar.items():
             b.setToolTip(labels[name])
@@ -566,6 +597,7 @@ class DevicePanel(QFrame):
         t["refresh"].setIcon(refresh_icon(self._bicon, self._text))
         t["show_all"].setIcon(show_all_icon(self._bicon, self._text if self._show_all_enabled else grey))
         t["settings"].setIcon(gear_icon(self._bicon, self._text))
+        t["personalization"].setIcon(glyph_icon("personalization", self._bicon, self._text))
         t["about"].setIcon(about_icon(self._bicon, self._text))
         t["quit"].setIcon(power_icon(self._bicon, self._text))
 
@@ -599,6 +631,24 @@ class DevicePanel(QFrame):
     def _set_eye_icon(self, b: QToolButton, visible: bool) -> None:
         color = self._text if visible else band_color("grey", self._dark)
         b.setIcon(eye_icon(self._bicon, visible, color))
+
+    def _theme_button(self, lang: str) -> QToolButton:
+        """Sun (light panel) / moon (dark panel); a click asks the tray to switch to the other look."""
+        b = QToolButton(self)
+        self._size_button(b)
+        b.setAutoRaise(True)
+        b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        b.setIconSize(QSize(self._bicon, self._bicon))
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setObjectName("themeBtn")
+        tip = i18n.tr_in(lang, "theme_to_light" if self._dark else "theme_to_dark")
+        b.setToolTip(tip)
+        b.setAccessibleName(tip)
+        b.setIcon((moon_icon if self._dark else sun_icon)(self._bicon, self._text))
+        b.installEventFilter(self)
+        b.clicked.connect(lambda _c=False: self.theme_toggle_requested.emit())
+        self._buttons[("", "theme")] = b
+        return b
 
     def _header(self, kind: str, lang: str, eye: QToolButton | None) -> QWidget:
         w = QWidget()
@@ -822,7 +872,7 @@ class DevicePanel(QFrame):
                               f"background: transparent;")
             off.setAccessibleName(_t("radio_off", lang))
             v.addWidget(off)
-        v.addWidget(self._header("connected", lang, None))
+        v.addWidget(self._header("connected", lang, self._theme_button(lang)))
         if model.connected:
             for r in model.connected:
                 v.addWidget(self._row_widget(r, lang))

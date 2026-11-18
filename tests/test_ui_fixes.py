@@ -267,7 +267,7 @@ def test_tray_menu_structure(qapp, tmp_path):
         "Abrir registro de dispositivos", "Abrir carpeta de registros",
         "Registro detallado (cada minuto)", "Abrir carpeta de registros detallados"]
     pers = [c.title() if hasattr(c, "title") else c.label() for c in pages["personalization"].children]
-    assert pers == ["Colores", "Estilo de iconos", "Iconos personalizados…", "Animaciones", "Tamaño del panel",
+    assert pers == ["Tema", "Colores", "Estilo de iconos", "Iconos personalizados…", "Animaciones", "Tamaño del panel",
                     "Escala de la interfaz", "Idioma", "Posición"]
 
 

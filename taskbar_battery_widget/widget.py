@@ -308,7 +308,16 @@ class TaskbarWidget(QWidget):
     def set_light_theme(self, light: bool) -> None:
         if light != self._light:
             self._light = light
+            self._rebuild()         # the pill colours depend on the theme
             self.update()
+
+    def _pill_dark(self) -> bool:
+        """Dark look of the pills: they sit on the taskbar, so they follow it; a floating widget (no taskbar
+        behind it) follows the app theme when the user picked "light" or "dark"."""
+        theme = self._cfg_get("app_theme", "auto")
+        if self._floating and theme in ("light", "dark"):
+            return theme == "dark"
+        return not self._light
 
     def set_menu(self, menu: QMenu) -> None:
         self._menu = menu
@@ -378,7 +387,7 @@ class TaskbarWidget(QWidget):
                 if left:
                     tip += f"\n{left}"
                 tip += f"\n{kind_name}"
-                st = row_style(d, threshold, not self._light, self._color_mode() == "levels")
+                st = row_style(d, threshold, self._pill_dark(), self._color_mode() == "levels")
                 alert = st.alert
                 if alert:
                     spoken += f" {tr('low_warning')}"
@@ -447,7 +456,7 @@ class TaskbarWidget(QWidget):
         if self._color_mode() == "mono" or pill.level is None:
             return None
         return battery_color(pill.level, pill.charging, int(self._cfg_get("low_threshold", 20)),
-                             not self._light)
+                             self._pill_dark())
 
     def _ui_pct(self) -> int:
         """Config ui_scale (90 / 100 / 115 / 130); anything else counts as 100."""
@@ -697,6 +706,8 @@ class TaskbarWidget(QWidget):
     def _set_floating(self, floating: bool) -> None:
         if self._floating != floating:
             self._floating = floating
+            if self._cfg_get("app_theme", "auto") != "auto":
+                self._rebuild()     # pill colours follow the app theme only while floating
             if floating:
                 self.setCursor(Qt.CursorShape.SizeAllCursor)    # the whole bar is a drag handle
             else:
@@ -849,7 +860,7 @@ class TaskbarWidget(QWidget):
                                           remaining=remaining_text(pill.device, self._rates))
         if self._popup is None:
             self._popup = HoverPopup()
-        self._popup.set_content(content, dark=not self._light,
+        self._popup.set_content(content, dark=self._pill_dark(),
                                 show_dot=self._color_mode() == "levels")
         rx, ry, rw, rh = self._rects[idx]
         tl = self.mapToGlobal(QPoint(int(rx), int(ry)))
@@ -926,7 +937,7 @@ class TaskbarWidget(QWidget):
 
     # ------------------------------------------------------------------ painting
     def _colors(self):
-        return QColor(20, 20, 20) if self._light else QColor(255, 255, 255)
+        return QColor(255, 255, 255) if self._pill_dark() else QColor(20, 20, 20)
 
     @staticmethod
     def _draw_moon(p: QPainter, r: QRectF, color: QColor) -> None:
@@ -941,7 +952,7 @@ class TaskbarWidget(QWidget):
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        dark = not self._light
+        dark = self._pill_dark()
         fg = self._colors()
         if self._floating:      # backdrop so the pills read over any wallpaper
             bg = QColor(*TASKBAR_BASE[dark])
@@ -1046,7 +1057,7 @@ class TaskbarWidget(QWidget):
                 bh = icon * 0.8
                 p.setOpacity(chg)
                 draw_bolt(p, QRectF(x + w - self._pad - bolt, y + (h - bh) / 2, bolt, bh),
-                          QColor(110, 220, 120) if not self._light else QColor(30, 150, 60))
+                          QColor(110, 220, 120) if dark else QColor(30, 150, 60))
                 p.setOpacity(1.0)
         p.end()
 

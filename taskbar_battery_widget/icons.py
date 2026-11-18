@@ -1012,6 +1012,36 @@ def power_icon(size: int, color: QColor) -> QIcon:
     return _icon_from(draw_power, size, color, True)
 
 
+def draw_sun(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Sun: a disc with eight short rays."""
+    _stroked(painter, rect, color)
+    painter.drawEllipse(_P(12, 12), 4.2, 4.2)
+    for i in range(8):
+        a = math.radians(i * 45.0)
+        _poly(painter, [(12 + 7.2 * math.cos(a), 12 + 7.2 * math.sin(a)),
+                        (12 + 10 * math.cos(a), 12 + 10 * math.sin(a))])
+    painter.restore()
+
+
+def draw_moon(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Crescent moon."""
+    _stroked(painter, rect, color)
+    outer = QPainterPath()
+    outer.addEllipse(QRectF(3.5, 3.5, 17, 17))
+    cut = QPainterPath()
+    cut.addEllipse(QRectF(8.5, 0.5, 15, 15))
+    painter.drawPath(outer.subtracted(cut))
+    painter.restore()
+
+
+def sun_icon(size: int, color: QColor) -> QIcon:
+    return _icon_from(draw_sun, size, color, True)
+
+
+def moon_icon(size: int, color: QColor) -> QIcon:
+    return _icon_from(draw_moon, size, color, True)
+
+
 # ---- settings page glyphs (navigation inside the device panel)
 def draw_chevron_right(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
     _stroked(painter, rect, color)
