@@ -1,10 +1,10 @@
 """T31: multi-taskbar enumeration, per-monitor fullscreen, monitor_key, TaskbarAl (all mocked)."""
-import sys
 import types
 
 import pytest
 
 from taskbar_battery_widget import taskbar as tb
+from tests._winreg_helpers import fake_winreg
 
 # exercises get_taskbar_infos() itself (Win32 is mocked inside each test), so skip the global stub
 pytestmark = pytest.mark.live_taskbar
@@ -228,26 +228,7 @@ def test_monitor_key_falls_back_to_name_hash():
 
 # ------------------------------------------------------------------ TaskbarAl
 def _fake_winreg(monkeypatch, value=None, missing=False, open_fails=False):
-    class _K:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    def open_key(root, path):
-        if open_fails:
-            raise OSError("denied")
-        return _K()
-
-    def query(k, name):
-        assert name == "TaskbarAl"
-        if missing:
-            raise FileNotFoundError
-        return (value, 4)
-
-    fake = types.SimpleNamespace(HKEY_CURRENT_USER=0, OpenKey=open_key, QueryValueEx=query)
-    monkeypatch.setitem(sys.modules, "winreg", fake)
+    fake_winreg(monkeypatch, value=value, missing=missing, open_fails=open_fails, name="TaskbarAl")
 
 
 @pytest.mark.parametrize("value,expected", [(0, False), (1, True), (2, True)])

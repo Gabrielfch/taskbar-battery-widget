@@ -1,6 +1,4 @@
 """wireless.scan_wireless wiring of the vendor readers (fake enumeration, fake readers)."""
-from types import SimpleNamespace
-
 import threading
 import time
 
@@ -8,69 +6,7 @@ import pytest
 
 from taskbar_battery_widget import (audeze, corsair, hid_win, hidpp, hyperx, jabra, logitech_headsets,
                                     misc_headsets, sony, steelseries, wireless, xinput)
-from taskbar_battery_widget.models import Device
-
-real_scan = wireless.scan_wireless
-
-EXTRA_ONLY = {"steelseries", "corsair", "audeze", "jabra", "sony", "misc"}
-
-
-def info(vid, pid=0x0001):
-    return SimpleNamespace(vid=vid, pid=pid, path=f"hid#{vid:04x}_{pid:04x}", usage_page=0,
-                           usage=0, in_len=0, out_len=0, feat_len=0, product="")
-
-
-def dev(id_, name="Dev", kind="headset", battery=50, link="2.4ghz", connected=True):
-    return Device(id=id_, name=name, kind=kind, battery=battery, connected=connected, link=link)
-
-
-@pytest.fixture
-def rig(monkeypatch):
-    """Record which readers run; fake readers return nothing."""
-    wireless.reset_cache()
-    wireless._inflight.clear()
-    monkeypatch.setattr(wireless, "_beta", True)
-    monkeypatch.setattr(wireless, "_hid_enabled", True)
-    monkeypatch.setattr(wireless, "_bluetooth", True)
-    calls = []
-    state = {"infos": [], "vids": None}
-
-    def enum(v=None):
-        state["vids"] = v
-        return [i for i in state["infos"] if v is None or i.vid in v]
-
-    monkeypatch.setattr(hid_win, "enumerate_hid", enum)
-
-    def reader(name, mod, attr="read"):
-        def fn(*a, **kw):
-            calls.append((name, [(i.vid, i.pid) for i in a[0]]))
-            return []
-        monkeypatch.setattr(mod, attr, fn)
-
-    reader("steelseries", steelseries)
-    reader("corsair", corsair)
-    reader("audeze", audeze)
-    reader("jabra", jabra)
-    reader("sony", sony)
-    reader("misc", misc_headsets)
-    reader("lgh", logitech_headsets)
-    reader("hyperx", hyperx, "read_hyperx")
-    reader("xinput", xinput)
-    import taskbar_battery_widget.dualsense as ds
-    import taskbar_battery_widget.razer as rz
-    import taskbar_battery_widget.razer_odessa as od
-    monkeypatch.setattr(hidpp, "scan_logitech", lambda i, cancel=None: calls.append(("hidpp", [])) or [])
-    monkeypatch.setattr(rz, "scan_razer", lambda i, cancel=None: calls.append(("razer", [])) or [])
-    monkeypatch.setattr(od, "read_odessa", lambda *a, **k: calls.append(("odessa", [])) or [])
-    monkeypatch.setattr(ds, "read_dualsense", lambda *a, **k: calls.append(("ds", [])) or [])
-    yield state, calls
-    wireless.set_beta_readers(False)
-    wireless._inflight.clear()
-    wireless.reset_cache()
-
-
-def names(calls):
-    return [c[0] for c in calls]
+from tests._wireless_helpers import EXTRA_ONLY, dev, info, names, real_scan, rig  # noqa: F401  (rig is a fixture)
 
 
 def test_unrelated_hid_runs_no_vendor_reader(rig):
@@ -214,18 +150,16 @@ def test_other_devices_still_expire():
     assert wireless.apply_cache(cache, [], {"1b1c:0a2b"}, 10_000.0, grace=1800.0) == []
 
 
-def test_config_beta_and_sources_validated(tmp_path):
-    from taskbar_battery_widget.config import Config
-    c = Config(tmp_path / "c.json")
-    assert c.get("beta_readers") is False                   # opt-in
-    assert c.get("bluetooth_enabled") is True
-    c.set("beta_readers", True)
-    assert c.get("beta_readers") is True
-
-
 def test_module_default_is_off():
-    src = open(wireless.__file__, encoding="utf-8").read()
-    assert "_beta = False" in src
+    """A fresh interpreter starts with the beta readers disabled (the suite's own state is shared)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    code = "from taskbar_battery_widget import wireless; print(wireless._beta)"
+    root = Path(__file__).resolve().parents[1]
+    out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
+                         timeout=60, env={**__import__("os").environ, "PYTHONPATH": str(root)})
+    assert out.stdout.strip() == "False", out.stderr
 
 
 # ---------------------------------------------------------------- isolation of slow readers
@@ -236,20 +170,29 @@ def _dev_logi(id_="logi:c539:01", battery=70, name="G903", kind="mouse"):
 def test_slow_headset_reader_never_drops_core_logitech(rig, monkeypatch):
     state, _calls = rig
     state["infos"] = [info(0x046D, 0xC539), info(0x046D, 0x0A66)]
+    release = threading.Event()
+    headsets_started = threading.Event()
 
-    def slow_core(i, cancel=None):
-        time.sleep(1.2)
+    def core(i, cancel=None):
         return [_dev_logi()]
 
-    def slow_headsets(*a, **k):
-        time.sleep(1.5)
+    def blocked_headsets(*a, **k):                  # outlives the (shrunk) vendor budget
+        headsets_started.set()
+        release.wait(10)
         return [dev("logi:0a66", "G533")]
-    monkeypatch.setattr(hidpp, "scan_logitech", slow_core)
-    monkeypatch.setattr(logitech_headsets, "read", slow_headsets)
-    t = time.monotonic()
-    out = real_scan()
-    assert [d.id for d in out] == ["logi:c539:01"]
-    assert time.monotonic() - t < wireless.VENDOR_BUDGET_S + 0.8
+    monkeypatch.setattr(hidpp, "scan_logitech", core)
+    monkeypatch.setattr(logitech_headsets, "read", blocked_headsets)
+    monkeypatch.setattr(wireless, "VENDOR_BUDGET_S", 0.3)
+    try:
+        t = time.monotonic()
+        out = real_scan()
+        elapsed = time.monotonic() - t
+        assert headsets_started.is_set()
+        assert [d.id for d in out] == ["logi:c539:01"]
+        assert elapsed < 3.0                        # generous: only "the blocked reader did not hold the scan"
+    finally:
+        release.set()
+        wireless._inflight.clear()
 
 
 def test_hung_headset_reader_does_not_block_next_cycle(rig, monkeypatch):
@@ -267,13 +210,13 @@ def test_hung_headset_reader_does_not_block_next_cycle(rig, monkeypatch):
         return []
     monkeypatch.setattr(hidpp, "scan_logitech", core)
     monkeypatch.setattr(logitech_headsets, "read", hung)
-    monkeypatch.setattr(wireless, "VENDOR_BUDGET_S", 0.8)
+    monkeypatch.setattr(wireless, "VENDOR_BUDGET_S", 0.3)
     try:
         for _ in range(2):
             wireless.reset_cache()
             t = time.monotonic()
             assert [d.id for d in real_scan()] == ["logi:c539:01"]
-            assert time.monotonic() - t < 2.5
+            assert time.monotonic() - t < 3.0
         assert seen["cancel"] is not None
     finally:
         release.set()

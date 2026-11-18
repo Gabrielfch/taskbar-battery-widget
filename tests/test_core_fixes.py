@@ -38,7 +38,7 @@ def test_signature_includes_idle_and_age_bucket():
     assert sig([a], now) != sig([b], now)
     assert sig([a], now) != sig([c], now)
     assert sig([a], now) == sig([D(updated=now - 45)], now)       # same minute bucket
-    assert sig([D(updated=None)], now) == sig([D(updated=None)], now)
+    assert sig([D(updated=None)], now) != sig([a], now)           # no timestamp is not a bucket
 
 
 def test_monitor_publishes_idle_transition(qapp, monkeypatch):

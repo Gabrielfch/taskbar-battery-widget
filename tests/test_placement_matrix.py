@@ -3,6 +3,7 @@ import pytest
 
 from taskbar_battery_widget import app
 from taskbar_battery_widget import taskbar as tb
+from tests._winreg_helpers import fake_winreg
 from taskbar_battery_widget.placement import (Env, Placement, REASON_LEFT_NEEDS_CENTERED,
                                               REASON_NO_TASKBAR_FLOATING, _left_rect, compute_placement)
 
@@ -169,27 +170,8 @@ def test_no_taskbar_without_fallback_hides_and_fallback_respects_fullscreen():
 
 
 # --------------------------------------------------------------------------- taskbar_widgets_button
-class _Key:
-    def __init__(self, value):
-        self.value = value
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
 def _fake_winreg(monkeypatch, value):
-    import sys
-    import types
-
-    def query(k, name):
-        if value is FileNotFoundError:
-            raise FileNotFoundError
-        return (value, 4)
-    mod = types.SimpleNamespace(HKEY_CURRENT_USER=0, OpenKey=lambda *a: _Key(value), QueryValueEx=query)
-    monkeypatch.setitem(sys.modules, "winreg", mod)
+    fake_winreg(monkeypatch, value=value, missing=value is FileNotFoundError)
 
 
 @pytest.mark.parametrize("value,expected", [(1, True), (0, False), (FileNotFoundError, True)])

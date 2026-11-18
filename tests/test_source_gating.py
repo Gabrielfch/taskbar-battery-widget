@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from taskbar_battery_widget import hid_win, wireless
 from taskbar_battery_widget.models import Device
-from tests.test_wireless_wiring import names, real_scan, rig  # noqa: F401  (rig is a fixture)
+from tests._wireless_helpers import names, real_scan, rig  # noqa: F401  (rig is a fixture)
 
 BT_PATH = "\\\\?\\hid#{00001124-0000-1000-8000-00805f9b34fb}_dev"
 USB_PATH = "\\\\?\\hid#vid_054c&pid_0ce6#usb"

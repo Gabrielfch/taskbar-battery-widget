@@ -1,4 +1,4 @@
-"""Settings model: declarative tree (no widgets) with parity against the former Settings menu."""
+"""Settings model: declarative tree (no widgets) and the ids each page exposes."""
 from taskbar_battery_widget.config import COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES
 from taskbar_battery_widget.i18n import set_language
 from taskbar_battery_widget.settings_model import (Action, Choice, Page, Separator, SettingsCallbacks,
@@ -37,8 +37,8 @@ def make(**kw):
     return cfg, calls, build_settings_model(cfg, cb)
 
 
-# Every entry of the former Settings menu, by id (config key for toggles).
-OLD_MENU = {
+# Every entry of each settings page, by id (config key for toggles).
+SETTINGS_TREE = {
     "sources": {"wireless_enabled", "bluetooth_enabled"},
     "alerts": {"notifications_enabled", "full_charge_alert", "low_threshold"},
     "logs": {"open_device_log", "open_logs_folder", "detail_log_enabled", "open_detail_folder"},
@@ -50,9 +50,9 @@ OLD_MENU = {
 }
 
 
-def test_parity_with_old_menu():
+def test_settings_tree_structure():
     _cfg, _calls, m = make()
-    for page_id, expected in OLD_MENU.items():
+    for page_id, expected in SETTINGS_TREE.items():
         page = m.find(page_id)
         assert isinstance(page, Page)
         assert {c.id for c in page.children if not isinstance(c, Separator)} == expected, page_id

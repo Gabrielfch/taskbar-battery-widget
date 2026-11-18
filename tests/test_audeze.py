@@ -1,3 +1,4 @@
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -5,7 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from taskbar_battery_widget import audeze as az
+from tests._fake_clock import install as _install_clock
 
+
+@pytest.fixture(autouse=True)
+def fake_clock(monkeypatch):
+    """Silent fake handles must not burn the real read budget: time advances instantly."""
+    return _install_clock(monkeypatch, az, sys.modules[__name__])
 
 @pytest.fixture(autouse=True)
 def fast_poll(monkeypatch):

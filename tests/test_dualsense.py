@@ -1,3 +1,4 @@
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -7,7 +8,13 @@ import pytest
 from taskbar_battery_widget import dualsense as ds
 from taskbar_battery_widget import hid_win, wireless
 from taskbar_battery_widget.models import Device
+from tests._fake_clock import install as _install_clock
 
+
+@pytest.fixture(autouse=True)
+def fake_clock(monkeypatch):
+    """Silent fake handles must not burn the real read budget: time advances instantly."""
+    return _install_clock(monkeypatch, ds, sys.modules[__name__])
 USB_PATH = r"\\?\hid#vid_054c&pid_0ce6#7&1&0&0000#{4d1e55b2}"
 BT_PATH = r"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&0002054c_pid&0ce6#8&1&0&0000#{4d1e55b2}"
 

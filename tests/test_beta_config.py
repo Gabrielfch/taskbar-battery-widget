@@ -55,6 +55,8 @@ def test_bool_and_list_validation(tmp_path):
     for key in ("beta_readers", "bluetooth_enabled", "detail_log_enabled"):
         with pytest.raises(ValueError):
             c.set(key, 1)
+    c.set("beta_readers", True)
+    assert c.get("beta_readers") is True
     c.set("detail_log_devices", ["a" * 16, "b" * 16])
     assert c.get("detail_log_devices") == ["a" * 16, "b" * 16]
     for bad in ("x", [1], [""], ["x" * 201]):

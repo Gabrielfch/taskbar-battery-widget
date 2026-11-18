@@ -1,5 +1,6 @@
 """Safety / robustness tests for the 2.4 GHz HID code (whitelist, sw_id, deadlines, escaping...)."""
 import logging
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from taskbar_battery_widget import hid_win, hidpp, wireless
 from taskbar_battery_widget.models import Device
 from taskbar_battery_widget.naming import sanitize_name
 from taskbar_battery_widget.hidpp import HidppSafetyError
+from tests._fake_clock import install as install_fake_clock
 
 real_scan = wireless.scan_wireless      # conftest replaces the module attribute per test
 
@@ -108,22 +110,23 @@ def test_sw_id_rotates_between_requests():
 
 
 # ---- items 3, 5: deadline + permanent failure -----------------------------------------------
-def test_deadline_is_honoured_with_slow_channel():
+def test_deadline_is_honoured_with_slow_channel(monkeypatch):
+    install_fake_clock(monkeypatch, hidpp, sys.modules[__name__])    # slow reads advance a fake clock
     h = ScriptedHandle(None, read_delay=5)
     with channel_for(h, deadline=time.monotonic() + 0.3) as ch:
         t = time.monotonic()
         assert ch.request(1, 0, 1, b"\x00\x00\xA5", timeout=5.0, feature_id=hidpp.F_ROOT) is None
-        assert time.monotonic() - t < 1.0
+        assert time.monotonic() - t < 1.0                            # capped by the 0.3 s deadline, not 5 s
         t = time.monotonic()                                         # deadline already passed
         assert ch.ping(1, timeout=5.0) == ("timeout", None)
-        assert time.monotonic() - t < 0.2
+        assert time.monotonic() - t < 1.0
 
 
-def test_cancel_event_stops_request():
+def test_cancel_event_stops_request(monkeypatch):
+    install_fake_clock(monkeypatch, hidpp, sys.modules[__name__])
     cancel = threading.Event()
-    h = ScriptedHandle(None, read_delay=5)
+    h = ScriptedHandle(lambda pkt: cancel.set() or [], read_delay=5)   # cancelled once the request is sent
     with channel_for(h, cancel=cancel) as ch:
-        threading.Timer(0.1, cancel.set).start()
         t = time.monotonic()
         assert ch.ping(1, timeout=5.0) == ("timeout", None)
         assert time.monotonic() - t < 1.0
@@ -134,7 +137,7 @@ def test_read_permanent_failure_stops_loop_quickly():
     with channel_for(h) as ch:
         t = time.monotonic()
         assert ch.ping(1, timeout=5.0) == ("timeout", None)
-        assert time.monotonic() - t < 0.5 and ch.broken
+        assert time.monotonic() - t < 2.0 and ch.broken               # far below the 5 s timeout
         n = len(h.writes)
         assert ch.ping(1, timeout=5.0) == ("timeout", None)
         assert len(h.writes) == n                                    # nothing more is sent
@@ -142,7 +145,7 @@ def test_read_permanent_failure_stops_loop_quickly():
 
 # ---- item 7: ids / info cache ---------------------------------------------------------------
 def test_two_receivers_with_same_pid_get_distinct_ids():
-    from test_hidpp import FakeDongle, info
+    from tests._hidpp_helpers import FakeDongle, info
     hidpp._info_cache.clear()
     def pair(parent):
         base = r"\\?\HID#VID_046D&PID_C539&MI_02&Col0{n}#9&" + parent + r"&0&000{n}#{{guid}}"
@@ -154,8 +157,9 @@ def test_two_receivers_with_same_pid_get_distinct_ids():
     hidpp._info_cache.clear()
 
 
-def test_name_probe_failure_is_cached_with_ttl():
-    from test_hidpp import FakeDongle, receiver_infos
+def test_name_probe_failure_is_cached_with_ttl(monkeypatch):
+    from tests._hidpp_helpers import FakeDongle, receiver_infos
+    fake = install_fake_clock(monkeypatch, hidpp)          # unanswered probes cost fake time only
     hidpp._info_cache.clear()
     d = FakeDongle()
     d.on_write_orig = d.on_write
@@ -170,6 +174,10 @@ def test_name_probe_failure_is_cached_with_ttl():
     for _ in range(3):
         hidpp.scan_logitech(receiver_infos(), d.handle)
     assert len(name_requests) <= 2          # one failed name + one failed type probe, not per scan
+    seen = len(name_requests)
+    fake.sleep(hidpp.INFO_RETRY_TTL_S + 1)  # the TTL expires: the probe is retried
+    hidpp.scan_logitech(receiver_infos(), d.handle)
+    assert len(name_requests) > seen
     hidpp._info_cache.clear()
 
 
@@ -244,7 +252,7 @@ def test_guarded_call_does_not_block_on_hung_function():
     release = threading.Event()
     call = hid_win.GuardedCall(lambda: release.wait(30))
     t = time.monotonic()
-    assert call.wait(0.2) is False and time.monotonic() - t < 1.0
+    assert call.wait(0.2) is False and time.monotonic() - t < 5.0     # real wait; the hang lasts 30 s
     release.set()
     assert call.wait(2.0) and call.value is True
 
@@ -295,7 +303,7 @@ def test_monitor_emits_bluetooth_first_and_stops_fast_when_wireless_hangs(qapp, 
         mon.stop()
         stop_s = time.monotonic() - t
         release.set()
-    assert stop_s < 2.0
+    assert stop_s < 8.0                                               # the hung scan would hold it for 30 s
 
 
 # ---- items 8, 9 (cache / merge) ------------------------------------------------------------

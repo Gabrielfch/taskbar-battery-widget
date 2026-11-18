@@ -1,9 +1,9 @@
-"""Manual smoke: DeviceMonitor must emit devices_changed within 5 s. Run: python tests/manual_monitor.py"""
+"""Manual smoke: DeviceMonitor must emit devices_changed within 5 s. Run: python tools/manual/manual_monitor.py"""
 import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PySide6.QtCore import QCoreApplication, QTimer  # noqa: E402
 

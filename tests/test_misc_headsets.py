@@ -1,3 +1,4 @@
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -5,6 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from taskbar_battery_widget import misc_headsets as mh
+from tests._fake_clock import install as _install_clock
+
+
+@pytest.fixture(autouse=True)
+def fake_clock(monkeypatch):
+    """Silent fake handles must not burn the real read budget: time advances instantly."""
+    return _install_clock(monkeypatch, mh, sys.modules[__name__])
 
 
 class FakeHandle:

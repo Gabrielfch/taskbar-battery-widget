@@ -1,3 +1,4 @@
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -5,7 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from taskbar_battery_widget import sony
+from tests._fake_clock import install as _install_clock
 
+
+@pytest.fixture(autouse=True)
+def fake_clock(monkeypatch):
+    """Silent fake handles must not burn the real read budget: time advances instantly."""
+    return _install_clock(monkeypatch, sony, sys.modules[__name__])
 USB = r"\\?\hid#vid_054c&pid_05c4#7&1&0&0000#{x}"
 BT = r"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&0002054c_pid&05c4#8&1&0&0000#{x}"
 
@@ -244,14 +251,13 @@ def test_vendor_ids():
 
 
 def test_pulse_and_buds_passive_window_is_short():
-    import time as _t
     pi = info(pid=0x0D5E, page=0xFF01, usage=0x20, n=8)
     bi = info(pid=0x0EC2, page=0xFF00, usage=1)
     assert sony.PUSH_PASSIVE_S <= 0.3
     for i in (pi, bi):
-        t = _t.monotonic()
+        t = time.monotonic()                        # fake clock: counts the (instant) silent polls
         assert run([i], Fake([])) == []
-        assert _t.monotonic() - t < 0.6
+        assert time.monotonic() - t < 0.6
 
 
 def test_ds4_bt_is_beta_but_usb_is_stable():

@@ -231,11 +231,12 @@ def test_estimator_stop_prevents_relaunch_and_emit(qapp, tmp_path):
     est.refresh()                                         # worker in flight
     est._pending = True
     est.stop()
-    end = _t.time() + 2
-    while _t.time() < end:
-        QApplication.processEvents()
-        _t.sleep(0.01)
-    assert hits == [] and est._pending is False
+    end = _t.monotonic() + 10                             # generous cap; the worker ends in milliseconds
+    while _t.monotonic() < end and (any(t.name == "tbw-remaining" for t in threading.enumerate())
+                                    or est._running):
+        QApplication.processEvents()                      # delivers the worker's queued `done` signal
+        _t.sleep(0.005)
+    assert not est._running and hits == [] and est._pending is False
     n = threading.active_count()
     est.refresh()                                         # no new thread after stop
     assert threading.active_count() <= n

@@ -1,7 +1,7 @@
 """Manual live check: logs DeviceMonitor events and screenshots the taskbar on connect/disconnect.
 
 Run while the app is running, then switch a Bluetooth device on/off.
-Usage: .venv\\Scripts\\python tests\\manual_live_check.py [seconds]
+Usage: .venv\\Scripts\\python tools\\manual\\manual_live_check.py [seconds]
 """
 import sys
 import time
@@ -10,11 +10,11 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from taskbar_battery_widget import taskbar  # noqa: E402
 from taskbar_battery_widget.monitor import DeviceMonitor  # noqa: E402
 
-OUT = Path(__file__).resolve().parents[1] / "docs"
+OUT = Path(__file__).resolve().parents[2] / "docs"
 DURATION = int(sys.argv[1]) if len(sys.argv) > 1 else 240
 
 app = QApplication(sys.argv)

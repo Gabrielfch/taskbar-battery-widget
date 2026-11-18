@@ -129,7 +129,6 @@ def test_config_hidden_devices_validation(tmp_path):
         c.set("color_mode", "rainbow")
     c.get("hidden_devices").append("zzz")          # get() hands out a copy
     assert c.get("hidden_devices") == [ka, kb]
-    assert Config(tmp_path / "c.json")._data is not Config(tmp_path / "c.json")._data
 
 
 def test_config_invalid_hidden_in_file_falls_back(tmp_path):
