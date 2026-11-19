@@ -11,6 +11,11 @@ Ordered by delivery sequence (dependencies first, small wins early, largest/risk
 | 3 ✅ | Scrollable device panel (Connected / Known) with eye toggles and status colours | #6 + #4 | M | 2 | 1.5.0 |
 | 4 ✅ | Per-device detailed log (1-minute samples), toggle next to the device log | #5 | M | 2, 3 | 1.5.0 |
 | 5 ✅ | Widget placement: taskbar left/right, other monitors, floating corners/edges, visible in fullscreen | #1 | L | 2 | 1.6.2 |
+| 6 | Fix: Razer Firefly (mouse pad, no battery) shown as a mouse at 0 % | issue #2 log | S | — | next |
+| 7 | Razer BlackShark V2 Pro over 2.4 GHz (1532:0555) not shown — waiting for the reporter's debug log | issue #2 | S–M | — | next |
+| 8 | User-defined device order (drag in the panel, keyboard alternative) | #7 | M | — | — |
+| 9 | Pill styles: Classic / Soft / Transparent (new default) / Transparent compact | #8 | M | — | — |
+| 10 | Stacked layout (one device per row) for floating corner positions | #9 | M | 9 | — |
 
 ---
 
@@ -87,3 +92,51 @@ Let the user choose where the pills are shown:
   and the Windows 11 flyout layer limitation (still hidden while Quick Settings/Start are open).
 - Acceptance: placement chosen from *Settings ▸ Personalization ▸ Position*; survives restart and monitor
   changes; tests for placement math per mode; manual check on 1 and 2 monitors.
+
+## 6. Razer Firefly shown at 0 % (issue #2 log)
+The reporter's `devices.log` lists "Razer Firefly | mouse | usb | 0%": a mouse pad without a battery that
+answers the 90-byte battery query. Do not list Razer devices without a battery (mouse pads, docks without a
+mouse, keyboards on cable…): e.g. a name/PID deny-list and/or ignoring a constant 0 % with no charging state.
+Acceptance: Firefly never appears; real Razer mice at a genuine low level still do.
+
+## 7. Razer BlackShark V2 Pro 2.4 GHz (issue #2)
+1532:0555 is in `razer.KNOWN_DEVICES` but does not appear over the dongle (Bluetooth works). Asked the reporter
+for a `TBW_DEBUG=1` log (`razer` lines). Possible causes: collection skipped (feature length < 91), no answer
+to the 90-byte protocol (like the HyperSpeed 0565, which needs the ODESSA reader), or the scan budget used up
+by other Razer devices first.
+
+## 8. User-defined device order (#7)
+- Today pills and panel follow the order in which the monitor delivers devices (`panel_model.py`), so they
+  move when a device connects/disconnects or is hidden and shown again.
+- Drag a device row in the panel (inside *Connected* and inside *Known*) to reorder it, with a visual drop
+  indicator.
+- Mandatory keyboard alternative: Alt+Up/Down on the focused row and/or *Move up* / *Move down* in a context
+  menu.
+- Stored in config, e.g. `"device_order"`: list of device keys, validated (max length, bounded strings).
+  Default empty = current order. Unknown keys are ignored; new devices go to the end.
+- Taskbar pills, the tray menu and the panel follow the same order. Show/hide (eye) and
+  connect/disconnect never reorder. A reorder redraws the taskbar immediately.
+- *Forget device* also removes it from `device_order`. No config version bump unless needed: old files take
+  the default.
+
+## 9. Pill styles (#8)
+- New option *Settings ▸ Personalization ▸ Pill style*:
+  - **A · Classic**: today's look (background, rounded corners).
+  - **B · Soft**: fainter background, small corners (radius ~4 px).
+  - **C · Transparent (new default)**: no background; pills separated by a thin, discreet vertical line in
+    the taskbar's secondary text colour.
+  - **D · Transparent compact**: no background, no separators, less padding.
+- In C and D there is no background or border: low/critical battery is shown by colouring the value red and
+  prefixing "!", and the critical pulse animates the text/icon instead of the background.
+- Must respect the light/dark taskbar theme, interface scale, palettes and custom colours, icons and existing
+  animations, and minimum contrast (text must stay readable without a background on light and dark
+  taskbars).
+- Changing the style applies live.
+
+## 10. Stacked layout (#9)
+- Toggle *Stack devices* in *Settings ▸ Personalization ▸ Position*. Applies only when floating at a corner
+  position; on a horizontal taskbar the pills stay in a row.
+- Stacked = one device per row (icon + level + charging bolt), aligned in a column, every row as wide as the
+  widest pill so the values line up.
+- Works with the four pill styles, with dragging in floating mode and its snapping to corners/edges, and with
+  the fullscreen position. If the column does not fit on the screen, it is cut with "+N" as today.
