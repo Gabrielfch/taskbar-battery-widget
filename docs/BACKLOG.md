@@ -14,7 +14,7 @@ Ordered by delivery sequence (dependencies first, small wins early, largest/risk
 | 6 | Fix: Razer Firefly (mouse pad, no battery) shown as a mouse at 0 % | issue #2 log | S | — | next |
 | 7 | Razer BlackShark V2 Pro over 2.4 GHz (1532:0555) not shown — waiting for the reporter's debug log | issue #2 | S–M | — | next |
 | 8 | User-defined device order (drag in the panel, keyboard alternative) | #7 | M | — | — |
-| 9 | Pill styles: Classic / Soft / Transparent (new default) / Transparent compact | #8 | M | — | — |
+| 9 ✅ | Pill styles: Classic / Soft / Transparent (new default) / Transparent compact | #8 | M | — | 1.12.0 |
 | 10 | Stacked layout (one device per row) for floating corner positions | #9 | M | 9 | — |
 
 ---

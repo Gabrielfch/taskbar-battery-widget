@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .config import ANIMATION_MODES, APP_THEMES, COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES, LANGUAGES, PANEL_SIZES, UI_SCALES
+from .config import ANIMATION_MODES, APP_THEMES, COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES, LANGUAGES, PANEL_SIZES, PILL_STYLES, UI_SCALES
 from .i18n import LANGUAGES as I18N_LANGUAGES, tr
 
 DEFAULT_FLOATING_ANCHOR = "bottom-right"
@@ -40,6 +40,7 @@ class SettingsCallbacks:
     set_panel_size: Callable[[str], None] = lambda size: None       # one of config.PANEL_SIZES
     set_animations: Callable[[str], None] = lambda mode: None       # one of config.ANIMATION_MODES
     set_app_theme: Callable[[str], None] = lambda theme: None       # one of config.APP_THEMES
+    set_pill_style: Callable[[str], None] = lambda style: None      # one of config.PILL_STYLES
     set_ui_scale: Callable[[int], None] = lambda pct: None          # one of config.UI_SCALES
     set_language: Callable[[str], None] = lambda lang: None         # one of config.LANGUAGES
     open_tutorial: Callable[[], None] = lambda: None                # the six-step tour
@@ -292,6 +293,9 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
         Choice(id="app_theme", label_key="menu_theme",
                options=static_options(APP_THEMES, lambda n: tr("theme_" + n)),
                get=lambda: cfg.get("app_theme"), set=lambda v: cb.set_app_theme(str(v))),
+        Choice(id="pill_style", label_key="menu_pill_style",
+               options=static_options(PILL_STYLES, lambda n: tr("pill_style_" + n)),
+               get=lambda: cfg.get("pill_style"), set=lambda v: cb.set_pill_style(str(v))),
         Choice(id="palette", label_key="menu_colors",
                options=static_options(COLOR_PALETTES, lambda n: tr("palette_" + n)),
                get=lambda: effective_palette(cfg), set=lambda v: cb.set_palette(str(v))),

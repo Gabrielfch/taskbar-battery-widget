@@ -73,6 +73,16 @@ def pill_tint(kind: str, dark: bool) -> QColor:
     return QColor(r, g, b, a)
 
 
+def taskbar_base(dark: bool) -> QColor:
+    """Opaque colour of the taskbar itself (what transparent pills sit directly on)."""
+    return QColor(*TASKBAR_BASE[bool(dark)])
+
+
+def separator_color(dark: bool) -> QColor:
+    """Thin divider between transparent pills: the taskbar's secondary text colour at a subtle alpha."""
+    return QColor(255, 255, 255, 80) if dark else QColor(0, 0, 0, 75)
+
+
 def composite(fg: QColor, bg: QColor) -> QColor:
     """`fg` (with its alpha) painted over the opaque colour `bg`."""
     a = fg.alpha() / 255

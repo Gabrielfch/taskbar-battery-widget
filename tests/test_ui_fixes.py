@@ -31,7 +31,7 @@ def _en(monkeypatch):
 class Cfg:
     def __init__(self, **kw):
         self.d = {"low_threshold": 20, "show_disconnected": False, "show_when_empty": False,
-                  "hidden_devices": [], "color_mode": "levels"}
+                  "hidden_devices": [], "color_mode": "levels", "pill_style": "classic"}
         self.d.update(kw)
 
     def get(self, k):
@@ -267,7 +267,7 @@ def test_tray_menu_structure(qapp, tmp_path):
         "Abrir registro de dispositivos", "Abrir carpeta de registros",
         "Registro detallado (cada minuto)", "Abrir carpeta de registros detallados"]
     pers = [c.title() if hasattr(c, "title") else c.label() for c in pages["personalization"].children]
-    assert pers == ["Tema", "Colores", "Estilo de iconos", "Iconos personalizados…", "Animaciones", "Tamaño del panel",
+    assert pers == ["Tema", "Estilo de las píldoras", "Colores", "Estilo de iconos", "Iconos personalizados…", "Animaciones", "Tamaño del panel",
                     "Escala de la interfaz", "Idioma", "Posición"]
 
 

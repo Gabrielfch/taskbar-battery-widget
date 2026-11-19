@@ -9,7 +9,7 @@ import time
 import shiboken6
 from dataclasses import dataclass, replace
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QAccessible, QAccessibleEvent, QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter,
                            QPainterPath, QPen)
 from PySide6.QtWidgets import QMenu, QWidget
@@ -17,8 +17,9 @@ from PySide6.QtWidgets import QMenu, QWidget
 from . import animation
 from . import custom_icons
 from . import taskbar
-from .colors import TASKBAR_BASE, band_color, battery_color, pill_tint, row_style
-from .config import FLOATING_ANCHORS, UI_SCALES
+from .colors import (TASKBAR_BASE, band_color, battery_color, ensure_contrast, pill_tint, row_style, separator_color,
+                     taskbar_base)
+from .config import FLOATING_ANCHORS, PILL_STYLES, UI_SCALES
 from .i18n import kind_name as _kind_name, tr
 from .icons import draw_bolt, draw_kind_icon, get_icon_style
 from .models import Device, visibility_key
@@ -36,6 +37,12 @@ MARGIN = 2           # outer margin around the pills (logical px)
 SPACING = 4          # gap between pills
 PAD = 8              # horizontal padding inside a pill
 ICON_GAP = 5         # gap between icon and text
+# per pill style: (horizontal padding inside a pill, gap between pills), logical px at 100 %
+STYLE_PAD = {"classic": PAD, "soft": PAD, "transparent": 6, "compact": 3}
+STYLE_SPACING = {"classic": SPACING, "soft": SPACING, "transparent": SPACING, "compact": 2}
+SOFT_RADIUS = 4          # corner radius of the "soft" style (logical px at 100 %)
+SOFT_ALPHA_SHARE = 0.55  # the "soft" background is this share as strong as the classic one
+SEPARATOR_SHARE = 0.5    # height of the divider between transparent pills / pill height
 MIN_FONT_PX = 12
 BAR_MIN_PILL_H = 24   # below this height the level bar is dropped
 BAR_H = 3.0
@@ -473,9 +480,23 @@ class TaskbarWidget(QWidget):
             h = min(h, max(base, int(bar_thickness) - 2 * MARGIN))
         return max(1, h)
 
+    def pill_style(self) -> str:
+        """Configured pill look (classic | soft | transparent | compact); anything else counts as transparent."""
+        v = self._cfg_get("pill_style", "transparent")
+        return v if isinstance(v, str) and v in PILL_STYLES else "transparent"
+
+    def _backless(self) -> bool:
+        """Transparent styles: no pill background or outline (the value colour and "!" carry the state)."""
+        return self.pill_style() in ("transparent", "compact")
+
     @property
     def _pad(self) -> int:
-        return max(4, round(PAD * self._pill_scale))
+        base = STYLE_PAD[self.pill_style()]
+        return max(3 if base < PAD else 4, round(base * self._pill_scale))
+
+    @property
+    def _spacing(self) -> int:
+        return max(1, round(STYLE_SPACING[self.pill_style()] * self._pill_scale))
 
     @property
     def _gap(self) -> int:
@@ -497,9 +518,10 @@ class TaskbarWidget(QWidget):
         if pill.dim or (pill.device is not None and pill.level is None):
             return band_color("grey", dark)
         lc = self.pill_color(pill)
-        if lc is not None:
-            return lc
-        return band_color("red", dark) if pill.alert else fg
+        col = lc if lc is not None else (band_color("red", dark) if pill.alert else fg)
+        if self._backless():    # nothing tints the pill: the text sits on the taskbar itself
+            return ensure_contrast(col, taskbar_base(dark), 4.5)
+        return col
 
     @staticmethod
     def _custom_file(pill: _Pill, icon: int) -> str | None:
@@ -545,7 +567,7 @@ class TaskbarWidget(QWidget):
         self._pills = pills
         if self._kfocus >= len(pills):
             self._set_kfocus(len(pills) - 1)
-        self._rects, (tw, th) = layout_pills(widths, self._pill_h, self._vertical)
+        self._rects, (tw, th) = layout_pills(widths, self._pill_h, self._vertical, spacing=self._spacing)
         self.setFixedSize(QSize(max(tw, 1), max(th, 1)))
         self.update()
         self._clock.refresh()       # the animated pills may have changed
@@ -969,39 +991,60 @@ class TaskbarWidget(QWidget):
         icon = self._icon_size()
         style = get_icon_style()
         now = self._clock.now_ms() if self._anim_live() else None      # None: paused, draw the still look
+        pstyle = self.pill_style()
+        backless = pstyle in ("transparent", "compact")
+        if pstyle == "transparent":
+            self._draw_separators(p, dark)
         for i, (pill, (x, y, w, h)) in enumerate(zip(self._pills, self._rects)):
             r = QRectF(x, y, w, h)
             level_color = self.pill_color(pill)
             color = self._text_color(pill, fg, dark)
             hover = i == self._hover
             pulse = animation.alert_pulse(now) if pill.alert and self._flash_left == 0 else 0.0
-            if pill.alert:
-                if hover or self._flashing(pill):
-                    fill = pill_tint("low_hover", dark)
-                else:
-                    fill = animation.alert_fill(dark, pulse)
+            rad = max(2.0, SOFT_RADIUS * self._pill_scale) if pstyle == "soft" else h / 2.5
+            content_opacity = 1.0
+            if backless:
+                # no background: only a faint hover tint; the critical pulse / blink fades the text and icon
+                if hover:
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(pill_tint("normal", dark))
+                    p.drawRoundedRect(r, rad, rad)
+                if pill.alert:
+                    content_opacity = 0.45 if self._flashing(pill) else animation.alert_text_opacity(pulse)
             else:
-                fill = pill_tint("hover" if hover else "normal", dark)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(fill)
-            p.drawRoundedRect(r, h / 2.5, h / 2.5)
+                if pill.alert:
+                    if hover or self._flashing(pill):
+                        fill = pill_tint("low_hover", dark)
+                    else:
+                        fill = animation.alert_fill(dark, pulse)
+                else:
+                    fill = pill_tint("hover" if hover else "normal", dark)
+                if pstyle == "soft":
+                    fill = QColor(fill)
+                    fill.setAlpha(round(fill.alpha() * SOFT_ALPHA_SHARE))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(fill)
+                p.drawRoundedRect(r, rad, rad)
             if i == self._kfocus and self.hasFocus():     # keyboard focus ring
                 pen = QPen(fg)
                 pen.setWidthF(2.0)
                 p.setPen(pen)
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawRoundedRect(r.adjusted(1, 1, -1, -1), h / 2.5, h / 2.5)
-            if pill.alert:      # non-colour cue for "very low": 1 px outline
+                p.drawRoundedRect(r.adjusted(1, 1, -1, -1), rad, rad)
+            if content_opacity < 1.0:
+                p.setOpacity(content_opacity)
+            if pill.alert and not backless:      # non-colour cue for "very low": 1 px outline
                 edge_c = QColor(color)
                 edge_c.setAlpha(animation.alert_border_alpha(pulse))
                 pen = QPen(edge_c)
                 pen.setWidthF(1.0)
                 p.setPen(pen)
                 p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), h / 2.5, h / 2.5)
+                p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), rad, rad)
             if pill.kind == "overflow":
                 p.setPen(color)
                 p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), ("!" if pill.warn else "") + pill.text)
+                p.setOpacity(1.0)
                 continue
             ir = QRectF(x + self._pad, y + (h - icon) / 2, icon, icon)
             icon_color = fg if level_color is not None else color
@@ -1059,7 +1102,26 @@ class TaskbarWidget(QWidget):
                 draw_bolt(p, QRectF(x + w - self._pad - bolt, y + (h - bh) / 2, bolt, bh),
                           QColor(110, 220, 120) if dark else QColor(30, 150, 60))
                 p.setOpacity(1.0)
+            p.setOpacity(1.0)
         p.end()
+
+    def _draw_separators(self, p: QPainter, dark: bool) -> None:
+        """Thin divider centred in the gap between two neighbouring pills (none after the last one)."""
+        pen = QPen(separator_color(dark))
+        pen.setWidthF(1.0)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for (x, y, w, h), (nx, ny, _nw, _nh) in zip(self._rects, self._rects[1:]):
+            if self._vertical:
+                ly = (y + h + ny) / 2
+                half = w * SEPARATOR_SHARE / 2
+                cx = x + w / 2
+                p.drawLine(QPointF(cx - half, ly), QPointF(cx + half, ly))
+            else:
+                lx = (x + w + nx) / 2
+                half = h * SEPARATOR_SHARE / 2
+                cy = y + h / 2
+                p.drawLine(QPointF(lx, cy - half), QPointF(lx, cy + half))
 
     # ------------------------------------------------------------------ interaction
     @staticmethod

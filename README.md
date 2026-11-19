@@ -85,7 +85,9 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   widget is floating, where they use the chosen theme. The sun / moon button of the panel sets it to light or dark.
 - Personalization: colour palettes (classic, colour-blind friendly, pastel, high contrast, mono, or your own
   colours with automatic contrast correction), device icon styles (outline, filled, simple, retro pixel art,
-  battery, none), interface scale (90–130 %, also for the taskbar pills) and language.
+  battery, none), pill style (**Classic**, **Soft**, **Transparent** — the default, no background, thin dividers
+  between pills — or **Transparent compact**; low battery is then shown by the red value and a "!" and the critical
+  pulse fades the text), interface scale (90–130 %, also for the taskbar pills) and language.
 - Aliases: the pencil on a device row renames it (Enter saves, Esc cancels, empty restores the original name).
   Aliases are stored by device, so logs and statistics keep their history.
 - First-run tutorial (six short illustrated steps; also in *Settings ▸ Tutorial*). Before installing an update,

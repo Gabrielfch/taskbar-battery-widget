@@ -104,7 +104,7 @@ def test_battery_charging_adds_bolt(qapp):
 class Cfg:
     def __init__(self):
         self.d = {"low_threshold": 20, "show_disconnected": False, "show_when_empty": False,
-                  "hidden_devices": [], "color_mode": "levels"}
+                  "hidden_devices": [], "color_mode": "levels", "pill_style": "classic"}
 
     def get(self, k):
         return self.d[k]

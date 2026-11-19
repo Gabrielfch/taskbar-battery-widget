@@ -80,6 +80,15 @@ def alert_border_alpha(pulse: float) -> int:
     return round(255 - (255 - ALERT_BORDER_MIN_ALPHA) * t)
 
 
+ALERT_TEXT_MIN_OPACITY = 0.6    # transparent pill styles: the critical pulse fades text / icon down to this
+
+
+def alert_text_opacity(pulse: float) -> float:
+    """Opacity of the text and icon of a critical pill without a background: 1 at pulse 0 (the still look)."""
+    t = max(0.0, min(1.0, pulse))
+    return 1.0 - (1.0 - ALERT_TEXT_MIN_OPACITY) * t
+
+
 class AnimationClock(QObject):
     tick = Signal(int)              # frame time in ms (see now_ms())
     state_changed = Signal()        # enabled flag / Windows setting / running state changed: repaint still
