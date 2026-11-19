@@ -275,6 +275,7 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
                get=current_anchor, set=lambda v: cb.set_floating_anchor(str(v))),
         Choice(id="monitor", label_key="menu_monitor", options=monitor_options,
                get=lambda: str(cfg.get("placement_monitor")), set=lambda v: cb.set_monitor(str(v))),
+        cfg_toggle("stack_devices", "stack_devices"),
         cfg_toggle("show_in_fullscreen", "show_in_fullscreen"),
         Choice(id="fullscreen_placement", label_key="menu_fs_position", options=fs_options,
                get=lambda: _safe(lambda: cfg.get("fullscreen_placement"), "same"),

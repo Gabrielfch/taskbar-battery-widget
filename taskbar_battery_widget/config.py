@@ -38,7 +38,8 @@ DEFAULTS = {
     "custom_icons_device": {},      # visibility key -> imported image file name
     "animations": "system",         # "always" | "system" (follow Windows) | "off": animated icons and the pulses
     "app_theme": "auto",            # "auto" (follow Windows) | "light" | "dark": look of the panel and the app windows
-    "pill_style": "transparent",    # "classic" | "soft" | "transparent" | "compact": look of the taskbar pills
+    "stack_devices": False,         # floating at a corner: one device per row, in a column
+    "pill_style": "transparent",   # "classic" | "soft" | "transparent" | "compact": look of the taskbar pills
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)

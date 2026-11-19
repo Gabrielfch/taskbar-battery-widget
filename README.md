@@ -107,6 +107,9 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   - **Floating (draggable)**: drag it anywhere; it snaps to the nearest corner or edge and remembers its place
     per monitor. *Floating position* picks one of the 8 positions without dragging; *Reset position* brings it
     back to the bottom-right corner.
+  - **Stack devices** (off by default): when floating (any position), shows one device per row in a column
+    (every row as wide as the widest, growing away from its anchor; "+N" if it does not fit). On the taskbar
+    the pills stay in a row.
   - **Visible in fullscreen** (off by default). Over a fullscreen app the widget lets clicks pass through and
     shows no hover card; hold **Shift** to use it.
   - **In fullscreen** (needs *Visible in fullscreen*): keep the usual position, or float on that monitor at a

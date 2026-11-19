@@ -26,7 +26,7 @@ from .models import Device, visibility_key
 from .naming import sanitize_name
 from .remaining import remaining_text
 from .popup import HOVER_DELAY_MS, HoverPopup, PopupContent, build_popup_content, place_popup, stale_text
-from .placement import (FREE_SPACE_SHARE, MAX_PILL_H, MIN_PILL_H, REASON_LEFT_NEEDS_CENTERED,  # noqa: F401
+from .placement import (FLOATING_SPACE_SHARE, FREE_SPACE_SHARE, MAX_PILL_H, MIN_LIMIT, MIN_PILL_H, REASON_LEFT_NEEDS_CENTERED,  # noqa: F401
                         REASON_NO_TASKBAR_FLOATING, Env,
                         Placement, ScreenInfo, center_rect_y, choose_placement, compute_placement, lookup_floating,
                         pill_height_for, resolve_screen, snap_anchor, taskbar_for_screen)
@@ -782,9 +782,14 @@ class TaskbarWidget(QWidget):
             thickness = (taskbar.rect_w(tinfo.rect) if res.vertical else taskbar.rect_h(tinfo.rect)) / dpr
         eff_h = self.scaled_pill_h(res.pill_h, self._ui_pct(), thickness)
         scale = eff_h / res.pill_h if res.pill_h else 1.0
-        if (eff_h != self._pill_h or res.vertical != self._vertical or res.max_extent != self._max_extent
+        vertical, max_extent = res.vertical, res.max_extent
+        if floating and bool(self._cfg_get("stack_devices", False)) and sinfo.available:
+            # Stacked (any floating position): one device per row; a bottom anchor grows upward, a top one
+            # downward, a middle one around its centre (the anchor math keeps it in place). Limit = height.
+            vertical, max_extent = True, max(MIN_LIMIT, int(sinfo.available[3] * FLOATING_SPACE_SHARE))
+        if (eff_h != self._pill_h or vertical != self._vertical or max_extent != self._max_extent
                 or abs(scale - self._pill_scale) > 1e-6):
-            self._pill_h, self._vertical, self._max_extent = eff_h, res.vertical, res.max_extent
+            self._pill_h, self._vertical, self._max_extent = eff_h, vertical, max_extent
             self._pill_scale = scale
             self._relayout()
             env = replace(env, size=(self.width(), self.height()))      # size changed; nothing else re-read

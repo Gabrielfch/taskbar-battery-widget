@@ -15,7 +15,7 @@ Ordered by delivery sequence (dependencies first, small wins early, largest/risk
 | 7 | Razer BlackShark V2 Pro over 2.4 GHz (1532:0555) not shown — waiting for the reporter's debug log | issue #2 | S–M | — | next |
 | 8 | User-defined device order (drag in the panel, keyboard alternative) | #7 | M | — | — |
 | 9 ✅ | Pill styles: Classic / Soft / Transparent (new default) / Transparent compact | #8 | M | — | 1.12.0 |
-| 10 | Stacked layout (one device per row) for floating corner positions | #9 | M | 9 | — |
+| 10 ✅ | Stacked layout (one device per row) for floating corner positions | #9 | M | 9 | 1.12.0 |
 
 ---
 
@@ -134,8 +134,8 @@ by other Razer devices first.
 - Changing the style applies live.
 
 ## 10. Stacked layout (#9)
-- Toggle *Stack devices* in *Settings ▸ Personalization ▸ Position*. Applies only when floating at a corner
-  position; on a horizontal taskbar the pills stay in a row.
+- Toggle *Stack devices* in *Settings ▸ Personalization ▸ Position*. Applies in any floating position
+  (corners and edges, user's choice after testing); on a horizontal taskbar the pills stay in a row.
 - Stacked = one device per row (icon + level + charging bolt), aligned in a column, every row as wide as the
   widest pill so the values line up.
 - Works with the four pill styles, with dragging in floating mode and its snapping to corners/edges, and with

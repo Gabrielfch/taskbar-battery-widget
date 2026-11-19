@@ -550,7 +550,10 @@ class TrayController(QObject):
 
     def _set_bool(self, key: str, value: bool) -> None:
         self._cfg.set(key, bool(value))
-        self.settings_changed.emit()
+        if key == "stack_devices":
+            self.ui_settings_changed.emit()     # layout only: no device rescan
+        else:
+            self.settings_changed.emit()
 
     def _set_animations(self, mode: str) -> None:
         self._cfg.set("animations", str(mode))
