@@ -11,7 +11,7 @@ Ordered by delivery sequence (dependencies first, small wins early, largest/risk
 | 3 ✅ | Scrollable device panel (Connected / Known) with eye toggles and status colours | #6 + #4 | M | 2 | 1.5.0 |
 | 4 ✅ | Per-device detailed log (1-minute samples), toggle next to the device log | #5 | M | 2, 3 | 1.5.0 |
 | 5 ✅ | Widget placement: taskbar left/right, other monitors, floating corners/edges, visible in fullscreen | #1 | L | 2 | 1.6.2 |
-| 6 | Fix: Razer Firefly (mouse pad, no battery) shown as a mouse at 0 % | issue #2 log | S | — | next |
+| 6 ✅ | Fix: Razer Firefly (mouse pad, no battery) shown as a mouse at 0 % | issue #2 log | S | — | 1.12.0 |
 | 7 | Razer BlackShark V2 Pro over 2.4 GHz (1532:0555) not shown — waiting for the reporter's debug log | issue #2 | S–M | — | next |
 | 8 | User-defined device order (drag in the panel, keyboard alternative) | #7 | M | — | — |
 | 9 ✅ | Pill styles: Classic / Soft / Transparent (new default) / Transparent compact | #8 | M | — | 1.12.0 |
