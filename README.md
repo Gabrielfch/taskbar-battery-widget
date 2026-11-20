@@ -73,6 +73,9 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
   that page directly; its back arrow returns to the device list), *About* and *Quit*. A sun / moon button at the
   top right of the panel switches between the light and the dark theme in one click. The panel stays open
   while the *Settings* menu, *About* or a statistics window is open, and closes when you click outside the app.
+- Device order: drag a row in the panel to reorder it inside *Connected* or *Known*, or use Alt+Up / Alt+Down
+  on the focused row, or the row's context menu (*Move up* / *Move down*). The pills and the panel follow the
+  same order; showing / hiding or connecting / disconnecting a device never reorders. New devices go last.
 - *Settings* (gear button) opens inside the panel and is navigated there: a back arrow returns to the previous
   page, pages open with a chevron, check boxes toggle in place and choice lists unfold below and stay open.
   Pages: *Sources* (*2.4 GHz and USB* — USB dongles and wired controllers — and *Bluetooth*, both on by

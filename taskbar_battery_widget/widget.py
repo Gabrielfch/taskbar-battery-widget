@@ -22,6 +22,7 @@ from .colors import (TASKBAR_BASE, band_color, battery_color, ensure_contrast, p
 from .config import FLOATING_ANCHORS, PILL_STYLES, UI_SCALES
 from .i18n import kind_name as _kind_name, tr
 from .icons import draw_bolt, draw_kind_icon, get_icon_style
+from .device_order import apply_order
 from .models import Device, visibility_key
 from .naming import sanitize_name
 from .remaining import remaining_text
@@ -357,7 +358,7 @@ class TaskbarWidget(QWidget):
         if not self._radio_on:
             off = tr("bluetooth_off")
             pills.append(_Pill("bluetooth_off", tr("pill_off"), off, dim=True, a11y=off))
-        for d in self._devices:
+        for d in apply_order(self._devices, self._cfg_get("device_order", [])):
             if visibility_key(d.id) in hidden:
                 continue
             if not self._radio_on and getattr(d, "link", "bluetooth") == "bluetooth":

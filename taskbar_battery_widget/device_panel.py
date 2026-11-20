@@ -4,12 +4,12 @@ from __future__ import annotations
 import logging
 import time
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QScrollArea, QSizePolicy,
-                               QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QEvent, QMimeData, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QDrag, QFont, QFontMetrics, QGuiApplication, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QScrollArea,
+                               QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
-from . import animation, custom_icons, dialogs, i18n, taskbar
+from . import animation, custom_icons, device_order, dialogs, i18n, taskbar
 from .config import PANEL_SIZE_FRACTION, UI_SCALES
 from .colors import DIM_ALPHA, IDLE_ALPHA, TASKBAR_BASE, band_color, section_header_color
 from .icons import (about_icon, close_icon, draw_kind_icon, get_icon_style, eye_icon, gear_icon, glyph_icon, moon_icon, pencil_icon,
@@ -153,6 +153,105 @@ def _dialog_open() -> bool:
     return dialog_open()
 
 
+ROW_MIME = "application/x-taskbar-battery-device"
+
+
+class _DeviceRow(QFrame):
+    """One device row: drag it onto another row of the same section to reorder (a line shows where it will
+    land); the context menu has Move up / Move down."""
+
+    def __init__(self, panel, key: str, section: str):
+        super().__init__()
+        self._panel = panel
+        self.key = key
+        self.section = section
+        self._press: QPoint | None = None
+        self._edge: str | None = None           # "top" | "bottom": drop indicator line
+        self.setAcceptDrops(True)
+
+    def mousePressEvent(self, ev) -> None:
+        self._press = ev.position().toPoint() if ev.button() == Qt.MouseButton.LeftButton else None
+        super().mousePressEvent(ev)
+
+    def mouseReleaseEvent(self, ev) -> None:
+        self._press = None
+        super().mouseReleaseEvent(ev)
+
+    def mouseMoveEvent(self, ev) -> None:
+        if (self._press is not None and ev.buttons() & Qt.MouseButton.LeftButton
+                and (ev.position().toPoint() - self._press).manhattanLength() >= QApplication.startDragDistance()):
+            self._press = None
+            self._start_drag()
+            return
+        super().mouseMoveEvent(ev)
+
+    def _start_drag(self) -> None:
+        mime = QMimeData()
+        mime.setData(ROW_MIME, self.key.encode("utf-8"))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.setPixmap(self.grab())
+        self._panel._drag_active = True
+        try:
+            drag.exec(Qt.DropAction.MoveAction)
+        finally:
+            self._panel._end_drag()
+
+    def _source(self, ev) -> str | None:
+        md = ev.mimeData()
+        if not md.hasFormat(ROW_MIME):
+            return None
+        src = bytes(md.data(ROW_MIME)).decode("utf-8", "replace")
+        return src if self._panel._same_section(src, self.key) else None
+
+    def dragEnterEvent(self, ev) -> None:
+        self.dragMoveEvent(ev)
+
+    def dragMoveEvent(self, ev) -> None:
+        src = self._source(ev)
+        if src is None or src == self.key:
+            self._set_edge(None)
+            ev.ignore()
+            return
+        self._set_edge("bottom" if ev.position().y() >= self.height() / 2 else "top")
+        ev.setDropAction(Qt.DropAction.MoveAction)
+        ev.accept()
+
+    def dragLeaveEvent(self, ev) -> None:
+        self._set_edge(None)
+
+    def dropEvent(self, ev) -> None:
+        src = self._source(ev)
+        edge = "bottom" if ev.position().y() >= self.height() / 2 else "top"
+        self._set_edge(None)
+        if src is None or src == self.key:
+            ev.ignore()
+            return
+        ev.setDropAction(Qt.DropAction.MoveAction)
+        ev.accept()
+        self._panel._drop_on(src, self.key, edge == "bottom")
+
+    def _set_edge(self, edge: str | None) -> None:
+        if edge != self._edge:
+            self._edge = edge
+            self.update()
+
+    def paintEvent(self, ev) -> None:
+        super().paintEvent(ev)
+        if self._edge:
+            p = QPainter(self)
+            p.setPen(QPen(self._panel._drop_color(), 3))
+            y = 1 if self._edge == "top" else self.height() - 2
+            p.drawLine(4, y, self.width() - 4, y)
+            p.end()
+
+    def contextMenuEvent(self, ev) -> None:
+        menu = self._panel._row_menu(self.key)
+        if menu is not None:
+            menu.exec(ev.globalPos())
+            ev.accept()
+
+
 class DevicePanel(QFrame):
     visibility_toggled = Signal(str, bool)
     show_disconnected_toggled = Signal(bool)
@@ -169,6 +268,7 @@ class DevicePanel(QFrame):
     icon_change_requested = Signal(str)     # visibility key: the tray asks for an image and saves it
     icon_reset_requested = Signal(str)      # visibility key: drop that device's own custom icon
     forget_requested = Signal(str, bool)    # visibility key, also delete its detailed log (already confirmed)
+    order_changed = Signal(list)            # new full device_order (visibility keys) after a move / drop
 
     def __init__(self, parent=None, dark: bool | None = None, show_logging: bool = False):
         # Not a Qt.Popup: the About dialog and the other windows must open above the panel without
@@ -191,7 +291,9 @@ class DevicePanel(QFrame):
         self._edit_icon: QToolButton | None = None      # clickable icon / remove cross of the row being edited
         self._edit_clear: QToolButton | None = None
         self._row_ctx: dict[str, tuple] = {}            # key -> (row layout, icon label, row, icon colour)
-        self._log_exists_fn = None                      # key -> bool: has a detailed log on disk (forget dialog)
+        self._drag_active = False                       # a row is being dragged: the list is not rebuilt meanwhile
+        self._pending_model: tuple | None = None
+        self._log_exists_fn = None                     # key -> bool: has a detailed log on disk (forget dialog)
         self._modal = False                             # a file dialog / message box of the tray is open
         self._nav: list[QToolButton] = []        # buttons reached with Up/Down (one per row)
         self._rows: list[list[QToolButton]] = [] # enabled buttons of each row (Left/Right)
@@ -302,7 +404,10 @@ class DevicePanel(QFrame):
         self._model = model
         self._logging_keys = logging_keys
         self.setAccessibleName(i18n.tr("devices"))
-        if self._edit is not None:      # never rebuild under an open alias editor: applied when it closes
+        if self._drag_active:           # never delete the row under the cursor: applied when the drag ends
+            self._pending_model = (model, logging_keys)
+            return
+        if self._edit is not None:     # never rebuild under an open alias editor: applied when it closes
             return
         if sig == self._sig:
             return
@@ -669,7 +774,7 @@ class DevicePanel(QFrame):
 
     def _row_widget(self, row: PanelRow, lang: str, eye_enabled: bool = True) -> QWidget:
         st = row.style
-        w = QFrame()
+        w = _DeviceRow(self, row.key, "connected" if row.connected else "known")
         w.setObjectName("row")
         border = f"{ROW_BORDER}px solid {_hex(st.fg)}" if st.alert else f"{ROW_BORDER}px solid transparent"
         w.setStyleSheet(f"QFrame#row {{ background: {_hex(st.bg)}; border: {border}; "
@@ -843,7 +948,8 @@ class DevicePanel(QFrame):
 
     # ------------------------------------------------------------------ build
     def _rebuild(self, model: PanelModel, lang: str) -> None:
-        focus_key = next((k for k, b in self._buttons.items() if b.hasFocus()), None)
+        fw = self.focusWidget()         # also right while the window is momentarily inactive
+        focus_key = next((k for k, b in self._buttons.items() if b.hasFocus() or b is fw), None)
         bar = self._scroll.verticalScrollBar()
         scroll_pos = bar.value()
         old = self._scroll.takeWidget()
@@ -903,6 +1009,82 @@ class DevicePanel(QFrame):
         if focus_key in self._buttons:
             self._buttons[focus_key].setFocus(Qt.FocusReason.OtherFocusReason)
         self._clock.refresh()
+
+    # ------------------------------------------------------------------ reordering
+    def _section_keys(self, key: str) -> list[str]:
+        """Keys of the section (Connected / Known) that holds `key`, in display order ([] if not shown)."""
+        m = self._model
+        if m is None:
+            return []
+        for rows in (m.connected, m.known):
+            keys = [r.key for r in rows]
+            if key in keys:
+                return keys
+        return []
+
+    def _same_section(self, a: str, b: str) -> bool:
+        sec = self._section_keys(a)
+        return bool(sec) and b in sec
+
+    def _drop_color(self) -> QColor:
+        return QColor("#8AB4F8" if self._dark else "#1A73E8")
+
+    def _end_drag(self) -> None:
+        self._drag_active = False
+        pending, self._pending_model = self._pending_model, None
+        if pending is not None:
+            self._sig = None
+            self.set_model(*pending)
+
+    def _emit_order(self, key: str, new_index: int) -> None:
+        m = self._model
+        if m is None:
+            return
+        section = self._section_keys(key)
+        shown = [r.key for r in m.connected + m.known]
+        new = device_order.reorder(m.order, shown, section, key, new_index)
+        if new != list(m.order):
+            self.order_changed.emit(new)
+
+    def move_row(self, key: str, delta: int) -> bool:
+        """Move the device row `key` up (-1) / down (+1) inside its section; False at the ends."""
+        section = self._section_keys(key)
+        if key not in section:
+            return False
+        j = section.index(key) + (-1 if delta < 0 else 1)
+        if not 0 <= j < len(section):
+            return False
+        self._emit_order(key, j)
+        return True
+
+    def _drop_on(self, src: str, target: str, after: bool) -> None:
+        """The row `src` was dropped on the upper / lower half of the row `target` (same section)."""
+        section = self._section_keys(src)
+        if src not in section or target not in section or src == target:
+            return
+        rest = [k for k in section if k != src]
+        self._emit_order(src, rest.index(target) + (1 if after else 0))
+
+    def _row_menu(self, key: str) -> QMenu | None:
+        section = self._section_keys(key)
+        if key not in section or len(section) < 2:
+            return None
+        lang = i18n.get_language()
+        i = section.index(key)
+        menu = QMenu(self)
+        up = menu.addAction(_t("move_up", lang))
+        up.setEnabled(i > 0)
+        up.triggered.connect(lambda _=False, k=key: self.move_row(k, -1))
+        down = menu.addAction(_t("move_down", lang))
+        down.setEnabled(i < len(section) - 1)
+        down.triggered.connect(lambda _=False, k=key: self.move_row(k, 1))
+        return menu
+
+    def _key_of(self, obj: QObject) -> str | None:
+        for (key, _name), b in self._buttons.items():
+            if b is obj and key:
+                return key
+        return None
 
     def _chain_tab_order(self) -> None:
         order = list(self._buttons.values())      # creation order == visual order
@@ -1166,6 +1348,12 @@ class DevicePanel(QFrame):
             if key == Qt.Key.Key_Escape:
                 self.close()
                 return True
+            if (key in (Qt.Key.Key_Up, Qt.Key.Key_Down) and ev.modifiers() & Qt.KeyboardModifier.AltModifier
+                    and not self.in_settings):
+                rk = self._key_of(obj)
+                if rk is not None:
+                    self.move_row(rk, -1 if key == Qt.Key.Key_Up else 1)
+                    return True
             tb = self._toolbar_buttons()
             if (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and isinstance(obj, QToolButton)
                     and obj.isEnabled()):

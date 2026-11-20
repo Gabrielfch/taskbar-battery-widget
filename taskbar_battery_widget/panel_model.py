@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 
 from . import i18n
 from .colors import RowStyle, row_style
+from .device_order import apply_order
 from .models import Device, visibility_key
 from .naming import sanitize_name
 
@@ -47,6 +48,7 @@ class PanelModel:
     show_disconnected: bool
     signature: tuple
     radio_on: bool = True
+    order: tuple = ()           # config device_order (visibility keys) the rows were sorted with
 
 
 def _status(d: Device, threshold: int, lang: str) -> str:
@@ -101,15 +103,16 @@ def _row_sig(r: PanelRow) -> tuple:
 
 def build_panel_model(devices, hidden_keys, show_disconnected: bool, threshold: int, dark: bool,
                       color_by_level: bool = True, lang: str | None = None,
-                      radio_on: bool = True, rates: dict | None = None) -> PanelModel:
-    """Group devices into Connected / Known. Order inside each group is the input order (the
-    widget and tray also show devices in the order the monitor delivers them)."""
+                      radio_on: bool = True, rates: dict | None = None, order=None) -> PanelModel:
+    """Group devices into Connected / Known. Order inside each group follows `order` (config device_order,
+    see device_order.apply_order); devices it does not list keep the input order, after the listed ones."""
     lg = _lang(lang)
     hidden = {x for x in (hidden_keys or ()) if isinstance(x, str)}
+    order = tuple(x for x in (order or ()) if isinstance(x, str))
     rows = [_row(d, hidden, int(threshold), bool(dark), bool(color_by_level), lg, bool(radio_on), rates)
-            for d in devices]
+            for d in apply_order(devices, order)]
     connected = tuple(r for r in rows if r.connected)
     known = tuple(r for r in rows if not r.connected)
     sig = (bool(show_disconnected), bool(dark), lg, bool(radio_on),
            tuple(_row_sig(r) for r in connected), tuple(_row_sig(r) for r in known))
-    return PanelModel(connected, known, bool(show_disconnected), sig, bool(radio_on))
+    return PanelModel(connected, known, bool(show_disconnected), sig, bool(radio_on), order)

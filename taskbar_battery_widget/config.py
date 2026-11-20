@@ -41,6 +41,7 @@ DEFAULTS = {
     "stack_devices": False,         # floating at a corner: one device per row, in a column
     "pill_style": "transparent",   # "classic" | "soft" | "transparent" | "compact": look of the taskbar pills
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
+    "device_order": [],             # visibility keys in the order chosen by the user ([] = monitor order)
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
     "update_last_check": 0,         # unix timestamp of the last automatic check (0 = never)
     "placement_mode": "taskbar",    # "taskbar" | "floating"
@@ -190,8 +191,8 @@ def _valid(key, value) -> bool:
         ok_key = (lambda k: k in KINDS) if key == "custom_icons_kind" else is_visibility_key
         return (isinstance(value, dict) and len(value) <= MAX_CUSTOM_ICONS
                 and all(isinstance(k, str) and ok_key(k) and _safe_icon_name(v) for k, v in value.items()))
-    if key in ("hidden_devices", "detail_log_devices"):
-        limit = MAX_HIDDEN if key == "hidden_devices" else MAX_DETAIL_DEVICES
+    if key in ("hidden_devices", "detail_log_devices", "device_order"):
+        limit = MAX_DETAIL_DEVICES if key == "detail_log_devices" else MAX_HIDDEN
         return (isinstance(value, list) and len(value) <= limit
                 and all(isinstance(v, str) and 0 < len(v) <= 200 for v in value))
     if isinstance(default, bool):

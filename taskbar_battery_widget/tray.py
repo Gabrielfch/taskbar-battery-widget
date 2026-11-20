@@ -18,7 +18,7 @@ from . import i18n
 from . import icons
 from . import startup
 from . import taskbar
-from . import visibility
+from . import device_order, visibility
 from .colors import battery_color
 from .i18n import tr
 from .icons import make_tray_icon
@@ -377,6 +377,9 @@ class TrayController(QObject):
             icons_ = dict(cfg.get("custom_icons_device"))
             if icons_.pop(key, None) is not None:
                 cfg.set("custom_icons_device", icons_)
+            order = cfg.get("device_order")
+            if key in order:
+                cfg.set("device_order", device_order.forget(order, key))
             hidden = [k for k in cfg.get("hidden_devices") if k != key]
             if len(hidden) != len(cfg.get("hidden_devices")):
                 cfg.set("hidden_devices", hidden)
@@ -392,6 +395,17 @@ class TrayController(QObject):
                                     | set(cfg.get("custom_icons_device").values()))
         self.device_forgotten.emit(key, bool(delete_log))       # history first: the refresh below must not re-add it
         self._appearance_changed()
+
+    def _on_order(self, order: list) -> None:
+        """The panel reordered the devices: save the new order and redraw (pills and panel), no device rescan."""
+        try:
+            self._cfg.set("device_order", [k for k in order if isinstance(k, str)][:device_order.MAX_ORDER])
+        except ValueError:
+            log.exception("could not save the device order")
+            return
+        self._update_icon()
+        self.ui_settings_changed.emit()
+        self._refresh_panel()
 
     def _appearance_changed(self) -> None:
         apply_appearance(self._cfg)
@@ -421,6 +435,7 @@ class TrayController(QObject):
             self._panel.icon_change_requested.connect(self._on_icon_change)
             self._panel.icon_reset_requested.connect(self._on_icon_reset)
             self._panel.forget_requested.connect(self._on_forget)
+            self._panel.order_changed.connect(self._on_order)
             self._panel.set_log_exists_fn(self._has_detail_files)
             self._panel.open_log_requested.connect(self.open_detail_log_requested)
             self._panel.refresh_requested.connect(self.refresh_requested)
@@ -442,7 +457,7 @@ class TrayController(QObject):
         model = build_panel_model(
             self._devices, visibility.hidden_keys(self._cfg), bool(self._cfg.get("show_disconnected")),
             int(self._cfg.get("low_threshold")), self._ui_dark(), self._cfg.get("color_mode") != "mono", radio_on=self._radio_on,
-            rates=self._rates)
+            rates=self._rates, order=device_order.order_keys(self._cfg))
         p.set_model(model, self._detail_keys())
 
     def open_panel(self, anchor=None) -> None:
