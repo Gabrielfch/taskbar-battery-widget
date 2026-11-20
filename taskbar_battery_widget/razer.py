@@ -211,6 +211,10 @@ def _plausible(dev_id: str, pct: int) -> int | None:
     return pct
 
 
+# Razer mouse mats (Firefly, Goliathus, Strider...: PIDs 0x0C00-0x0CFF) have no battery; some answer the
+# battery query with 0 % and would show up as a mouse.
+NO_BATTERY_PIDS = (0x0C00, 0x0CFF)
+
 GENERIC_DESKTOP = 0x0001
 GENERIC_USAGES = (0x0002, 0x0006)       # mouse, keyboard: some Razer devices take the 90-byte report there
 
@@ -243,8 +247,11 @@ def scan_razer(infos, handle_factory=None, cancel: threading.Event | None = None
     for i in sorted(razer, key=lambda x: (not _is_vendor(x), x.path)):
         if cancel is not None and cancel.is_set() or time.monotonic() >= deadline:
             break
+        if NO_BATTERY_PIDS[0] <= i.pid <= NO_BATTERY_PIDS[1]:     # mouse mats (Firefly, Goliathus...)
+            continue
         if not _supports_feature_report(i):
-            log.debug("razer %04x skip %04x:%04x feat=%d", i.pid, i.usage_page, i.usage, i.feat_len)
+            log.debug("razer %04x skip %04x:%04x feat=%d in=%d out=%d", i.pid, i.usage_page, i.usage,
+                      i.feat_len, getattr(i, "in_len", 0), getattr(i, "out_len", 0))
             continue
         if i.pid in seen or i.pid in ODESSA_DONGLES:     # ODESSA dongles: razer_odessa reads them
             continue

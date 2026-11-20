@@ -87,6 +87,15 @@ def test_scan_razer_standard_protocol(monkeypatch):
     assert d.link == "2.4ghz" and d.kind == "mouse"
 
 
+def test_mouse_mats_without_battery_are_never_listed(monkeypatch):
+    # issue #2: a Razer Firefly (1532:0C00) answered the battery query and showed up as a mouse at 0 %
+    monkeypatch.setattr(razer, "SET_GET_DELAY_S", 0)
+    h = FakeRazer(accept_tid=0x3F, level=0)
+    assert razer.scan_razer([rinfo(91, 0x0C00, "Razer Firefly")], lambda p: h) == []
+    assert razer.scan_razer([rinfo(91, 0x0C04, "Razer Firefly V2")], lambda p: h) == []
+    assert len(razer.scan_razer([rinfo(91)], lambda p: FakeRazer(accept_tid=0x3F, level=5))) == 1
+
+
 def test_scan_razer_skips_unsupported_and_failures(monkeypatch):
     monkeypatch.setattr(razer, "SET_GET_DELAY_S", 0)
     # collection without the 90-byte feature report (e.g. BlackShark V2 HyperSpeed)
