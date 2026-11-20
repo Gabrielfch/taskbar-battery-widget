@@ -1007,7 +1007,9 @@ class TaskbarWidget(QWidget):
             color = self._text_color(pill, fg, dark)
             hover = i == self._hover
             pulse = animation.alert_pulse(now) if pill.alert and self._flash_left == 0 else 0.0
-            rad = max(2.0, SOFT_RADIUS * self._pill_scale) if pstyle == "soft" else h / 2.5
+            # same corners as the hardware monitor widget: classic h/2.5, every other style (incl. the hover tint
+            # of the transparent ones) small corners
+            rad = h / 2.5 if pstyle == "classic" else min(h / 2.5, max(2.0, SOFT_RADIUS * self._pill_scale))
             content_opacity = 1.0
             if backless:
                 # no background: only a faint hover tint; the critical pulse / blink fades the text and icon
