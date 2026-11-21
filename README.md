@@ -215,7 +215,7 @@ advanced configuration (see [Configuration](#configuration)) · ❌ not supporte
 > configuration. They are: Logitech PRO X 2 / PRO X 3 / G522 LIGHTSPEED headsets; Corsair Void Wireless V2,
 > Virtuoso Max Wireless and HS80 Max Wireless; HyperX Cloud Alpha Wireless (03F0:098D) and Cloud II Wireless
 > Kingston (0951:1718); SteelSeries Arctis 1, 7 and 9 families, Arctis Pro Wireless and Arctis Nova Pro Wireless;
-> DualShock 4 over Bluetooth (USB stays on by default).
+> DualShock 4 over Bluetooth (USB stays on by default); 8BitDo Pro 2, Pro 3, SN30 Pro and SF30 Pro over USB.
 >
 > **Tell us which devices work and which don't.** Open a
 > [Device report](https://github.com/Gabrielfch/taskbar-battery-widget/issues/new?template=device_report.yml)
@@ -233,6 +233,7 @@ Any paired device whose battery level Windows itself shows in *Settings → Blue
 | --- | --- |
 | Xbox Wireless Controller (Bluetooth) | ✅ |
 | Razer BlackShark V2 HyperSpeed (Bluetooth mode) | ✅ |
+| 8BitDo Ultimate 2C Wireless (Bluetooth) | ✅ |
 | Headphones, earbuds, mice, keyboards and pens that report battery to Windows | 🟢 |
 | Devices that don't report battery to Windows (e.g. DualSense over BT → see Sony below) | ❌ via this path |
 
@@ -327,6 +328,14 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | --- | --- |
 | AULA F108 Pro — 2.4 GHz dongle (`05AC:024F`, `"F108Pro Dongle"`, battery %) | ✅ |
 | AULA F108 Pro — USB cable (`0C45:800A`, firmware reports no battery %) | ❌ |
+### 8BitDo (2DC8)
+| Device | Status |
+| --- | --- |
+| Ultimate 2C Wireless — Bluetooth | ✅ (see Bluetooth) |
+| Ultimate 2C Wireless — 2.4 GHz dongle (`2DC8:310A`) or USB cable (firmware reports no battery %) | ❌ |
+| Ultimate 2 Wireless — 2.4 GHz dongle (`2DC8:6013`) | 🟢 |
+| Ultimate 2 Wireless (`2DC8:6012`), Ultimate 3 (`2DC8:202F`) — USB D-Input | 🟢 |
+| Pro 2, Pro 3, SN30 Pro, SF30 Pro — USB D-Input (reads feature report `0x06`, which switches the controller to enhanced input reports for the session) | 🧪 |
 
 ### Not supported yet
 ASUS ROG, Turtle Beach, JBL and other vendor-specific dongles not listed above. Each needs its own protocol
@@ -396,9 +405,10 @@ Protocol facts come from public documentation; this is an independent implementa
 - [Tekk-Know/RazerBatteryTaskbar](https://github.com/Tekk-Know/RazerBatteryTaskbar).
 - [Ashesh3/razer-device-control](https://github.com/Ashesh3/razer-device-control) (MIT): protocol notes for the BlackShark V2 Pro 2023 (`1532:0555`) `'PA'` framing.
 - [parsiya/f108-pro](https://github.com/parsiya/f108-pro), [deddroid/ak820-rs](https://github.com/deddroid/ak820-rs), [wsclx/ak820pro-modder](https://github.com/wsclx/ak820pro-modder) and [gha-projects/ak820-mac](https://github.com/gha-projects/ak820-mac) (MIT): protocol documentation for the 2.4 GHz keyboard receiver and wired USB interface.
+- [SDL](https://github.com/libsdl-org/SDL) (`SDL_hidapi_8bitdo.c`) and [8bitdo-ultimate2-linux](https://github.com/MiguelSanzBr/8bitdo-ultimate2-linux).
 
 ## Disclaimer
-Not affiliated with, endorsed or sponsored by Logitech, Razer, Sony, Microsoft, AULA, HyperX/HP, SteelSeries,
+Not affiliated with, endorsed or sponsored by Logitech, Razer, Sony, Microsoft, AULA, 8BitDo, HyperX/HP, SteelSeries,
 Corsair, Audeze, Jabra, Lenovo or MCHOSE. Brand and product names are used only to indicate compatibility
 and belong to their respective owners.
 
