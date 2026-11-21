@@ -2,22 +2,25 @@
 
 Models & protocols (only modes that expose a live battery percentage are reported)
 - Ultimate 2 Wireless 2.4 GHz dongle (0x6013 on page 0xFFA0): vendor query
-  ``81 04 21 01 00 00 06`` -> ``02 04 04 00 21 01 …`` carries ``0..100 %`` at byte 18 while the
-  controller is on; when unanswered, ``81 05 00 21 01`` confirms the dongle is present with the
-  controller switched off.
-- Ultimate 2C Wireless 2.4 GHz dongle (0x310A on page 0xFF7A): stock firmware never transmits a
-  battery level over the 2.4 GHz radio (nor over USB), so stock units yield no device instead of a
-  placeholder. Units running firmware with the ``0xBA`` battery signature in the ``81 05 00 21 01``
-  identify reply (confirmed across two consecutive replies) report live ``0..100 %`` at byte 8.
-- USB D-Input / HIDAPI controllers (Ultimate 2 0x6012, Ultimate 3 0x202F, Pro 2 0x6003/0x6006,
-  Pro 3 0x6009, SN30 Pro 0x6001/0x6101, SF30 Pro 0x6000/0x6100): input reports 0x01 / 0x03 / 0x04
-  on Generic Desktop gamepad/joystick carry ``level = byte[14] & 0x7F`` and ``charging = bit 7``.
-  Older Pro / SN30 / SF30 models switch to enhanced reports once feature report 0x06 is read.
+  ``81 04 21 01 00 00 06`` -> ``02 04 04 00 21 01 …`` carries ``1..100 %`` at byte 18 and the
+  controller firmware version (``u16 > 0``) at bytes 19..20 while the controller is on; when
+  unanswered, ``81 05 00 21 01`` -> ``02 22 …`` confirms the dongle is present with the controller
+  switched off.
+- Passive USB D-Input / HIDAPI controllers (Ultimate 2 0x6012 with >= 34-byte reports, Ultimate 3
+  0x202F): enhanced input reports (report ID 0x04 / 0x01) on Generic Desktop gamepad/joystick carry
+  ``level = byte[14] & 0x7F`` (``1..100 %``) and ``charging = bit 7``.
+- Beta USB D-Input controllers (Pro 2 0x6003/0x6006, Pro 3 0x6009, SN30 Pro 0x6001/0x6101,
+  SF30 Pro 0x6000/0x6100): off by default (``beta_readers``), because reading feature report 0x06
+  switches the controller to enhanced input reports for the rest of the session.
 
-Protocol facts come from public documentation (SDL's ``SDL_hidapi_8bitdo.c``,
-``MiguelSanzBr/8bitdo-ultimate2-linux`` and ``Ghermin/8bitdo-2c-battery-patch``); this is an
-independent implementation and no code was copied. Only whitelisted read/query commands can ever
-be built or sent.
+Short legacy input reports padded with trailing zeros by Windows (``byte[14] == 0``) and firmware
+without enhanced mode (report ID 0x03) are rejected so a pad is never misreported at ``0 %``.
+Stock Ultimate 2C Wireless (0x310A / 0x301B / 0x301C) exposes no battery field over 2.4 GHz or USB
+and is not opened.
+
+Protocol facts come from public documentation (SDL's ``SDL_hidapi_8bitdo.c`` and
+``MiguelSanzBr/8bitdo-ultimate2-linux``); this is an independent implementation and no code was
+copied. Only whitelisted read/query commands can ever be built or sent.
 """
 from __future__ import annotations
 
@@ -35,8 +38,6 @@ log = logging.getLogger(__name__)
 EIGHTBITDO_VID = 0x2DC8
 VENDOR_IDS: tuple[int, ...] = (EIGHTBITDO_VID,)
 
-U2C_ACTIVE_PID = 0x310A
-U2C_DONGLE_HW_PID = 0x301C
 U2_DONGLE_PID = 0x6013
 U2_DINPUT_PID = 0x6012
 ULTIMATE3_PID = 0x202F
@@ -47,17 +48,17 @@ DINPUT_FEATURE_PIDS = frozenset({
     0x6003, 0x6006,     # Pro 2
     0x6009,             # Pro 3
 })
+BETA_PIDS = DINPUT_FEATURE_PIDS
 DINPUT_PASSIVE_PIDS = frozenset({U2_DINPUT_PID, ULTIMATE3_PID})
 DINPUT_PIDS = DINPUT_FEATURE_PIDS | DINPUT_PASSIVE_PIDS
 
-VENDOR_CONTROLLER_PAGE = 0xFF7A
 VENDOR_DONGLE_PAGE = 0xFFA0
 VENDOR_USAGE = 0x0001
 VENDOR_LEN = 64
 
 GAMEPAD_PAGE = 0x0001
 GAMEPAD_USAGES = frozenset({0x0004, 0x0005})
-STATE_REPORT_IDS = frozenset({0x01, 0x03, 0x04})
+STATE_REPORT_IDS = frozenset({0x01, 0x04})          # 0x03 = firmware without enhanced mode
 STATE_MIN_LEN = 15
 U2_STATE_MIN_LEN = 34
 STATE_BATTERY_IDX = 14
@@ -74,10 +75,8 @@ _IDENTIFY_PREFIX = b"\x81\x05\x00\x21\x01"
 _IDENTIFY_REPLY = b"\x02\x22"
 _PAD_STATUS_PREFIX = b"\x81\x04\x21\x01\x00\x00\x06"
 _PAD_STATUS_REPLY = b"\x02\x04\x04\x00\x21\x01"
-PATCH_SIGNATURE = 0xBA
 
 NAMES: dict[int, str] = {
-    U2C_ACTIVE_PID: "8BitDo Ultimate 2C Wireless Controller",
     U2_DONGLE_PID: "8BitDo Ultimate 2 Wireless",
     U2_DINPUT_PID: "8BitDo Ultimate 2 Wireless",
     ULTIMATE3_PID: "8BitDo Ultimate 3",
@@ -116,33 +115,42 @@ def build_request(command: str) -> bytes:
 _ALLOWED_PACKETS = frozenset({build_request(c) for c in ALLOWED_COMMANDS})
 
 
-def parse_identify(buf: bytes | None) -> tuple[int, int | None] | None:
-    """(hw_pid, signed_battery_or_None) from an ``02 22`` identify reply, else None."""
+def parse_identify(buf: bytes | None) -> int | None:
+    """Firmware/edition token from a 64-byte ``02 22`` identify reply, else None."""
     if not buf or len(buf) != VENDOR_LEN or buf[:2] != _IDENTIFY_REPLY:
         return None
-    hw_pid = buf[6] | (buf[7] << 8)
-    signed = (int(buf[8])
-              if (hw_pid == U2C_DONGLE_HW_PID and buf[9] == PATCH_SIGNATURE and buf[8] <= 100)
-              else None)
-    return hw_pid, signed
+    fw = buf[2] | (buf[3] << 8)
+    hw = buf[6] | (buf[7] << 8)
+    return hw if (fw or hw) else None
 
 
 def parse_pad_status(buf: bytes | None) -> int | None:
-    """Battery percentage (0..100) from an Ultimate 2 dongle ``02 04 04 00 21 01`` reply, else None."""
+    """Battery percentage (1..100) from an Ultimate 2 dongle ``02 04 04 00 21 01`` reply, else None.
+
+    Requires both ``1 <= byte[18] <= 100`` and a non-zero controller firmware version at bytes
+    19..20 so a zero-padded header echo can never be misread as a connected pad at 0 %.
+    """
     if not buf or len(buf) != VENDOR_LEN or buf[:6] != _PAD_STATUS_REPLY:
         return None
     pct = buf[18]
-    return int(pct) if pct <= 100 else None
+    fw = buf[19] | (buf[20] << 8)
+    if pct == 0 or pct > 100 or fw == 0:
+        return None
+    return int(pct)
 
 
 def parse_state_battery(buf: bytes | None, min_len: int = STATE_MIN_LEN) -> tuple[int, bool] | None:
-    """(percent, charging) from an enhanced 8BitDo input report (byte 14), else None."""
+    """(percent, charging) from an enhanced 8BitDo input report (byte 14), else None.
+
+    Rejects ``level == 0`` because Win32 ``ReadFile`` pads short legacy ``0x01`` reports (9 or 12
+    bytes) with trailing zeros up to ``InputReportByteLength``, placing ``0x00`` at index 14.
+    """
     need = max(STATE_MIN_LEN, int(min_len))
     if not buf or len(buf) < need or buf[0] not in STATE_REPORT_IDS:
         return None
     raw = buf[STATE_BATTERY_IDX]
     level = raw & 0x7F
-    if level > 100:
+    if level == 0 or level > 100:
         return None
     charging = bool(raw & 0x80) and level < 100
     return int(level), charging
@@ -218,21 +226,6 @@ def _dev(dev_id: str, name: str, battery: int | None, connected: bool, charging:
                   charging=charging, connected=connected, link=link, source="hid")
 
 
-def _read_u2c_active(info, deadline: float, cancel: threading.Event | None, factory) -> Device | None:
-    """Ultimate 2C over 2.4 GHz: returns a Device only when live signed battery % is present."""
-    name = _clean_product(info, NAMES[U2C_ACTIVE_PID])
-    with factory(info.path, in_len=VENDOR_LEN) as raw:
-        h = _ReadOnly(raw)
-        ident = _query_vendor(h, CMD_IDENTIFY, parse_identify, deadline, cancel)
-        if ident is None or ident[0] != U2C_DONGLE_HW_PID or ident[1] is None:
-            return None
-        # Confirm 0xBA signature twice so a random stock-firmware checksum never false-positives.
-        ident2 = _query_vendor(h, CMD_IDENTIFY, parse_identify, deadline, cancel)
-        if ident2 is None or ident2[0] != U2C_DONGLE_HW_PID or ident2[1] is None:
-            return None
-    return _dev("eightbitdo:310a", name, ident2[1], True, False, "2.4ghz")
-
-
 def _read_u2_dongle(info, deadline: float, cancel: threading.Event | None, factory) -> Device | None:
     name = _clean_product(info, NAMES[U2_DONGLE_PID])
     with factory(info.path, in_len=VENDOR_LEN) as raw:
@@ -266,19 +259,18 @@ def _read_dinput(info, deadline: float, cancel: threading.Event | None, factory)
     return _dev(f"eightbitdo:{info.pid:04x}", name, level, True, charging, "usb")
 
 
-def _select(info):
-    """Reader function for ``info``, or None when ``info`` is not a target 8BitDo collection."""
+def _select(info, beta: bool = False):
+    """Reader function for ``info``, or None when ``info`` is not an active 8BitDo collection."""
     if getattr(info, "vid", 0) != EIGHTBITDO_VID:
         return None
     pid = getattr(info, "pid", 0)
     up, u = getattr(info, "usage_page", 0), getattr(info, "usage", 0)
     in_len, out_len = getattr(info, "in_len", 0), getattr(info, "out_len", 0)
-    if in_len == VENDOR_LEN and out_len == VENDOR_LEN and u == VENDOR_USAGE:
-        if pid == U2C_ACTIVE_PID and up == VENDOR_CONTROLLER_PAGE:
-            return _read_u2c_active
-        if pid == U2_DONGLE_PID and up == VENDOR_DONGLE_PAGE:
+    if pid == U2_DONGLE_PID and up == VENDOR_DONGLE_PAGE and u == VENDOR_USAGE:
+        if in_len == VENDOR_LEN and out_len == VENDOR_LEN:
             return _read_u2_dongle
-    if pid in DINPUT_PIDS and up == GAMEPAD_PAGE and u in GAMEPAD_USAGES:
+    allowed_dinput = DINPUT_PIDS if beta else DINPUT_PASSIVE_PIDS
+    if pid in allowed_dinput and up == GAMEPAD_PAGE and u in GAMEPAD_USAGES:
         if _is_bluetooth_path(getattr(info, "path", "") or ""):
             return None
         need = U2_STATE_MIN_LEN if pid == U2_DINPUT_PID else STATE_MIN_LEN
@@ -288,13 +280,13 @@ def _select(info):
 
 
 def read(infos, deadline: float, cancel: threading.Event | None = None,
-         handle_factory=None) -> list[Device]:
+         handle_factory=None, beta: bool = False) -> list[Device]:
     """Read every supported 8BitDo device in ``infos``. Never raises."""
     try:
         if handle_factory is None:
             from .hid_win import HidHandle
             handle_factory = HidHandle
-        mine = [i for i in (infos or ()) if _select(i) is not None]
+        mine = [i for i in (infos or ()) if _select(i, beta=beta) is not None]
         _triggered.intersection_update({i.path for i in mine})
         out: list[Device] = []
         done: set[str] = set()
@@ -305,7 +297,7 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
             phash = path_hash(i.path)
             if phash in done:
                 continue
-            reader = _select(i)
+            reader = _select(i, beta=beta)
             if reader is None:
                 continue
             try:

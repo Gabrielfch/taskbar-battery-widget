@@ -72,7 +72,7 @@ def set_beta_readers(enabled: bool) -> None:
             _purge_beta()
 
 
-_BETA_PREFIXES = frozenset({"logi", "corsair", "steelseries", "hyperx", "sony"})
+_BETA_PREFIXES = frozenset({"logi", "corsair", "steelseries", "hyperx", "sony", "eightbitdo"})
 
 
 def is_beta_device(dev: Device) -> bool:
@@ -106,6 +106,9 @@ def is_beta_device(dev: Device) -> bool:
         from . import sony
         return getattr(dev, "link", "") == "bluetooth" and (
             pid in sony.DS4_PIDS or pid == sony.DS4_DONGLE_PID)
+    if vid == 0x2DC8:
+        from . import eightbitdo
+        return pid in eightbitdo.BETA_PIDS
     return False
 
 
@@ -503,7 +506,7 @@ def _scan_locked() -> list[Device]:
             add("audeze", (0x3329,), lazy("audeze"), exp_infos)
             add("jabra", (0x0B0E,), lazy("jabra"), exp_infos)
             add("misc", (0x17EF, 0x3837, 0x291D), lazy("misc_headsets"), exp_infos)
-            add("eightbitdo", (0x2DC8,), lazy("eightbitdo"), exp_infos)
+            add("eightbitdo", (0x2DC8,), lazy("eightbitdo", beta=beta), exp_infos)
         logi = [i for i in infos if i.vid == 0x046D]
         if logi and "logitech" in named:
             hs_cancel = threading.Event()       # never cancels the core Logitech readers

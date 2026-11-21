@@ -324,10 +324,10 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 ### 8BitDo (2DC8)
 | Device | Status |
 | --- | --- |
-| Ultimate 2C Wireless — Bluetooth | 🟢 (see Bluetooth) |
-| Ultimate 2C Wireless — 2.4 GHz dongle (`2DC8:310A`) or USB cable (stock firmware never reports battery %; `0xBA`-signed firmware over 2.4 GHz is supported) | ❌ |
 | Ultimate 2 Wireless — 2.4 GHz dongle (`2DC8:6013`) | 🟢 |
-| Ultimate 2 Wireless (`2DC8:6012`), Ultimate 3 (`2DC8:202F`), Pro 2, Pro 3, SN30 Pro, SF30 Pro — USB D-Input | 🟢 |
+| Ultimate 2 Wireless (`2DC8:6012`), Ultimate 3 (`2DC8:202F`) — USB D-Input | 🟢 |
+| Pro 2, Pro 3, SN30 Pro, SF30 Pro — USB D-Input (reads feature report `0x06`, which switches the controller to enhanced input reports for the session) | 🧪 |
+| Ultimate 2C Wireless — 2.4 GHz dongle (`2DC8:310A`) or USB cable (firmware reports no battery %) | ❌ |
 
 ### Not supported yet
 ASUS ROG, Turtle Beach, JBL and other vendor-specific dongles not listed above. Each needs its own protocol
@@ -395,7 +395,7 @@ Protocol facts come from public documentation; this is an independent implementa
 - Linux kernel drivers `hid-playstation`, `hid-sony` and `hid-logitech-hidpp`.
 - [OpenRazer](https://github.com/openrazer/openrazer).
 - [Tekk-Know/RazerBatteryTaskbar](https://github.com/Tekk-Know/RazerBatteryTaskbar).
-- [SDL](https://github.com/libsdl-org/SDL) (`SDL_hidapi_8bitdo`), [8bitdo-ultimate2-linux](https://github.com/MiguelSanzBr/8bitdo-ultimate2-linux) and [8bitdo-2c-battery-patch](https://github.com/Ghermin/8bitdo-2c-battery-patch).
+- [SDL](https://github.com/libsdl-org/SDL) (`SDL_hidapi_8bitdo.c`) and [8bitdo-ultimate2-linux](https://github.com/MiguelSanzBr/8bitdo-ultimate2-linux).
 
 ## Disclaimer
 Not affiliated with, endorsed or sponsored by Logitech, Razer, Sony, Microsoft, 8BitDo, HyperX/HP, SteelSeries,

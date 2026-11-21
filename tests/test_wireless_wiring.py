@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from taskbar_battery_widget import (audeze, corsair, hid_win, hidpp, hyperx, jabra, logitech_headsets,
-                                    misc_headsets, sony, steelseries, wireless, xinput)
+from taskbar_battery_widget import (audeze, corsair, eightbitdo, hid_win, hidpp, hyperx, jabra,
+                                    logitech_headsets, misc_headsets, sony, steelseries, wireless, xinput)
 from tests._wireless_helpers import EXTRA_ONLY, dev, info, names, real_scan, rig  # noqa: F401  (rig is a fixture)
 
 
@@ -63,20 +63,20 @@ def test_beta_off_still_runs_every_reader_and_passes_the_flag(rig, monkeypatch):
     wireless.set_beta_readers(False)
     seen = {}
     for mod, attr in ((steelseries, "read"), (corsair, "read"), (sony, "read"),
-                      (logitech_headsets, "read"), (hyperx, "read_hyperx")):
+                      (logitech_headsets, "read"), (hyperx, "read_hyperx"), (eightbitdo, "read")):
         monkeypatch.setattr(mod, attr, lambda i, d, c=None, _n=mod.__name__, **k:
                             seen.__setitem__(_n, k.get("beta")) or [])
     state["infos"] = [info(v, 0x16C4 if v == 0x0951 else 1) for v in
-                      (0x1038, 0x1B1C, 0x3329, 0x0B0E, 0x054C, 0x17EF, 0x0951, 0x046D, 0x03F0)]
+                      (0x1038, 0x1B1C, 0x3329, 0x0B0E, 0x054C, 0x17EF, 0x2DC8, 0x0951, 0x046D, 0x03F0)]
     real_scan()
     n = set(names(calls))
     assert {"audeze", "jabra", "misc", "xinput", "hidpp", "razer", "odessa", "ds"} <= n
-    assert set(seen.values()) == {False} and len(seen) == 5
+    assert set(seen.values()) == {False} and len(seen) == 6
     wireless.set_beta_readers(True)
     seen.clear()
     wireless.reset_cache()
     real_scan()
-    assert set(seen.values()) == {True} and len(seen) == 5
+    assert set(seen.values()) == {True} and len(seen) == 6
 
 
 def test_hyperx_reader_receives_every_model(rig):
@@ -121,8 +121,8 @@ def test_xinput_never_idle_cached(monkeypatch):
     ("hyperx:0696", "03f0:0696"), ("hyperx:018b", "03f0:018b"), ("hyperx:098d", "03f0:098d"),
     ("hyperx:08be", "03f0:08be"),
     ("lenovo:a07d", "17ef:a07d"), ("mchose:6045", "3837:6045"), ("mchose:385d", "291d:385d"),
-    ("eightbitdo:310a", "2dc8:310a"), ("eightbitdo:310a:a1b2c3", "2dc8:310a"),
-    ("eightbitdo:6013", "2dc8:6013"),
+    ("eightbitdo:6013", "2dc8:6013"), ("eightbitdo:6012:a1b2c3", "2dc8:6012"),
+    ("eightbitdo:6003", "2dc8:6003"),
     ("razer:0565", "1532:0565"),
 ])
 def test_dongle_key_every_prefix(dev_id, key):
@@ -318,14 +318,16 @@ def test_is_beta_device_per_model():
         return dev(i, link=link)
     for beta_id in ("logi:0af7", "logi:0b45", "logi:0b18", "corsair:2a08", "corsair:2a02",
                     "corsair:0a97", "hyperx:098d", "hyperx:1718", "steelseries:12b3",
-                    "steelseries:1260", "steelseries:12c2", "steelseries:12e0", "steelseries:1290"):
+                    "steelseries:1260", "steelseries:12c2", "steelseries:12e0", "steelseries:1290",
+                    "eightbitdo:6000", "eightbitdo:6003", "eightbitdo:6003:abc123", "eightbitdo:6009"):
         assert wireless.is_beta_device(d(beta_id)), beta_id
     assert wireless.is_beta_device(d("sony:05c4", "bluetooth"))
     assert wireless.is_beta_device(d("sony:05c4:abc123", "bluetooth"))
     for stable_id in ("logi:0a66", "logi:c539:01", "logi:0b1c", "corsair:0a14",
                       "corsair:0a64", "hyperx:16c4", "hyperx:0696", "hyperx:08be",
                       "steelseries:220e", "steelseries:230a", "steelseries:2269", "xinput:0",
-                      "sony:0d5e", "jabra:2e56", "razer:0565"):
+                      "sony:0d5e", "jabra:2e56", "razer:0565",
+                      "eightbitdo:6013", "eightbitdo:6012", "eightbitdo:202f"):
         assert not wireless.is_beta_device(d(stable_id)), stable_id
     assert not wireless.is_beta_device(d("sony:05c4", "usb"))
     assert not wireless.is_beta_device(d("sony:0ce6", "bluetooth"))
@@ -334,10 +336,11 @@ def test_is_beta_device_per_model():
 def test_turning_beta_off_purges_cached_beta_devices_and_snapshot_hides_them():
     wireless.reset_cache()
     beta_devs = [dev("logi:0af7"), dev("corsair:2a08"), dev("hyperx:1718"), dev("hyperx:098d"),
-                 dev("steelseries:1260"), dev("sony:05c4", link="bluetooth")]
+                 dev("steelseries:1260"), dev("sony:05c4", link="bluetooth"),
+                 dev("eightbitdo:6003", link="usb")]
     keep = [dev("logi:0a66"), dev("corsair:0a14"), dev("hyperx:16c4"),
             dev("sony:0d5e"), dev("jabra:2e56"), dev("steelseries:220e"),
-            dev("sony:05c4:usb", link="usb")]
+            dev("sony:05c4:usb", link="usb"), dev("eightbitdo:6013"), dev("eightbitdo:6012", link="usb")]
     all_devs = beta_devs + keep
     try:
         wireless.set_beta_readers(True)
