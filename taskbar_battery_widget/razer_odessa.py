@@ -6,13 +6,19 @@ protocol documentation and verified against live hardware:
 * HyperSpeed (`1532:0565`, vendor page `0xFF14`): byte 9 selects dongle (`0x00`) vs headset
   (`0x80`), XOR checksum at index 62.
 * BlackShark V2 Pro 2023 (`1532:0555`, RZ04-0453, vendor page `0xFF00` usage `0x0001`): MXIC
-  `'PA'`/`'PI'` framing (`cmd_type = 0x03` GETs, replies typed `0x08`). Pure GETs are tried
-  first; only if the dongle is unarmed (no Synapse) or the 2.4 GHz link is dozing does the
-  reader send the fixed host-query enable frame (`0x02/0xE1 = 1`) to wake the link.
+  `'PA'`/`'PI'` framing (`cmd_type = 0x03` GETs, replies typed `0x08`). Only pure GETs are
+  sent; a cold-plugged dongle that has not been initialised in the current USB session (e.g.
+  by Razer Synapse's volatile `0x02/0xE1` host-query enable) does not answer and is skipped
+  without sending any state-changing frame.
+
+Public protocol references (facts only, no GPL code copied):
+* `https://github.com/Ashesh3/razer-device-control` (MIT, `src/protocol.rs` & `src/device.rs`)
+* `https://github.com/openrazer/openrazer/pull/2862` and
+  `https://github.com/Sapd/HeadsetControl/pull/626` (protocol notes for `'PI'` type `0x08`
+  replies and `0x2A` charging values).
 
 Only read-only GET commands (`0x20` wireless connection status, `0x21` battery status, `0x2A`
-charging status) and, for `0555`, the fixed `PA_WAKE` frame are whitelisted; building or
-sending anything else raises `ValueError`.
+charging status) are whitelisted; building or sending anything else raises `ValueError`.
 """
 from __future__ import annotations
 
@@ -36,7 +42,8 @@ VENDOR_PAGE = 0xFF14
 CHARGING_ON = 1
 STATUS_OK = 2
 STATUS_BUSY = (1, 3)
-DEVICE_BUDGET_S = 1.2
+DEVICE_BUDGET_S = 1.0
+PA_DEVICE_BUDGET_S = 1.2
 MAX_BUSY_RETRIES = 3
 
 PA_PIDS = frozenset({0x0555})
@@ -47,12 +54,7 @@ PA_REQ_MAGIC = b"PA"
 PA_REP_MAGIC = b"PI"
 PA_REP_TYPE = 0x08
 PA_CMD_TYPE_GET = 0x03
-PA_PROBE_MS = 200
 PA_REPLY_MS = 250
-PA_WAKE_DELAY_S = 0.035
-PA_WAKE = bytes([
-    REPORT_ID, PA_DIR_OUT, 0x07, 0x00, 0x00, 0x50, 0x41, 0x0E, 0x00, 0x02, 0xE1, 0x01,
-]).ljust(REPORT_LEN, b"\0")
 
 # dongle usb pid -> (display name, device id suffix)
 ODESSA_DONGLES: dict[int, tuple[str, int | str]] = {
@@ -185,7 +187,7 @@ def build_pa_request(cmd_id: int) -> bytes:
     return bytes(b)
 
 
-ALLOWED_PA_FRAMES = frozenset({PA_WAKE, *(build_pa_request(c) for c in ALLOWED_COMMANDS)})
+ALLOWED_PA_FRAMES = frozenset({build_pa_request(c) for c in ALLOWED_COMMANDS})
 
 
 def parse_pa_reply(buf: bytes | None, cmd_id: int) -> bytes | None:
@@ -220,18 +222,6 @@ def _write_pa(h, pkt: bytes, deadline: float, cancel: threading.Event | None) ->
     return bool(h.write(pkt, timeout_ms=max(1, min(1000, remaining_ms))))
 
 
-def _wake_pa(h, deadline: float, cancel: threading.Event | None) -> bool:
-    """Wake a dozing 2.4 GHz link and enable host queries (two 0x02/0xE1 frames, 35 ms apart)."""
-    for _ in range(2):
-        if not _write_pa(h, PA_WAKE, deadline, cancel):
-            return False
-        delay = min(PA_WAKE_DELAY_S, max(0.0, deadline - time.monotonic()))
-        if delay > 0:
-            time.sleep(delay)
-    h.drain()
-    return not _expired(deadline, cancel)
-
-
 def _query_pa_once(h, cmd_id: int, wait_ms: int, deadline: float,
                    cancel: threading.Event | None) -> bytes | None:
     pkt = build_pa_request(cmd_id)
@@ -261,22 +251,14 @@ def _read_pa(info, deadline: float, cancel: threading.Event | None,
     name, syn_pid = ODESSA_DONGLES[info.pid]
     dev_id = f"razer:{syn_pid}"
     with handle_factory(info.path, in_len=info.in_len) as h:
-        woke = False
-        conn = _query_pa_once(h, CMD_CONNECTION, PA_PROBE_MS, deadline, cancel)
-        if conn is None:
-            if not _wake_pa(h, deadline, cancel):
-                return None
-            woke = True
-            conn = _query_pa_once(h, CMD_CONNECTION, PA_REPLY_MS, deadline, cancel)
+        conn = _query_pa_once(h, CMD_CONNECTION, PA_REPLY_MS, deadline, cancel)
         if not conn:
             return None
         if conn[0] != 1:
             return Device(id=dev_id, name=name, kind="headset", battery=None, connected=False,
                           link="2.4ghz", source="hid")
-        bat = _query_pa_once(h, CMD_BATTERY, PA_REPLY_MS if woke else PA_PROBE_MS, deadline, cancel)
-        if bat is None and not woke:
-            if not _wake_pa(h, deadline, cancel):
-                return None
+        bat = _query_pa_once(h, CMD_BATTERY, PA_REPLY_MS, deadline, cancel)
+        if bat is None:
             bat = _query_pa_once(h, CMD_BATTERY, PA_REPLY_MS, deadline, cancel)
         if not bat or bat[0] > 100:
             return None
@@ -308,9 +290,9 @@ def read_odessa(infos, deadline: float, cancel: threading.Event | None = None,
             break
         if i.pid in done or not _matches_collection(i):
             continue
+        budget = PA_DEVICE_BUDGET_S if i.pid in PA_PIDS else DEVICE_BUDGET_S
         try:
-            dev = _read_one(i, min(deadline, time.monotonic() + DEVICE_BUDGET_S), cancel,
-                            handle_factory)
+            dev = _read_one(i, min(deadline, time.monotonic() + budget), cancel, handle_factory)
         except Exception:
             log.debug("odessa read failed for %04x", i.pid, exc_info=True)
             continue

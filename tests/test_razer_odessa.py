@@ -220,17 +220,21 @@ def test_dongle_key_for_odessa():
 PA_REQ_CONN = bytes.fromhex("02 80 08 00 00 50 41 08 00 03 20".replace(" ", "")).ljust(64, b"\0")
 PA_REQ_BAT = bytes.fromhex("02 80 08 00 00 50 41 08 00 03 21".replace(" ", "")).ljust(64, b"\0")
 PA_REQ_CHG = bytes.fromhex("02 80 08 00 00 50 41 08 00 03 2a".replace(" ", "")).ljust(64, b"\0")
-PA_WAKE_HEX = bytes.fromhex("02 80 07 00 00 50 41 0e 00 02 e1 01".replace(" ", "")).ljust(64, b"\0")
+FORBIDDEN_REMOTE_SET = bytes.fromhex("02 80 07 00 00 50 41 0e 00 02 e1 01".replace(" ", "")).ljust(64, b"\0")
 
 # Live replies captured on 1532:0555 (RZ04-0453) — trailing bytes past byte[1]+2 are stale MCU buffer data
-PA_LIVE_WAKE_ACK = (bytes.fromhex("02 0d 50 49 01 c0 ae ba 23 00 03 00 0e 80 00 57 49 01 c0 13".replace(" ", ""))
+PA_UNRELATED_ACK = (bytes.fromhex("02 0d 50 49 01 c0 ae ba 23 00 03 00 0e 80 00 57 49 01 c0 13".replace(" ", ""))
                     .ljust(64, b"\0"))
 PA_LIVE_CONN = (bytes.fromhex("02 0e 50 49 08 f9 ec 4d 1c 00 04 00 20 01 01 01 49 01 c0 13".replace(" ", ""))
                 .ljust(64, b"\0"))
 PA_LIVE_BAT = (bytes.fromhex("02 0e 50 49 08 fa fe 4d 1c 00 04 00 21 01 01 57 49 01 c0 13".replace(" ", ""))
                .ljust(64, b"\0"))
-PA_LIVE_CHG = (bytes.fromhex("02 0e 50 49 08 fb 07 4e 1c 00 04 00 2a 01 01 00 49 01 c0 13".replace(" ", ""))
-               .ljust(64, b"\0"))
+PA_LIVE_CHG_OFF = (bytes.fromhex("02 0e 50 49 08 fb 07 4e 1c 00 04 00 2a 01 01 00 49 01 c0 13".replace(" ", ""))
+                   .ljust(64, b"\0"))
+PA_LIVE_BAT_CHG = (bytes.fromhex("02 0e 50 49 08 ea c2 96 06 00 04 00 21 01 01 55 49 11".replace(" ", ""))
+                   .ljust(64, b"\0"))
+PA_LIVE_CHG_ON = (bytes.fromhex("02 0e 50 49 08 eb d5 96 06 00 04 00 2a 01 01 01 49 11".replace(" ", ""))
+                  .ljust(64, b"\0"))
 
 
 def pa_reply(cmd_id: int, val: int, flag: int = 1) -> bytes:
@@ -250,15 +254,13 @@ def pa_info(path="p555", page=0xFF00, usage=0x0001, in_len=64, out_len=64):
 
 
 class FakePaHandle:
-    """Simulates a 1532:0555 dongle: `armed` controls whether pure GETs answer before `PA_WAKE`."""
+    """Simulates a 1532:0555 dongle answering pure GET queries."""
 
-    def __init__(self, responses, armed=True, rf_awake=True):
+    def __init__(self, responses, armed=True):
         self.responses = {k: list(v) for k, v in responses.items()}
         self.armed = armed
-        self.rf_awake = rf_awake
         self.queue: list[bytes] = []
         self.sent: list[bytes] = []
-        self.wakes = 0
 
     def __enter__(self):
         return self
@@ -271,18 +273,9 @@ class FakePaHandle:
 
     def write(self, pkt, timeout_ms=1000):
         self.sent.append(bytes(pkt))
-        if pkt == ro.PA_WAKE:
-            self.wakes += 1
-            if self.wakes >= 2:
-                self.armed = True
-                self.rf_awake = True
-            self.queue.append(PA_LIVE_WAKE_ACK)
-            return True
         if not self.armed:
             return True
         cmd = pkt[10]
-        if cmd in (0x21, 0x2A) and not self.rf_awake:
-            return True
         items = self.responses.get(cmd, [])
         if items:
             nxt = items.pop(0)
@@ -297,19 +290,23 @@ class FakePaHandle:
         return self.queue.pop(0) if self.queue else None
 
 
-def test_pa_build_and_whitelist():
+def test_per_protocol_budgets():
+    assert ro.DEVICE_BUDGET_S == 1.0
+    assert ro.PA_DEVICE_BUDGET_S == 1.2
+
+
+def test_pa_build_and_strict_read_only_whitelist():
     assert ro.build_pa_request(0x20) == PA_REQ_CONN
     assert ro.build_pa_request(0x21) == PA_REQ_BAT
     assert ro.build_pa_request(0x2A) == PA_REQ_CHG
-    assert ro.PA_WAKE == PA_WAKE_HEX
+    assert ro.ALLOWED_PA_FRAMES == frozenset({PA_REQ_CONN, PA_REQ_BAT, PA_REQ_CHG})
+    assert not hasattr(ro, "PA_WAKE")
     for bad in (0x00, 0x13, 0x15, 0x93, 0x95, 0x9E, 0xAC, 0xE1):
         with pytest.raises(ValueError):
             ro.build_pa_request(bad)
-    # _write_pa also refuses any non-whitelisted frame (e.g. remote off, EQ/config writes)
+    # _write_pa refuses every SET / remote-mode / config frame, including 0x02/0xE1
     h = FakePaHandle({})
-    bad_wake = bytearray(ro.PA_WAKE)
-    bad_wake[11] = 0x00
-    for frame in (bytes(bad_wake), b"\x02" + bytes(63), b""):
+    for frame in (FORBIDDEN_REMOTE_SET, b"\x02" + bytes(63), b""):
         with pytest.raises(ValueError):
             ro._write_pa(h, frame, time.monotonic() + 2, None)
     assert h.sent == []
@@ -318,8 +315,10 @@ def test_pa_build_and_whitelist():
 def test_parse_pa_live_replies_and_rejections():
     assert ro.parse_pa_reply(PA_LIVE_CONN, 0x20) == b"\x01"
     assert ro.parse_pa_reply(PA_LIVE_BAT, 0x21) == b"\x57"
-    assert ro.parse_pa_reply(PA_LIVE_CHG, 0x2A) == b"\x00"
-    assert ro.parse_pa_reply(PA_LIVE_WAKE_ACK, 0x20) is None            # type 0x01 wake ACK
+    assert ro.parse_pa_reply(PA_LIVE_CHG_OFF, 0x2A) == b"\x00"
+    assert ro.parse_pa_reply(PA_LIVE_BAT_CHG, 0x21) == b"\x55"
+    assert ro.parse_pa_reply(PA_LIVE_CHG_ON, 0x2A) == b"\x01"
+    assert ro.parse_pa_reply(PA_UNRELATED_ACK, 0x20) is None            # type 0x01 frame
     assert ro.parse_pa_reply(PA_LIVE_BAT, 0x20) is None                 # wrong command echo
     assert ro.parse_pa_reply(pa_reply(0x21, 80, flag=2), 0x21) is None  # unsolicited push (flag 2)
     assert ro.parse_pa_reply(None, 0x21) is None
@@ -335,64 +334,66 @@ def test_parse_pa_live_replies_and_rejections():
     assert ro.parse_pa_reply(bytes(bad_n), 0x21) is None
 
 
-def test_pa_armed_fast_path_sends_no_wake():
+def test_pa_pure_get_discharging_and_charging():
     h = FakePaHandle({
         0x20: [PA_LIVE_CONN],
-        0x21: [[PA_LIVE_WAKE_ACK, pa_reply(0x21, 80, flag=2), PA_LIVE_BAT]],  # skips unrelated frames
-        0x2A: [pa_reply(0x2A, 1)],
-    }, armed=True)
+        0x21: [[PA_UNRELATED_ACK, pa_reply(0x21, 80, flag=2), PA_LIVE_BAT]],  # skips unrelated frames
+        0x2A: [PA_LIVE_CHG_OFF],
+    })
     out = ro.read_odessa([pa_info()], time.monotonic() + 3, None,
                          handle_factory=lambda path, in_len=64: h)
     assert len(out) == 1
     d = out[0]
     assert (d.id, d.name, d.kind, d.battery, d.charging, d.connected, d.link, d.source) == (
-        "razer:0555", "Razer BlackShark V2 Pro", "headset", 87, True, True, "2.4ghz", "hid"
+        "razer:0555", "Razer BlackShark V2 Pro", "headset", 87, False, True, "2.4ghz", "hid"
     )
-    assert h.wakes == 0
     assert h.sent == [PA_REQ_CONN, PA_REQ_BAT, PA_REQ_CHG]
 
+    # Live USB-C charging capture (85 %, charging=True), plus 2 = full on charger -> False
+    h_chg = FakePaHandle({0x20: [PA_LIVE_CONN], 0x21: [PA_LIVE_BAT_CHG], 0x2A: [PA_LIVE_CHG_ON]})
+    out_chg = ro.read_odessa([pa_info()], time.monotonic() + 3, None,
+                             handle_factory=lambda path, in_len=64: h_chg)
+    assert len(out_chg) == 1 and out_chg[0].battery == 85 and out_chg[0].charging is True
 
-def test_pa_unarmed_cold_plug_wakes_and_reads(monkeypatch):
-    monkeypatch.setattr(ro, "PA_WAKE_DELAY_S", 0.0)
-    h = FakePaHandle({
+    h_full = FakePaHandle({0x20: [PA_LIVE_CONN], 0x21: [pa_reply(0x21, 100)], 0x2A: [pa_reply(0x2A, 2)]})
+    out_full = ro.read_odessa([pa_info()], time.monotonic() + 3, None,
+                              handle_factory=lambda path, in_len=64: h_full)
+    assert len(out_full) == 1 and out_full[0].battery == 100 and out_full[0].charging is False
+
+
+def test_pa_unarmed_dongle_stays_silent_and_dropped_battery_get_retries_pure_get():
+    # Unarmed cold-plugged dongle: returns [] without sending any SET/wake frame
+    h_unarmed = FakePaHandle({0x20: [PA_LIVE_CONN]}, armed=False)
+    assert ro.read_odessa([pa_info()], time.monotonic() + 3, None,
+                          handle_factory=lambda path, in_len=64: h_unarmed) == []
+    assert h_unarmed.sent == [PA_REQ_CONN]
+
+    # Dropped first 0x21 GET retries with a plain 0x21 GET (no wake frame); missing 0x2A -> charging False
+    h_drop = FakePaHandle({
         0x20: [pa_reply(0x20, 1)],
-        0x21: [pa_reply(0x21, 63)],
-        0x2A: [pa_reply(0x2A, 2)],      # 2 = full on charger -> charging False
-    }, armed=False)
+        0x21: [None, pa_reply(0x21, 44)],
+        0x2A: [None],
+    })
     out = ro.read_odessa([pa_info()], time.monotonic() + 3, None,
-                         handle_factory=lambda path, in_len=64: h)
-    assert len(out) == 1 and out[0].battery == 63 and out[0].charging is False
-    assert h.wakes == 2
-
-
-def test_pa_dozing_rf_link_wakes_when_battery_get_dropped(monkeypatch):
-    monkeypatch.setattr(ro, "PA_WAKE_DELAY_S", 0.0)
-    h = FakePaHandle({
-        0x20: [pa_reply(0x20, 1)],
-        0x21: [pa_reply(0x21, 44)],
-        0x2A: [None],                   # charging query fails -> still returns battery with False
-    }, armed=True, rf_awake=False)
-    out = ro.read_odessa([pa_info()], time.monotonic() + 3, None,
-                         handle_factory=lambda path, in_len=64: h)
+                         handle_factory=lambda path, in_len=64: h_drop)
     assert len(out) == 1 and out[0].battery == 44 and out[0].charging is False
-    assert h.wakes == 2
+    assert h_drop.sent == [PA_REQ_CONN, PA_REQ_BAT, PA_REQ_BAT, PA_REQ_CHG]
 
 
-def test_pa_disconnected_and_invalid_battery(monkeypatch):
-    monkeypatch.setattr(ro, "PA_WAKE_DELAY_S", 0.0)
-    h = FakePaHandle({0x20: [pa_reply(0x20, 0)]}, armed=True)
+def test_pa_disconnected_and_invalid_battery():
+    h = FakePaHandle({0x20: [pa_reply(0x20, 0)]})
     out = ro.read_odessa([pa_info()], time.monotonic() + 3, None,
                          handle_factory=lambda path, in_len=64: h)
     assert len(out) == 1 and out[0].connected is False and out[0].battery is None
     assert h.sent == [PA_REQ_CONN]
 
-    h_bad = FakePaHandle({0x20: [pa_reply(0x20, 1)], 0x21: [pa_reply(0x21, 255)]}, armed=True)
+    h_bad = FakePaHandle({0x20: [pa_reply(0x20, 1)], 0x21: [pa_reply(0x21, 255)]})
     assert ro.read_odessa([pa_info()], time.monotonic() + 3, None,
                           handle_factory=lambda path, in_len=64: h_bad) == []
 
 
 def test_pa_collection_selection_and_deadline_cancel():
-    h = FakePaHandle({0x20: [PA_LIVE_CONN], 0x21: [PA_LIVE_BAT], 0x2A: [PA_LIVE_CHG]})
+    h = FakePaHandle({0x20: [PA_LIVE_CONN], 0x21: [PA_LIVE_BAT], 0x2A: [PA_LIVE_CHG_OFF]})
     bad_cols = [
         pa_info(page=0x000C, usage=0x0001, in_len=3, out_len=0),    # col01 consumer control
         pa_info(page=0xFF14, usage=0x0001),                         # wrong vendor page for 0555
@@ -404,11 +405,9 @@ def test_pa_collection_selection_and_deadline_cancel():
     assert h.sent == []
 
     assert ro._query_pa_once(h, 0x20, 200, time.monotonic() - 1, None) is None
-    assert ro._wake_pa(h, time.monotonic() - 1, None) is False
     ev = threading.Event()
     ev.set()
     assert ro._query_pa_once(h, 0x20, 200, time.monotonic() + 3, ev) is None
-    assert ro._wake_pa(h, time.monotonic() + 3, ev) is False
     assert h.sent == []
 
 
