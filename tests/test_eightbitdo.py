@@ -255,10 +255,13 @@ def test_two_identical_controllers_get_distinct_ids():
 
 
 def test_dinput_skips_bluetooth_paths():
-    bt_path = r"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&00022dc8_pid&6006#1"
-    h = FakeHandle(initial=[state_report(80, size=20)])
-    assert run(h, [vinfo(0x6006, 1, 5, in_len=20, out_len=0, path=bt_path)], beta=True) == []
-    assert h.opened == 0
+    for bt_path in (
+        r"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&00022dc8_pid&6006#1",              # BT Classic HID
+        r"\\?\hid#{00001812-0000-1000-8000-00805f9b34fb}_dev_vid&022dc8_pid&6006_rev&0001#1",   # BLE HOGP
+    ):
+        h = FakeHandle(initial=[state_report(80, size=20)])
+        assert run(h, [vinfo(0x6006, 1, 5, in_len=20, out_len=0, path=bt_path)], beta=True) == []
+        assert h.opened == 0
 
 
 # ------------------------------------------------------------------ contract: selection, budgets, safety

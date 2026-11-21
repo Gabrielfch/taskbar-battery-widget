@@ -62,6 +62,7 @@ STATE_REPORT_IDS = frozenset({0x01, 0x04})          # 0x03 = firmware without en
 STATE_MIN_LEN = 15
 U2_STATE_MIN_LEN = 34
 STATE_BATTERY_IDX = 14
+_BLE_HOGP_GUID = "{00001812-0000-1000-8000-00805f9b34fb}"   # Bluetooth LE HID over GATT Profile
 
 ENABLE_ENHANCED_FEATURE_ID = 0x06
 ENABLE_ENHANCED_FEATURE_LEN = 64
@@ -271,7 +272,8 @@ def _select(info, beta: bool = False):
             return _read_u2_dongle
     allowed_dinput = DINPUT_PIDS if beta else DINPUT_PASSIVE_PIDS
     if pid in allowed_dinput and up == GAMEPAD_PAGE and u in GAMEPAD_USAGES:
-        if _is_bluetooth_path(getattr(info, "path", "") or ""):
+        p = getattr(info, "path", "") or ""
+        if _is_bluetooth_path(p) or _BLE_HOGP_GUID in p.lower():
             return None
         need = U2_STATE_MIN_LEN if pid == U2_DINPUT_PID else STATE_MIN_LEN
         if in_len >= need:
