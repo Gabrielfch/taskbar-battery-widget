@@ -9,7 +9,7 @@ import warnings
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from . import scanner, wireless
+from . import razer_odessa, scanner, wireless
 from .charge import ChargeEstimator
 from .hid_win import GuardedCall
 
@@ -31,6 +31,9 @@ class DeviceMonitor(QObject):
     # Internal cross-thread hops: emitted from the worker thread, handled on this object's thread.
     _devices_ready = Signal(list)
     _radio_ready = Signal(bool)
+    _wake_hint_ready = Signal()
+
+    razer_wake_hint = Signal()       # a Razer dongle is silent and `razer_dongle_wake` is off (UI thread)
 
     def __init__(self, parent=None, use_watchers: bool = True, cfg=None, wireless_scan=None):
         super().__init__(parent)
@@ -43,6 +46,7 @@ class DeviceMonitor(QObject):
         self._use_watchers = use_watchers
         self._devices_ready.connect(self._on_devices)
         self._radio_ready.connect(self._on_radio)
+        self._wake_hint_ready.connect(self._on_wake_hint)
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._wake: asyncio.Event | None = None
@@ -99,6 +103,10 @@ class DeviceMonitor(QObject):
     @Slot(list)
     def _on_devices(self, devices):
         self.devices_changed.emit(devices)
+
+    @Slot()
+    def _on_wake_hint(self):
+        self.razer_wake_hint.emit()
 
     @Slot(bool)
     def _on_radio(self, on):
@@ -259,6 +267,8 @@ class DeviceMonitor(QObject):
             log.error("wireless scan failed: %r", call.error)
             return self._filter_sources(self._last_wireless)
         self._last_wireless = list(call.value or [])
+        if razer_odessa.take_wake_hint():
+            self._wake_hint_ready.emit()
         return self._filter_sources(self._last_wireless)
 
     @staticmethod

@@ -280,6 +280,23 @@ def _send_wake(h, deadline: float, cancel: threading.Event | None, enabled: bool
     return not _expired(deadline, cancel)
 
 
+_hint_lock = threading.Lock()
+needs_wake_hint: set[int] = set()   # pids of PA dongles that stayed silent while `razer_dongle_wake` is off
+
+
+def _note_wake_hint(pid: int) -> None:
+    with _hint_lock:
+        needs_wake_hint.add(pid)
+
+
+def take_wake_hint() -> set[int]:
+    """Return and clear the pids recorded by `_note_wake_hint` (no packets are sent for this)."""
+    with _hint_lock:
+        out = set(needs_wake_hint)
+        needs_wake_hint.clear()
+        return out
+
+
 def _claim_wake(path, enabled: bool) -> bool:
     """True once per path per USB session (until the path disappears from the scan)."""
     if not enabled:
@@ -297,6 +314,8 @@ def _read_pa(info, deadline: float, cancel: threading.Event | None,
     dev_id = f"razer:{syn_pid}"
     with handle_factory(info.path, in_len=info.in_len) as h:
         conn = _query_pa_once(h, CMD_CONNECTION, PA_REPLY_MS, deadline, cancel)
+        if conn is None and not wake and not _expired(deadline, cancel):
+            _note_wake_hint(info.pid)       # silent and the opt-in is off: the UI may mention it once
         if conn is None and not _expired(deadline, cancel) and _claim_wake(info.path, wake):
             sent = _send_wake(h, deadline, cancel, wake)
             if sent is None:            # no frame went out: allow a later scan to try again

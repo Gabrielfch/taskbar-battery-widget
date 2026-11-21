@@ -405,6 +405,7 @@ def main() -> int:
     tray.quit_requested.connect(app.quit)
     widget.panel_requested.connect(tray.open_panel)
     widget.placement_warning.connect(tray.show_placement_warning)
+    monitor.razer_wake_hint.connect(tray.show_razer_wake_hint)
     tray.set_screen_lister(screen_menu_entries)
     if hasattr(widget, "current_screen_key"):
         tray.set_current_screen_key_fn(widget.current_screen_key)

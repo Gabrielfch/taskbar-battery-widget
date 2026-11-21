@@ -112,6 +112,8 @@ class TrayController(QObject):
         self._settings = self._build_settings()
         self._build_menu()
         self._tray.activated.connect(self._on_activated)
+        self._click_action = None       # what a click on the balloon being shown does (None: nothing)
+        self._tray.messageClicked.connect(self._on_message_clicked)
         self._tray.setToolTip(tr("app_name"))
         self._update_icon()
 
@@ -761,6 +763,30 @@ class TrayController(QObject):
             tip += f" - {lowest}%"
         self._tray.setToolTip(tip)
 
+    def show_razer_wake_hint(self) -> None:
+        """One tray notice, ever: a Razer dongle is silent and the opt-in to activate it is off."""
+        if (self._cfg.get("razer_wake_hint_shown") or self._cfg.get("razer_dongle_wake")
+                or not self._cfg.get("notifications_enabled")):
+            return
+        self._cfg.set("razer_wake_hint_shown", True)
+        self.notify(tr("razer_wake_hint_title"), tr("razer_wake_hint_body"))
+        self._click_action = self.show_sources_settings
+
+    def show_sources_settings(self) -> None:
+        """Settings > Sources inside the device panel (opened if closed)."""
+        p = self._ensure_panel()
+        p.set_settings_model(self._settings)
+        if not p.isVisible():
+            self.open_panel()
+        p.show_settings("sources", direct=True)
+
+    def _on_message_clicked(self) -> None:
+        action = self._click_action
+        self._click_action = None
+        if action is not None:
+            action()
+
     def notify(self, title: str, body: str, info: bool = False) -> None:
+        self._click_action = None
         icon = QSystemTrayIcon.MessageIcon.Information if info else QSystemTrayIcon.MessageIcon.Warning
         self._tray.showMessage(title, body, icon, 8000)

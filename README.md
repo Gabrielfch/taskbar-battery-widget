@@ -261,7 +261,7 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 ### Razer
 | Device | Method | Status |
 | --- | --- | --- |
-| BlackShark V2 Pro (2023, RZ04-0453) — 2.4 GHz dongle 1532:0555 (battery + charging; pure GETs only: needs Razer Synapse to have initialised the dongle in the current USB session, or enable *Activate Razer dongles without Synapse*) | Direct dongle protocol | ✅ |
+| BlackShark V2 Pro (2023, RZ04-0453) — 2.4 GHz dongle 1532:0555 (battery + charging; pure GETs only: needs Razer Synapse to have initialised the dongle in the current USB session, or enable *Activate Razer dongles without Synapse*; if the dongle stays silent while that option is off, a one-time tray notice points to it) | Direct dongle protocol | ✅ |
 | BlackShark V2 HyperSpeed — 2.4 GHz dongle 1532:0565 (battery + charging) | Direct dongle protocol | ✅ |
 | Basilisk V3 Pro — 2.4 GHz dongle 1532:00AB (confirmed in [#1](https://github.com/Gabrielfch/taskbar-battery-widget/issues/1)) | Classic 90-byte protocol (mouse collection) | ✅ |
 | Basilisk V3 Pro wired (1532:00AA), Basilisk V3 X HyperSpeed, Basilisk X HyperSpeed, Basilisk Ultimate (+ dongle) | Classic 90-byte protocol (vendor or mouse collection) | 🟢 |

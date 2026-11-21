@@ -57,6 +57,7 @@ DEFAULTS = {
     "language": "auto",             # one of LANGUAGES: "auto" follows the system language
     "last_seen_version": "",        # "X.Y.Z" of the last version whose news were handled ("" = never)
     "tutorial_seen": False,         # the first-run tutorial was shown (finished or skipped)
+    "razer_wake_hint_shown": False, # the one-time "Razer dongle not answering" notice was shown
 }
 
 MAX_HIDDEN = 200
