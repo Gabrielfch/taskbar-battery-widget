@@ -3,9 +3,9 @@
 Pure packet build / crc / decode helpers (unit tested) plus `scan_razer`, which only sends
 read queries (get battery level, get charging status).
 
-Known limitation: some newer headsets (e.g. BlackShark V2 HyperSpeed, 1532:0565) do not
-implement this protocol (their vendor collections use 63-byte reports with a different
-framing), so they are skipped.
+Note: ODESSA-family 2.4 GHz headset dongles (e.g. BlackShark V2 Pro 2023 1532:0555 and
+BlackShark V2 HyperSpeed 1532:0565) use 64-byte interrupt reports instead of the 90-byte
+feature report and are handled by `razer_odessa`.
 """
 from __future__ import annotations
 
@@ -67,7 +67,6 @@ KNOWN_DEVICES: dict[int, KnownDevice] = {
     0x007B: KnownDevice("Razer Viper Ultimate Wired", 0x3F),
     0x0078: KnownDevice("Razer Viper Ultimate Wireless", 0x3F),
     0x007A: KnownDevice("Razer Viper Ultimate Dongle", 0x3F),
-    0x0555: KnownDevice("Razer BlackShark V2 Pro (RZ04-0453)", 0x3F),
     0x0528: KnownDevice("Razer BlackShark V2 Pro (RZ04-0322)", 0x3F),
     0x00AF: KnownDevice("Razer Cobra Pro Wired", 0x1F),
     0x00B0: KnownDevice("Razer Cobra Pro Wireless", 0x1F),
