@@ -322,6 +322,12 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | Xbox controllers through the Xbox Wireless Adapter or any XInput pad (battery in 4 steps: 5 / 30 / 65 / 100 %) | 🟢 |
 | Xbox controller on a USB cable (Windows reports no battery level) | ❌ |
 
+### AULA
+| Device | Status |
+| --- | --- |
+| AULA F108 Pro — 2.4 GHz dongle (`05AC:024F`, `"F108Pro Dongle"`, battery %) | ✅ |
+| AULA F108 Pro — USB cable (`0C45:800A`, firmware reports no battery %) | ❌ |
+
 ### Not supported yet
 ASUS ROG, Turtle Beach, JBL and other vendor-specific dongles not listed above. Each needs its own protocol
 reader.
@@ -389,9 +395,10 @@ Protocol facts come from public documentation; this is an independent implementa
 - [OpenRazer](https://github.com/openrazer/openrazer).
 - [Tekk-Know/RazerBatteryTaskbar](https://github.com/Tekk-Know/RazerBatteryTaskbar).
 - [Ashesh3/razer-device-control](https://github.com/Ashesh3/razer-device-control) (MIT): protocol notes for the BlackShark V2 Pro 2023 (`1532:0555`) `'PA'` framing.
+- [parsiya/f108-pro](https://github.com/parsiya/f108-pro), [deddroid/ak820-rs](https://github.com/deddroid/ak820-rs), [wsclx/ak820pro-modder](https://github.com/wsclx/ak820pro-modder) and [gha-projects/ak820-mac](https://github.com/gha-projects/ak820-mac) (MIT): protocol documentation for the 2.4 GHz keyboard receiver and wired USB interface.
 
 ## Disclaimer
-Not affiliated with, endorsed or sponsored by Logitech, Razer, Sony, Microsoft, HyperX/HP, SteelSeries,
+Not affiliated with, endorsed or sponsored by Logitech, Razer, Sony, Microsoft, AULA, HyperX/HP, SteelSeries,
 Corsair, Audeze, Jabra, Lenovo or MCHOSE. Brand and product names are used only to indicate compatibility
 and belong to their respective owners.
 
