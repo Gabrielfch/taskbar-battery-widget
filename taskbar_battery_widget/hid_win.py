@@ -181,11 +181,23 @@ def _interface_paths() -> list[str]:
     return [p for p in ctypes.wstring_at(buf, size.value).split("\0") if p]
 
 
+# Shared vendor IDs narrowed to exact USB PIDs at enumeration time so unrelated devices of that
+# vendor (e.g. Apple peripherals on 0x05AC) are never opened for HID attribute probing.
+_USB_ONLY_PIDS: dict[int, tuple[int, ...]] = {
+    0x05AC: (0x024F,),          # AULA F108 Pro 2.4 GHz dongle ("F108Pro Dongle")
+}
+
+
 def _path_matches_vendor(path: str, vendor_ids) -> bool:
     """Cheap pre-filter on the interface path. USB paths carry ``vid_XXXX``; Bluetooth HID paths
     carry ``vid&000SXXXX`` (S = vendor-id source). The real vendor is confirmed by HidD_GetAttributes."""
     p = path.lower()
     for v in vendor_ids:
+        pids = _USB_ONLY_PIDS.get(v)
+        if pids is not None:
+            if f"vid_{v:04x}" in p and any(f"pid_{pid:04x}" in p for pid in pids):
+                return True
+            continue
         if f"vid_{v:04x}" in p or f"vid&0001{v:04x}" in p or f"vid&0002{v:04x}" in p:
             return True
     return False

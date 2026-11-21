@@ -144,6 +144,9 @@ def test_strict_product_and_collection_filtering_protects_other_05ac_keyboards()
     unrelated = [
         f108_info(path="apple", product="Aluminum Keyboard"),             # real Apple keyboard
         f108_info(path="qmk", product="QMK VIA Keyboard"),                # QMK Raw HID on 05AC:024F
+        f108_info(path="mid1", product="Custom F108Pro Keyboard"),        # contains F108Pro in the middle
+        f108_info(path="mid2", product="My F108Pro Dongle"),              # prefix before F108Pro Dongle
+        f108_info(path="sfx", product="F108Pro Dongle Clone"),            # suffix after F108Pro Dongle
         f108_info(path="empty", product=""),                              # missing product string
         f108_info(path="ff59", page=0xFF59, in_len=65, out_len=65),       # other vendor page of F108Pro
         f108_info(path="kbd", page=0x0001, usage=0x0006, in_len=9, out_len=2),
@@ -151,6 +154,19 @@ def test_strict_product_and_collection_filtering_protects_other_05ac_keyboards()
     ]
     assert aula.read(unrelated, time.monotonic() + 3, None, handle_factory=factory) == []
     assert opened == []
+
+    # Exact "F108Pro Dongle" (case/whitespace-normalized) is accepted
+    ok = aula.read([f108_info(path="ok", product="  f108pro   dongle  ")], time.monotonic() + 3,
+                   None, handle_factory=factory)
+    assert len(ok) == 1 and opened == ["ok"]
+
+
+def test_enumeration_prefilter_narrows_05ac_to_usb_pid_024f():
+    from taskbar_battery_widget import hid_win
+    f = hid_win._path_matches_vendor
+    assert f(r"\\?\hid#vid_05ac&pid_024f&mi_03#7&1&0&0000#{guid}", (0x05AC,)) is True
+    assert f(r"\\?\hid#vid_05ac&pid_0265&col01#7&1&0&0000#{guid}", (0x05AC,)) is False  # Magic Trackpad
+    assert f(r"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_dev_vid&000205ac_pid&024f", (0x05AC,)) is False
 
 
 def test_multiple_dongles_get_distinct_ids():

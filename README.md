@@ -393,7 +393,7 @@ Protocol facts come from public documentation; this is an independent implementa
 - Linux kernel drivers `hid-playstation`, `hid-sony` and `hid-logitech-hidpp`.
 - [OpenRazer](https://github.com/openrazer/openrazer).
 - [Tekk-Know/RazerBatteryTaskbar](https://github.com/Tekk-Know/RazerBatteryTaskbar).
-- [parsiya/f108-pro](https://github.com/parsiya/f108-pro), [deddroid/ak820-rs](https://github.com/deddroid/ak820-rs) and [gha-projects/ak820-mac](https://github.com/gha-projects/ak820-mac) (MIT): protocol documentation for the 2.4 GHz keyboard receiver.
+- [parsiya/f108-pro](https://github.com/parsiya/f108-pro), [deddroid/ak820-rs](https://github.com/deddroid/ak820-rs), [wsclx/ak820pro-modder](https://github.com/wsclx/ak820pro-modder) and [gha-projects/ak820-mac](https://github.com/gha-projects/ak820-mac) (MIT): protocol documentation for the 2.4 GHz keyboard receiver and wired USB interface.
 
 ## Disclaimer
 Not affiliated with, endorsed or sponsored by Logitech, Razer, Sony, Microsoft, AULA, HyperX/HP, SteelSeries,

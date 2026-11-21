@@ -12,16 +12,18 @@ reports prefixed by report ID ``0x00`` (33 bytes on Win32):
   last known percentage).
 
 Because ``05AC:024F`` and ``0xFF60:0x0061`` are reused by other keyboards (e.g. QMK Raw HID),
-this reader strictly checks the USB product string (``F108Pro``) before opening the interface.
+this reader strictly requires the exact USB product string ``"F108Pro Dongle"`` (normalized for
+case and whitespace) before opening the interface, and ``hid_win`` narrows ``0x05AC`` enumeration
+to USB ``PID_024F`` paths only.
 
 Protocol facts come from MIT-licensed public documentation (``parsiya/f108-pro``,
-``deddroid/ak820-rs`` and ``gha-projects/ak820-mac``) and live hardware verification; this is
-an independent implementation and only the whitelisted ``0x20`` battery query can ever be sent.
+``deddroid/ak820-rs``, ``wsclx/ak820pro-modder`` and ``gha-projects/ak820-mac``) and live
+hardware verification; this is an independent implementation and only the whitelisted ``0x20``
+battery query can ever be sent.
 """
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
 
@@ -43,13 +45,12 @@ REPORT_ID = 0x00
 ORDER_BATTERY = 0x20
 ALLOWED_ORDERS = frozenset({ORDER_BATTERY})
 
+EXPECTED_PRODUCT = "f108pro dongle"
 DEFAULT_NAME = "AULA F108 Pro"
 DEVICE_BUDGET_S = 1.2
 ATTEMPT_WAIT_MS = 350
 MAX_ATTEMPTS = 3
 MAX_SKIPPED_REPORTS = 8
-
-_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 
 def checksum(payload31: bytes) -> int:
@@ -90,8 +91,7 @@ def parse_battery_reply(buf: bytes | None) -> tuple[str, int | None] | None:
 
 
 def _is_f108pro_product(product: str) -> bool:
-    norm = _ALNUM_RE.sub("", (product or "").lower())
-    return "f108pro" in norm
+    return " ".join((product or "").lower().split()) == EXPECTED_PRODUCT
 
 
 def _matches(info) -> bool:
