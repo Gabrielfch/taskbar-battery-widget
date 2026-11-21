@@ -18,7 +18,7 @@ def test_unrelated_hid_runs_no_vendor_reader(rig):
 
 @pytest.mark.parametrize("vid,reader", [
     (0x1038, "steelseries"), (0x1B1C, "corsair"), (0x3329, "audeze"), (0x0B0E, "jabra"),
-    (0x054C, "sony"), (0x17EF, "misc"), (0x3837, "misc"), (0x291D, "misc"),
+    (0x054C, "sony"), (0x17EF, "misc"), (0x3837, "misc"), (0x291D, "misc"), (0x05AC, "aula"),
     (0x0951, "hyperx"), (0x03F0, "hyperx"),
 ])
 def test_reader_called_only_when_vid_enumerated(rig, vid, reader):
@@ -121,6 +121,7 @@ def test_xinput_never_idle_cached(monkeypatch):
     ("hyperx:0696", "03f0:0696"), ("hyperx:018b", "03f0:018b"), ("hyperx:098d", "03f0:098d"),
     ("hyperx:08be", "03f0:08be"),
     ("lenovo:a07d", "17ef:a07d"), ("mchose:6045", "3837:6045"), ("mchose:385d", "291d:385d"),
+    ("aula:024f", "05ac:024f"), ("aula:024f:a1b2c3", "05ac:024f"),
     ("razer:0565", "1532:0565"),
 ])
 def test_dongle_key_every_prefix(dev_id, key):
@@ -323,7 +324,7 @@ def test_is_beta_device_per_model():
     for stable_id in ("logi:0a66", "logi:c539:01", "logi:0b1c", "corsair:0a14",
                       "corsair:0a64", "hyperx:16c4", "hyperx:0696", "hyperx:08be",
                       "steelseries:220e", "steelseries:230a", "steelseries:2269", "xinput:0",
-                      "sony:0d5e", "jabra:2e56", "razer:0565"):
+                      "sony:0d5e", "jabra:2e56", "aula:024f", "razer:0565"):
         assert not wireless.is_beta_device(d(stable_id)), stable_id
     assert not wireless.is_beta_device(d("sony:05c4", "usb"))
     assert not wireless.is_beta_device(d("sony:0ce6", "bluetooth"))

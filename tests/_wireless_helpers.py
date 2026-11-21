@@ -3,13 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from taskbar_battery_widget import (audeze, corsair, hid_win, hidpp, hyperx, jabra, logitech_headsets,
-                                    misc_headsets, sony, steelseries, wireless, xinput)
+from taskbar_battery_widget import (audeze, aula, corsair, hid_win, hidpp, hyperx, jabra,
+                                    logitech_headsets, misc_headsets, sony, steelseries, wireless, xinput)
 from taskbar_battery_widget.models import Device
 
 real_scan = wireless.scan_wireless
 
-EXTRA_ONLY = {"steelseries", "corsair", "audeze", "jabra", "sony", "misc"}
+EXTRA_ONLY = {"steelseries", "corsair", "audeze", "jabra", "sony", "misc", "aula"}
 
 
 def info(vid, pid=0x0001):
@@ -50,6 +50,7 @@ def rig(monkeypatch):
     reader("jabra", jabra)
     reader("sony", sony)
     reader("misc", misc_headsets)
+    reader("aula", aula)
     reader("lgh", logitech_headsets)
     reader("hyperx", hyperx, "read_hyperx")
     reader("xinput", xinput)
