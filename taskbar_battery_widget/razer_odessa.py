@@ -1,8 +1,24 @@
 """Direct battery reader for Razer ODESSA-family 2.4 GHz headset dongles.
 
-Protocol (64-byte reports, report id 2, vendor page 0xFF14). Only read-only GET commands are
-ever sent (whitelist): 0x20 wireless connection status (dongle), 0x21 battery status and
-0x2A charging status (headset).
+Two 64-byte interrupt-report protocols (report id 2), implemented independently from public
+protocol documentation and verified against live hardware:
+
+* HyperSpeed (`1532:0565`, vendor page `0xFF14`): byte 9 selects dongle (`0x00`) vs headset
+  (`0x80`), XOR checksum at index 62.
+* BlackShark V2 Pro 2023 (`1532:0555`, RZ04-0453, vendor page `0xFF00` usage `0x0001`): MXIC
+  `'PA'`/`'PI'` framing (`cmd_type = 0x03` GETs, replies typed `0x08`). Only pure GETs are
+  sent; a cold-plugged dongle that has not been initialised in the current USB session (e.g.
+  by Razer Synapse's volatile `0x02/0xE1` host-query enable) does not answer and is skipped
+  without sending any state-changing frame.
+
+Public protocol references (facts only, no GPL code copied):
+* `https://github.com/Ashesh3/razer-device-control` (MIT, `src/protocol.rs` & `src/device.rs`)
+* `https://github.com/openrazer/openrazer/pull/2862` and
+  `https://github.com/Sapd/HeadsetControl/pull/626` (protocol notes for `'PI'` type `0x08`
+  replies and `0x2A` charging values).
+
+Only read-only GET commands (`0x20` wireless connection status, `0x21` battery status, `0x2A`
+charging status) are whitelisted; building or sending anything else raises `ValueError`.
 """
 from __future__ import annotations
 
@@ -27,10 +43,22 @@ CHARGING_ON = 1
 STATUS_OK = 2
 STATUS_BUSY = (1, 3)
 DEVICE_BUDGET_S = 1.0
+PA_DEVICE_BUDGET_S = 1.2
 MAX_BUSY_RETRIES = 3
 
-# dongle usb pid -> (display name, headset pid)
-ODESSA_DONGLES: dict[int, tuple[str, int]] = {
+PA_PIDS = frozenset({0x0555})
+PA_VENDOR_PAGE = 0xFF00
+PA_USAGE = 0x0001
+PA_DIR_OUT = 0x80
+PA_REQ_MAGIC = b"PA"
+PA_REP_MAGIC = b"PI"
+PA_REP_TYPE = 0x08
+PA_CMD_TYPE_GET = 0x03
+PA_REPLY_MS = 250
+
+# dongle usb pid -> (display name, device id suffix)
+ODESSA_DONGLES: dict[int, tuple[str, int | str]] = {
+    0x0555: ("Razer BlackShark V2 Pro", "0555"),
     0x0565: ("Razer BlackShark V2 HyperSpeed", 1390),
 }
 
@@ -124,6 +152,8 @@ def _query(h, cmd: bytes, remote: bool, deadline: float,
 
 
 def _read_one(info, deadline: float, cancel, handle_factory) -> Device | None:
+    if info.pid in PA_PIDS:
+        return _read_pa(info, deadline, cancel, handle_factory)
     name, syn_pid = ODESSA_DONGLES[info.pid]
     dev_id = f"razer:{syn_pid}"
     with handle_factory(info.path, in_len=info.in_len) as h:
@@ -142,6 +172,110 @@ def _read_one(info, deadline: float, cancel, handle_factory) -> Device | None:
                       charging=charging, link="2.4ghz", source="hid")
 
 
+def build_pa_request(cmd_id: int) -> bytes:
+    """64-byte 'PA' GET output report for a whitelisted command (0x20, 0x21, 0x2A)."""
+    if cmd_id not in ALLOWED_COMMANDS:
+        raise ValueError(f"command 0x{cmd_id:02x} is not allowed")
+    b = bytearray(REPORT_LEN)
+    b[0] = REPORT_ID
+    b[1] = PA_DIR_OUT
+    b[2] = 0x08
+    b[5:7] = PA_REQ_MAGIC
+    b[7] = 0x08
+    b[9] = PA_CMD_TYPE_GET
+    b[10] = cmd_id
+    return bytes(b)
+
+
+ALLOWED_PA_FRAMES = frozenset({build_pa_request(c) for c in ALLOWED_COMMANDS})
+
+
+def parse_pa_reply(buf: bytes | None, cmd_id: int) -> bytes | None:
+    """Payload bytes when `buf` is a 'PI' GET reply to `cmd_id`; None for other reports."""
+    if not buf or len(buf) != REPORT_LEN:
+        return None
+    if buf[0] != REPORT_ID or buf[2:4] != PA_REP_MAGIC or buf[4] != PA_REP_TYPE:
+        return None
+    end = 2 + buf[1]
+    if end < 15 or end > REPORT_LEN:
+        return None
+    if buf[12] != cmd_id or buf[13] != 1:
+        return None
+    n = buf[14]
+    if 15 + n > end:
+        return None
+    return bytes(buf[15:15 + n])
+
+
+def _expired(deadline: float, cancel: threading.Event | None) -> bool:
+    return (cancel is not None and cancel.is_set()) or time.monotonic() >= deadline
+
+
+def _write_pa(h, pkt: bytes, deadline: float, cancel: threading.Event | None) -> bool:
+    if pkt not in ALLOWED_PA_FRAMES:
+        raise ValueError("PA frame is not allowed")
+    if _expired(deadline, cancel):
+        return False
+    remaining_ms = int((deadline - time.monotonic()) * 1000)
+    if remaining_ms <= 0:
+        return False
+    return bool(h.write(pkt, timeout_ms=max(1, min(1000, remaining_ms))))
+
+
+def _query_pa_once(h, cmd_id: int, wait_ms: int, deadline: float,
+                   cancel: threading.Event | None) -> bytes | None:
+    pkt = build_pa_request(cmd_id)
+    if _expired(deadline, cancel):
+        return None
+    h.drain()
+    if not _write_pa(h, pkt, deadline, cancel):
+        return None
+    until = min(deadline, time.monotonic() + wait_ms / 1000.0)
+    for _ in range(8):
+        if _expired(deadline, cancel):
+            return None
+        left_ms = int((until - time.monotonic()) * 1000)
+        if left_ms <= 0:
+            return None
+        r = h.read(timeout_ms=max(1, min(wait_ms, left_ms)))
+        if r is None:
+            return None
+        parsed = parse_pa_reply(r, cmd_id)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _read_pa(info, deadline: float, cancel: threading.Event | None,
+             handle_factory) -> Device | None:
+    name, syn_pid = ODESSA_DONGLES[info.pid]
+    dev_id = f"razer:{syn_pid}"
+    with handle_factory(info.path, in_len=info.in_len) as h:
+        conn = _query_pa_once(h, CMD_CONNECTION, PA_REPLY_MS, deadline, cancel)
+        if not conn:
+            return None
+        if conn[0] != 1:
+            return Device(id=dev_id, name=name, kind="headset", battery=None, connected=False,
+                          link="2.4ghz", source="hid")
+        bat = _query_pa_once(h, CMD_BATTERY, PA_REPLY_MS, deadline, cancel)
+        if bat is None:
+            bat = _query_pa_once(h, CMD_BATTERY, PA_REPLY_MS, deadline, cancel)
+        if not bat or bat[0] > 100:
+            return None
+        chg = _query_pa_once(h, CMD_CHARGING, PA_REPLY_MS, deadline, cancel)
+        charging = bool(chg) and chg[0] == CHARGING_ON
+        return Device(id=dev_id, name=name, kind="headset", battery=int(bat[0]), connected=True,
+                      charging=charging, link="2.4ghz", source="hid")
+
+
+def _matches_collection(info) -> bool:
+    if info.in_len != REPORT_LEN or info.out_len != REPORT_LEN:
+        return False
+    if info.pid in PA_PIDS:
+        return info.usage_page == PA_VENDOR_PAGE and info.usage == PA_USAGE
+    return info.usage_page == VENDOR_PAGE
+
+
 def read_odessa(infos, deadline: float, cancel: threading.Event | None = None,
                 handle_factory=None) -> list[Device]:
     """Read every known ODESSA dongle in `infos`. Never raises; failures yield no device."""
@@ -154,12 +288,11 @@ def read_odessa(infos, deadline: float, cancel: threading.Event | None = None,
                     key=lambda x: x.path):
         if cancel is not None and cancel.is_set() or time.monotonic() >= deadline:
             break
-        if i.pid in done or i.usage_page != VENDOR_PAGE or i.in_len != REPORT_LEN \
-                or i.out_len != REPORT_LEN:
+        if i.pid in done or not _matches_collection(i):
             continue
+        budget = PA_DEVICE_BUDGET_S if i.pid in PA_PIDS else DEVICE_BUDGET_S
         try:
-            dev = _read_one(i, min(deadline, time.monotonic() + DEVICE_BUDGET_S), cancel,
-                            handle_factory)
+            dev = _read_one(i, min(deadline, time.monotonic() + budget), cancel, handle_factory)
         except Exception:
             log.debug("odessa read failed for %04x", i.pid, exc_info=True)
             continue

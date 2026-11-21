@@ -121,7 +121,7 @@ def test_xinput_never_idle_cached(monkeypatch):
     ("hyperx:0696", "03f0:0696"), ("hyperx:018b", "03f0:018b"), ("hyperx:098d", "03f0:098d"),
     ("hyperx:08be", "03f0:08be"),
     ("lenovo:a07d", "17ef:a07d"), ("mchose:6045", "3837:6045"), ("mchose:385d", "291d:385d"),
-    ("razer:0565", "1532:0565"),
+    ("razer:0555", "1532:0555"), ("razer:0565", "1532:0565"), ("razer:1390", "1532:0565"),
 ])
 def test_dongle_key_every_prefix(dev_id, key):
     assert wireless.dongle_key(dev_id) == key
@@ -323,7 +323,7 @@ def test_is_beta_device_per_model():
     for stable_id in ("logi:0a66", "logi:c539:01", "logi:0b1c", "corsair:0a14",
                       "corsair:0a64", "hyperx:16c4", "hyperx:0696", "hyperx:08be",
                       "steelseries:220e", "steelseries:230a", "steelseries:2269", "xinput:0",
-                      "sony:0d5e", "jabra:2e56", "razer:0565"):
+                      "sony:0d5e", "jabra:2e56", "razer:0555", "razer:0565"):
         assert not wireless.is_beta_device(d(stable_id)), stable_id
     assert not wireless.is_beta_device(d("sony:05c4", "usb"))
     assert not wireless.is_beta_device(d("sony:0ce6", "bluetooth"))

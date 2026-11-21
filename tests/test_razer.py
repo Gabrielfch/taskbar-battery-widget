@@ -100,6 +100,8 @@ def test_scan_razer_skips_unsupported_and_failures(monkeypatch):
     monkeypatch.setattr(razer, "SET_GET_DELAY_S", 0)
     # collection without the 90-byte feature report (e.g. BlackShark V2 HyperSpeed)
     assert razer.scan_razer([rinfo(9, 0x0565, "Razer BlackShark V2 HS 2.4")], lambda p: FakeRazer()) == []
+    # ODESSA dongles (0555, 0565) are always skipped by scan_razer so razer_odessa handles them
+    assert razer.scan_razer([rinfo(91, 0x0555, "Razer BlackShark V2 Pro 2.4")], lambda p: FakeRazer()) == []
     # device answers with an error on every transaction id
     assert razer.scan_razer([rinfo(91)], lambda p: FakeRazer(accept_tid=0x00)) == []
 
@@ -180,7 +182,7 @@ class RecordingRazer(FakeRazer):
 def test_txn_order_known_pid_first():
     assert razer._txn_order(0x007C) == (0x3F, 0x1F, 0xFF, 0x9F)
     assert razer._txn_order(0x00A4) == (0x1F, 0x3F, 0xFF, 0x9F)
-    assert razer._txn_order(0x0555) == (0x3F, 0x1F, 0xFF, 0x9F)
+    assert razer._txn_order(0x0528) == (0x3F, 0x1F, 0xFF, 0x9F)
 
 
 def test_txn_order_unknown_pid_unchanged():
@@ -217,8 +219,8 @@ def test_table_dock_is_mouse_and_blackshark_is_headset(monkeypatch):
     monkeypatch.setattr(razer, "SET_GET_DELAY_S", 0)
     dock = razer.scan_razer([rinfo(91, 0x00A4, "", path="a")], lambda p: FakeRazer(accept_tid=0x1F))[0]
     assert dock.name == razer.sanitize_name("Razer Mouse Dock Pro") and dock.kind == "mouse"
-    hs = razer.scan_razer([rinfo(91, 0x0555, "", path="b")], lambda p: FakeRazer(accept_tid=0x3F))[0]
-    assert hs.name == razer.sanitize_name("Razer BlackShark V2 Pro (RZ04-0453)") and hs.kind == "headset"
+    hs = razer.scan_razer([rinfo(91, 0x0528, "", path="b")], lambda p: FakeRazer(accept_tid=0x3F))[0]
+    assert hs.name == razer.sanitize_name("Razer BlackShark V2 Pro (RZ04-0322)") and hs.kind == "headset"
 
 
 def test_specific_product_wins_over_table(monkeypatch):

@@ -256,13 +256,14 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 ### Razer
 | Device | Method | Status |
 | --- | --- | --- |
+| BlackShark V2 Pro (2023, RZ04-0453) — 2.4 GHz dongle 1532:0555 (battery + charging; pure GETs only: requires Razer Synapse to have initialised the dongle in the current USB session) | Direct dongle protocol | ✅ |
 | BlackShark V2 HyperSpeed — 2.4 GHz dongle 1532:0565 (battery + charging) | Direct dongle protocol | ✅ |
 | Basilisk V3 Pro — 2.4 GHz dongle 1532:00AB (confirmed in [#1](https://github.com/Gabrielfch/taskbar-battery-widget/issues/1)) | Classic 90-byte protocol (mouse collection) | ✅ |
 | Basilisk V3 Pro wired (1532:00AA), Basilisk V3 X HyperSpeed, Basilisk X HyperSpeed, Basilisk Ultimate (+ dongle) | Classic 90-byte protocol (vendor or mouse collection) | 🟢 |
 | DeathAdder V2 Pro (wired/wireless), DeathAdder V2 X HyperSpeed, DeathAdder V3 Pro (wired/wireless) | Classic 90-byte protocol | 🟢 |
 | Naga V2 Pro (wired/wireless), Viper V2 Pro (wired/wireless), Viper Ultimate (wired/wireless/dongle) | Classic 90-byte protocol | 🟢 |
 | Cobra Pro (wired/wireless), Mouse Dock Pro, HyperPolling Wireless Dongle | Classic 90-byte protocol | 🟢 |
-| BlackShark V2 Pro (RZ04-0322 and RZ04-0453) | Classic 90-byte protocol | 🟢 |
+| BlackShark V2 Pro (2020, RZ04-0322) | Classic 90-byte protocol | 🟢 |
 | Other Razer devices exposing the classic 90-byte feature report | Classic protocol (generic) | 🟢 |
 | BlackShark V2 Pro PlayStation edition (needs a mode-changing command) | — | ❌ |
 | Other Razer headsets with their own dongle protocol | — | ❌ |
@@ -387,6 +388,7 @@ Protocol facts come from public documentation; this is an independent implementa
 - Linux kernel drivers `hid-playstation`, `hid-sony` and `hid-logitech-hidpp`.
 - [OpenRazer](https://github.com/openrazer/openrazer).
 - [Tekk-Know/RazerBatteryTaskbar](https://github.com/Tekk-Know/RazerBatteryTaskbar).
+- [Ashesh3/razer-device-control](https://github.com/Ashesh3/razer-device-control) (MIT): protocol notes for the BlackShark V2 Pro 2023 (`1532:0555`) `'PA'` framing.
 
 ## Disclaimer
 Not affiliated with, endorsed or sponsored by Logitech, Razer, Sony, Microsoft, HyperX/HP, SteelSeries,
