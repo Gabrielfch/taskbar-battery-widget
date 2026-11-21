@@ -246,6 +246,7 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | --- | --- |
 | G903 LIGHTSPEED mouse (receiver C539) | ✅ |
 | G915 WIRELESS keyboard (receiver C547) | ✅ |
+| G502 X PLUS LIGHTSPEED mouse (receiver C547) | ✅ |
 | Other LIGHTSPEED, Unifying and Bolt receivers: PIDs C52B, C52F, C531, C532, C534, C539, C53A, C53D, C53F, C541, C545, C547, C548, C54D, C70E, C713 (or any HID++ device named "Receiver") | 🟢 |
 | Recent Logitech mice, keyboards and LIGHTSPEED headsets (G/MX/ERGO/POP series) with HID++ 2.0 | 🟢 |
 | Old HID++ 1.0-only devices (pre-2013 Unifying) — battery registers 0x07 / 0x0D (read only) | 🟢 |
