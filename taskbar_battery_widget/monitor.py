@@ -228,6 +228,8 @@ class DeviceMonitor(QObject):
             wireless.set_sources(hid_on, bt_on)
             wireless.set_beta_readers(
                 False if self._cfg is None else bool(self._cfg.get("beta_readers")))
+            wireless.set_razer_dongle_wake(
+                False if self._cfg is None else bool(self._cfg.get("razer_dongle_wake")))
             wireless.set_dualsense_bt_extended(
                 True if self._cfg is None else bool(self._cfg.get("dualsense_bt_extended")))
             if self._cfg is not None:

@@ -201,6 +201,7 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
     sources = Page(id="sources", title_key="menu_sources", icon="sources", children=[
         cfg_toggle("wireless_enabled", "wireless_devices"),
         cfg_toggle("bluetooth_enabled", "bluetooth_source"),
+        cfg_toggle("razer_dongle_wake", "razer_dongle_wake", "razer_dongle_wake_tip"),
     ])
 
     alerts = Page(id="alerts", title_key="menu_alerts", icon="alerts", children=[

@@ -44,6 +44,7 @@ _dualsense_bt_extended = True           # allow the one-off feature read enablin
 _hid_enabled = True                     # "2.4 GHz and USB" source: dongle and wired readers
 _bluetooth = True                       # Bluetooth source: gates the BT-transport readers' output
 _beta = False                           # opt-in: readers for the least certain protocols
+_razer_wake = False                     # opt-in: Razer's own activation frame for the 0555 dongle
 IDLE_GRACE_DEFAULT_S = 30 * 60.0
 _idle_grace_s = IDLE_GRACE_DEFAULT_S    # how long a silent device stays listed as idle
 
@@ -117,6 +118,11 @@ def _purge_beta() -> None:
     """Forget cached beta devices, PUSH_ONLY ones included (caller holds _lock)."""
     for dev_id in [k for k, (d, _ts) in _cache.items() if is_beta_device(d)]:
         del _cache[dev_id]
+
+
+def set_razer_dongle_wake(enabled: bool) -> None:
+    global _razer_wake
+    _razer_wake = bool(enabled)
 
 
 def set_dualsense_bt_extended(enabled: bool) -> None:
@@ -405,6 +411,7 @@ def _scan_locked() -> list[Device]:
         return []
 
     bt_ext = _dualsense_bt_extended
+    razer_wake = _razer_wake
     # one absolute deadline for every reader of this cycle, never past the scan's hard ceiling
     t_end = min(now + VENDOR_BUDGET_S, t_hard)
     calls: list[tuple[GuardedCall, threading.Event]] = []
@@ -457,7 +464,7 @@ def _scan_locked() -> list[Device]:
 
     def odessa(sel):
         from .razer_odessa import read_odessa
-        return read_odessa(sel, t_end, cancel)
+        return read_odessa(sel, t_end, cancel, wake=razer_wake)
 
     def razer(sel):
         from .razer import scan_razer

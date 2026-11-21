@@ -39,7 +39,7 @@ def make(**kw):
 
 # Every entry of each settings page, by id (config key for toggles).
 SETTINGS_TREE = {
-    "sources": {"wireless_enabled", "bluetooth_enabled"},
+    "sources": {"wireless_enabled", "bluetooth_enabled", "razer_dongle_wake"},
     "alerts": {"notifications_enabled", "full_charge_alert", "low_threshold"},
     "logs": {"open_device_log", "open_logs_folder", "detail_log_enabled", "open_detail_folder"},
     "personalization": {"app_theme", "pill_style", "palette", "icon_style", "custom_icons", "animations", "position",
@@ -56,7 +56,7 @@ def test_settings_tree_structure():
         page = m.find(page_id)
         assert isinstance(page, Page)
         assert {c.id for c in page.children if not isinstance(c, Separator)} == expected, page_id
-    kinds = {Toggle: {"wireless_enabled", "bluetooth_enabled", "notifications_enabled", "full_charge_alert",
+    kinds = {Toggle: {"wireless_enabled", "bluetooth_enabled", "razer_dongle_wake", "notifications_enabled", "full_charge_alert",
                       "detail_log_enabled", "start_with_windows", "show_in_fullscreen", "stack_devices"},
              Choice: {"low_threshold", "app_theme", "pill_style", "palette", "icon_style", "animations", "placement", "float_anchor", "monitor", "fullscreen_placement",
                        "panel_size", "ui_scale", "language"},

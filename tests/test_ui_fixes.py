@@ -260,7 +260,7 @@ def test_tray_menu_structure(qapp, tmp_path):
     assert kids == ["Fuentes", "Alertas", "Registros", "Iniciar con Windows", "Personalización",
                     "Tutorial", "Novedades"]
     pages = {c.id: c for c in root.children if hasattr(c, "title")}
-    assert [c.label() for c in pages["sources"].children] == ["2.4 GHz y USB", "Bluetooth"]
+    assert [c.label() for c in pages["sources"].children] == ["2.4 GHz y USB", "Bluetooth", "Activar dongles Razer sin Synapse"]
     alerts = pages["alerts"].children
     assert alerts[0].label().startswith("Avisar") and hasattr(alerts[2], "options")
     assert [c.label() for c in pages["logs"].children] == [

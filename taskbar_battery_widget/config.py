@@ -25,6 +25,7 @@ DEFAULTS = {
     "wireless_enabled": True,
     "dualsense_bt_extended": True,  # allow the one-off feature read that enables DualSense BT battery
     "beta_readers": False,          # opt-in: readers for the least certain protocols (see README)
+    "razer_dongle_wake": False,     # opt-in: send Razer's own volatile activation frame (see reader-contract)
     "bluetooth_enabled": True,      # False: no Bluetooth scan at all
     "detail_log_enabled": False,    # per-device detailed CSV log (global switch)
     "detail_log_devices": [],       # visibility keys of the devices being logged

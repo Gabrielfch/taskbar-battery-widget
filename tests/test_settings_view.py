@@ -120,7 +120,7 @@ def test_enter_page_and_back_with_arrow(panel):
     v = open_settings(panel)
     click(v.row("sources"))
     assert v.path_ids == ["root", "sources"] and v.title_text() == "Sources"
-    assert list(v.rows()) == ["wireless_enabled", "bluetooth_enabled"]
+    assert list(v.rows()) == ["wireless_enabled", "bluetooth_enabled", "razer_dongle_wake"]
     v.back_button().click()
     assert v.path_ids == ["root"] and panel.in_settings
     v.back_button().click()                              # from the root: the device list

@@ -48,7 +48,10 @@ source are not queried at all: they are not opened or read, not just hidden.
 
 ## Safety
 Device readers send only read/query commands from a fixed whitelist; they never change device settings or
-touch firmware. Most readers are on by default but are not yet confirmed on real hardware (🟢). Beta readers
+touch firmware. The only exception is opt-in and off by default: *Settings > Sources > Activate Razer dongles
+without Synapse* sends Razer's own activation command (the one Synapse sends; at most once per plug-in) to the
+BlackShark V2 Pro 2.4 GHz dongle; it is reported to reset when the dongle is unplugged (see
+[reader contract](docs/reader-contract.md)). Most readers are on by default but are not yet confirmed on real hardware (🟢). Beta readers
 (🧪) are **disabled by default** and only run when `beta_readers` is enabled (see [Configuration](#configuration)).
 
 ## Features
@@ -79,7 +82,7 @@ touch firmware. Most readers are on by default but are not yet confirmed on real
 - *Settings* (gear button) opens inside the panel and is navigated there: a back arrow returns to the previous
   page, pages open with a chevron, check boxes toggle in place and choice lists unfold below and stay open.
   Pages: *Sources* (*2.4 GHz and USB* — USB dongles and wired controllers — and *Bluetooth*, both on by
-  default), *Alerts*, *Logs*, *Start with Windows*, *Personalization*, *Tutorial* and *What's new*.
+  default, plus the opt-in *Activate Razer dongles without Synapse*), *Alerts*, *Logs*, *Start with Windows*, *Personalization*, *Tutorial* and *What's new*.
 - The panel has a fixed size, a fraction of the screen height (*Personalization ▸ Panel size*: compact, normal,
   large), and scrolls when the list or a page is longer.
 - Theme (*Settings ▸ Personalization ▸ Theme*): **Automatic** (default, follows Windows), **Light** or **Dark**. It
@@ -258,7 +261,7 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 ### Razer
 | Device | Method | Status |
 | --- | --- | --- |
-| BlackShark V2 Pro (2023, RZ04-0453) — 2.4 GHz dongle 1532:0555 (battery + charging; pure GETs only: requires Razer Synapse to have initialised the dongle in the current USB session) | Direct dongle protocol | ✅ |
+| BlackShark V2 Pro (2023, RZ04-0453) — 2.4 GHz dongle 1532:0555 (battery + charging; pure GETs only: needs Razer Synapse to have initialised the dongle in the current USB session, or enable *Activate Razer dongles without Synapse*) | Direct dongle protocol | ✅ |
 | BlackShark V2 HyperSpeed — 2.4 GHz dongle 1532:0565 (battery + charging) | Direct dongle protocol | ✅ |
 | Basilisk V3 Pro — 2.4 GHz dongle 1532:00AB (confirmed in [#1](https://github.com/Gabrielfch/taskbar-battery-widget/issues/1)) | Classic 90-byte protocol (mouse collection) | ✅ |
 | Basilisk V3 Pro wired (1532:00AA), Basilisk V3 X HyperSpeed, Basilisk X HyperSpeed, Basilisk Ultimate (+ dongle) | Classic 90-byte protocol (vendor or mouse collection) | 🟢 |

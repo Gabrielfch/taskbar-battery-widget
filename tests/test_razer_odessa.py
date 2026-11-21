@@ -198,7 +198,7 @@ def _scan(monkeypatch, direct):
     monkeypatch.setattr(hw, "enumerate_hid", lambda v=None: [info()])
     monkeypatch.setattr(hp, "scan_logitech", lambda i, cancel=None: [])
     monkeypatch.setattr(rz, "scan_razer", lambda i, cancel=None: [])
-    monkeypatch.setattr(ro, "read_odessa", lambda i, d, cancel=None: direct)
+    monkeypatch.setattr(ro, "read_odessa", lambda i, d, cancel=None, **kw: direct)
     try:
         return real_scan()
     finally:

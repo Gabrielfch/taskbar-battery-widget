@@ -18,6 +18,18 @@ Rules
 - Opens only the exact collection(s) the protocol needs (match vid, pid, usage page, usage, report lengths).
 - Sends only read/query commands from a module-level whitelist; building any other request raises
   `ValueError` (unit-tested). Never set configuration, never firmware/DFU commands.
+- The ONE explicit, opt-in exception (`razer_dongle_wake`, default off, `razer_odessa.py`): the Razer
+  BlackShark V2 Pro 2.4 GHz dongle (`1532:0555`) only answers GETs after Razer's own `set_remote_mode`
+  frame (`0x02/0xE1 = 1`) has been sent in the current USB session (normally by Synapse). When the user
+  enables *Settings > Sources > Activate Razer dongles without Synapse* and the dongle gives no reply to
+  the connection GET, the reader sends that fixed frame (twice, 35 ms apart, as Synapse does), waits
+  briefly (inside the device budget) and retries the GETs. According to the contributor's hardware tests
+  (PR #3) the state is volatile: it is lost when the dongle is unplugged or power-cycled. It is sent at most
+  once per device path per app run; a scan that no longer sees the path allows it again (a very quick
+  re-plug between two scans may therefore not resend it). If no frame could be written, a later scan may
+  try again. Never after a dropped battery GET, and never when the option is off.
+  The frame is kept out of the GET whitelist (`ALLOWED_PA_FRAMES`) and only `_send_wake` can write it,
+  which raises `ValueError` unless the flag is on. Any other SET still raises `ValueError`.
 - `handle_factory(path, in_len) -> handle` lets tests inject a fake handle with
   `write(data, timeout_ms)`, `read(timeout_ms)`, `drain()`, `get_feature(report_id, length)`,
   `set_feature(data)` (only if the protocol requires a feature *query*), `get_input_report(id, length)`,

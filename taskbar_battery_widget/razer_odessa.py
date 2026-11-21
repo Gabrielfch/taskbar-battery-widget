@@ -9,7 +9,8 @@ protocol documentation and verified against live hardware:
   `'PA'`/`'PI'` framing (`cmd_type = 0x03` GETs, replies typed `0x08`). Only pure GETs are
   sent; a cold-plugged dongle that has not been initialised in the current USB session (e.g.
   by Razer Synapse's volatile `0x02/0xE1` host-query enable) does not answer and is skipped
-  without sending any state-changing frame.
+  without sending any state-changing frame, unless the user opted in to `razer_dongle_wake`
+  (see `_send_wake`).
 
 Public protocol references (facts only, no GPL code copied):
 * `https://github.com/Ashesh3/razer-device-control` (MIT, `src/protocol.rs` & `src/device.rs`)
@@ -18,7 +19,8 @@ Public protocol references (facts only, no GPL code copied):
   replies and `0x2A` charging values).
 
 Only read-only GET commands (`0x20` wireless connection status, `0x21` battery status, `0x2A`
-charging status) are whitelisted; building or sending anything else raises `ValueError`.
+charging status) are whitelisted; building or sending anything else raises `ValueError`. The only
+exception is the opt-in `0x02/0xE1` activation frame, sent through a dedicated function.
 """
 from __future__ import annotations
 
@@ -55,6 +57,7 @@ PA_REP_MAGIC = b"PI"
 PA_REP_TYPE = 0x08
 PA_CMD_TYPE_GET = 0x03
 PA_REPLY_MS = 250
+PA_WAKE_DELAY_S = 0.035
 
 # dongle usb pid -> (display name, device id suffix)
 ODESSA_DONGLES: dict[int, tuple[str, int | str]] = {
@@ -151,9 +154,9 @@ def _query(h, cmd: bytes, remote: bool, deadline: float,
     return None
 
 
-def _read_one(info, deadline: float, cancel, handle_factory) -> Device | None:
+def _read_one(info, deadline: float, cancel, handle_factory, wake: bool = False) -> Device | None:
     if info.pid in PA_PIDS:
-        return _read_pa(info, deadline, cancel, handle_factory)
+        return _read_pa(info, deadline, cancel, handle_factory, wake)
     name, syn_pid = ODESSA_DONGLES[info.pid]
     dev_id = f"razer:{syn_pid}"
     with handle_factory(info.path, in_len=info.in_len) as h:
@@ -188,6 +191,14 @@ def build_pa_request(cmd_id: int) -> bytes:
 
 
 ALLOWED_PA_FRAMES = frozenset({build_pa_request(c) for c in ALLOWED_COMMANDS})
+
+# Razer's own `set_remote_mode` (cmd_type 0x02, 0xE1 = 1). Deliberately NOT in ALLOWED_PA_FRAMES:
+# only `_send_wake` may write it, and only when the user enabled `razer_dongle_wake`.
+_ALLOWED_WAKE_FRAME = bytes([
+    REPORT_ID, PA_DIR_OUT, 0x07, 0x00, 0x00, 0x50, 0x41, 0x0E, 0x00, 0x02, 0xE1, 0x01,
+]).ljust(REPORT_LEN, b"\0")
+_woken: set = set()                 # device paths already woken in this USB session
+_woken_lock = threading.Lock()
 
 
 def parse_pa_reply(buf: bytes | None, cmd_id: int) -> bytes | None:
@@ -246,12 +257,53 @@ def _query_pa_once(h, cmd_id: int, wait_ms: int, deadline: float,
     return None
 
 
+WAKE_FRAMES = 2
+
+
+def _send_wake(h, deadline: float, cancel: threading.Event | None, enabled: bool) -> bool | None:
+    """The ONE opt-in state-changing frame: Razer's own volatile `set_remote_mode` enable.
+
+    Refuses (ValueError) unless the user enabled `razer_dongle_wake`; never goes through
+    `_write_pa`, whose whitelist only holds GETs."""
+    if not enabled:
+        raise ValueError("PA wake frame is disabled")
+    for i in range(WAKE_FRAMES):    # two frames 35 ms apart, as in the hardware-verified version (PR #3)
+        if _expired(deadline, cancel):
+            return False if i else None
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0 or not h.write(_ALLOWED_WAKE_FRAME, timeout_ms=max(1, min(1000, remaining_ms))):
+            return False if i else None     # None: nothing was written, the claim can be released
+        delay = min(PA_WAKE_DELAY_S, max(0.0, deadline - time.monotonic()))
+        if delay > 0:
+            time.sleep(delay)
+    h.drain()
+    return not _expired(deadline, cancel)
+
+
+def _claim_wake(path, enabled: bool) -> bool:
+    """True once per path per USB session (until the path disappears from the scan)."""
+    if not enabled:
+        return False
+    with _woken_lock:
+        if path in _woken:
+            return False
+        _woken.add(path)
+        return True
+
+
 def _read_pa(info, deadline: float, cancel: threading.Event | None,
-             handle_factory) -> Device | None:
+             handle_factory, wake: bool = False) -> Device | None:
     name, syn_pid = ODESSA_DONGLES[info.pid]
     dev_id = f"razer:{syn_pid}"
     with handle_factory(info.path, in_len=info.in_len) as h:
         conn = _query_pa_once(h, CMD_CONNECTION, PA_REPLY_MS, deadline, cancel)
+        if conn is None and not _expired(deadline, cancel) and _claim_wake(info.path, wake):
+            sent = _send_wake(h, deadline, cancel, wake)
+            if sent is None:            # no frame went out: allow a later scan to try again
+                with _woken_lock:
+                    _woken.discard(info.path)
+            elif sent:
+                conn = _query_pa_once(h, CMD_CONNECTION, PA_REPLY_MS, deadline, cancel)
         if not conn:
             return None
         if conn[0] != 1:
@@ -277,11 +329,18 @@ def _matches_collection(info) -> bool:
 
 
 def read_odessa(infos, deadline: float, cancel: threading.Event | None = None,
-                handle_factory=None) -> list[Device]:
-    """Read every known ODESSA dongle in `infos`. Never raises; failures yield no device."""
+                handle_factory=None, wake: bool = False) -> list[Device]:
+    """Read every known ODESSA dongle in `infos`. Never raises; failures yield no device.
+
+    `wake` (opt-in `razer_dongle_wake`): a `0555` dongle that does not answer the connection GET
+    gets Razer's activation frame once per USB session (path), then the GETs are retried."""
     if handle_factory is None:
         from .hid_win import HidHandle
         handle_factory = HidHandle
+    present = {x.path for x in infos}
+    with _woken_lock:
+        _woken.intersection_update(present)     # a path that vanished is a new USB session
+    wake = bool(wake)
     out: list[Device] = []
     done: set[int] = set()
     for i in sorted((x for x in infos if x.vid == RAZER_VID and x.pid in ODESSA_DONGLES),
@@ -292,7 +351,7 @@ def read_odessa(infos, deadline: float, cancel: threading.Event | None = None,
             continue
         budget = PA_DEVICE_BUDGET_S if i.pid in PA_PIDS else DEVICE_BUDGET_S
         try:
-            dev = _read_one(i, min(deadline, time.monotonic() + budget), cancel, handle_factory)
+            dev = _read_one(i, min(deadline, time.monotonic() + budget), cancel, handle_factory, wake)
         except Exception:
             log.debug("odessa read failed for %04x", i.pid, exc_info=True)
             continue

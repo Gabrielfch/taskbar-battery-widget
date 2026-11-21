@@ -11,7 +11,7 @@ def test_tray_settings_model_is_wired_to_config(qapp, tmp_path):
     changes = []
     t.settings_changed.connect(lambda: changes.append(1))
     sm = t._settings
-    assert [n.label() for n in sm.find("sources").children] == ["2.4 GHz and USB", "Bluetooth"]
+    assert [n.label() for n in sm.find("sources").children] == ["2.4 GHz and USB", "Bluetooth", "Activate Razer dongles without Synapse"]
     # toggles persist into the Config and emit settings_changed once each
     sm.find("wireless_enabled").set(False)
     sm.find("bluetooth_enabled").set(False)
