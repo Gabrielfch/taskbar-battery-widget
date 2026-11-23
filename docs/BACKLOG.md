@@ -16,6 +16,10 @@ Ordered by delivery sequence (dependencies first, small wins early, largest/risk
 | 8 ✅ | User-defined device order (drag in the panel, keyboard alternative) | #7 | M | — | 1.13.0 |
 | 9 ✅ | Pill styles: Classic / Soft / Transparent (new default) / Transparent compact | #8 | M | — | 1.12.0 |
 | 10 ✅ | Stacked layout (one device per row) for floating corner positions | #9 | M | 9 | 1.12.0 |
+| 12 | Confirm the BlackShark V2 Pro (0555) on real hardware without Synapse with the reporter of issue #2 (activation option + one-time notice) — **urgency: medium** | issue #2 | S | 11 | after 1.14.0 |
+| 13 | Review the machine translations of the new strings (PT, FR, RU, ZH, JA): pill styles, stacking, device order, Razer activation — **urgency: low** | — | S | — | — |
+| 14 | Logitech HID++ scan: read the short report before waiting on the long one, so empty receiver slots don't wait ~20 ms each (~150 ms per scan, discussion #6) — **urgency: low** | discussion #6 | S | — | — |
+| 15 | Replace the deprecated `QDragMoveEvent` constructor in the device-order test (warning only) — **urgency: very low** | — | S | — | — |
 | 11 ✅ | Opt-in *Activate Razer dongles without Synapse* (`razer_dongle_wake`): one volatile `0x02/0xE1` frame per USB session for the BlackShark V2 Pro dongle; plus a one-time tray notice (`razer_wake_hint_shown`) when the dongle is silent and the option is off | PR #3 | S | 7 | 1.14.0 |
 
 ---
