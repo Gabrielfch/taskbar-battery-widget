@@ -192,6 +192,7 @@ HP2 = minfo(0x03F0, 0x0696, 0xFF90, 0x0303, 20, 52)
 KS2 = minfo(0x0951, 0x1718, 0xFF00, 1, 64, 62)
 ALPHA = minfo(0x03F0, 0x098D, 0xFF00, 1, 31, 31)
 ALPHA2 = minfo(0x03F0, 0x08BE, 0xFF13, 0xFF00, 64, 64)
+FLIGHT2 = minfo(0x03F0, 0x0AC1, 0xFF90, 0xFF00, 64, 64)
 
 
 def cloud2_reply(req, level=73, charging=0):
@@ -312,6 +313,37 @@ def test_alpha2_off_and_errors():
     assert out == []
 
 
+def test_cloud_flight2_wireless():
+    out, h = mrun(alpha2_reply, [FLIGHT2])
+    assert h.sent == [pad([0x52, 0x01], 64), pad([0x50, 0x02], 64)]
+    d, = out
+    assert d.id == "hyperx:0ac1" and d.battery == 88 and d.connected and not d.charging
+    assert d.name == "HyperX Cloud Flight 2 Wireless"
+    out, h = mrun(lambda r: alpha2_reply(r, connected=0), [FLIGHT2])
+    assert out[0].connected is False and out[0].battery is None and len(h.sent) == 1
+
+
+def test_cloud_flight2_ignores_its_status_stream():
+    # Reports captured from a real Cloud Flight 2 dongle; none of them answers a query.
+    noise = [pad([0xFF, 0x01] + [0] * 12 + [0x44, 0x01], 64),
+             pad([0xFF, 0x01] + [0] * 12 + [0x44, 0x02], 64),
+             pad([0x45, 0x02], 64)]
+    for r in noise:
+        assert hx.match_reply("alpha2", r, (0x52, 0x01)) is None
+        assert hx.match_reply("alpha2", r, (0x50, 0x02)) is None
+    out, _ = mrun(lambda r: noise[0], [FLIGHT2], budget=0.4)
+    assert out == []
+
+
+def test_cloud_flight2_pins_its_collection():
+    # The dongle's other collections (FF13 vendor, consumer control, telephony) are never opened.
+    for inf in (minfo(0x03F0, 0x0AC1, 0xFF13, 0x0001, 62, 62, "a"),
+                minfo(0x03F0, 0x0AC1, 0x000C, 0x0001, 2, 0, "b"),
+                minfo(0x03F0, 0x0AC1, 0x000B, 0x0005, 2, 2, "c")):
+        out, h = mrun(alpha2_reply, [inf])
+        assert out == [] and h.sent == []
+
+
 def test_model_whitelist():
     for key, cmd in [("cloud2", 0x22), ("cloud2", 0x07), ("cloud2k", 0x18), ("cloud2k", 0x19),
                      ("alpha", 0x10), ("alpha", 0x12), ("alpha", 0x13),
@@ -377,7 +409,7 @@ def test_kingston_and_alpha_pin_exact_usage():
 def test_beta_models_flagged_and_skipped_without_beta():
     flags = {(m.vid, p): m.beta for m in hx.MODELS for p in m.pids}
     assert flags == {(0x03F0, 0x0696): False, (0x03F0, 0x018B): False, (0x0951, 0x1718): True,
-                     (0x03F0, 0x098D): True, (0x03F0, 0x08BE): False}
+                     (0x03F0, 0x098D): True, (0x03F0, 0x08BE): False, (0x03F0, 0x0AC1): False}
     opened = []
 
     def rec(path, in_len=0):

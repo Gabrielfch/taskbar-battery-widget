@@ -185,6 +185,7 @@ def _interface_paths() -> list[str]:
 # vendor (e.g. Apple peripherals on 0x05AC) are never opened for HID attribute probing.
 _USB_ONLY_PIDS: dict[int, tuple[int, ...]] = {
     0x05AC: (0x024F,),          # AULA F108 Pro 2.4 GHz dongle ("F108Pro Dongle")
+    0x3554: (0xFA09,),          # Compx keyboard receiver (AULA F75); Compx mice use other PIDs
 }
 
 

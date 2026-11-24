@@ -222,3 +222,24 @@ def test_monitor_wires_source_and_beta_flags(qapp, monkeypatch):
     m = mon.DeviceMonitor(use_watchers=False, cfg=cfg, wireless_scan=lambda: [])
     asyncio.run(m._scan_wireless())
     assert seen == {"src": (False, True), "beta": True}
+
+
+# ---- compx keyboards that push their level wake the monitor right away -----------------------
+def test_monitor_rescans_when_a_compx_keyboard_pushes(monkeypatch):
+    from taskbar_battery_widget import compx
+    m = mon.DeviceMonitor(use_watchers=True, wireless_scan=lambda: [])
+
+    async def run():
+        m._loop = asyncio.get_running_loop()
+        m._wake = asyncio.Event()
+        await m._setup_watchers()
+        assert len(compx._callbacks) == 1
+        compx._notify()                         # what a listener thread does on a new level
+        await asyncio.wait_for(m._wake.wait(), 1.0)
+        stopped = []
+        monkeypatch.setattr(compx, "stop_all", lambda: stopped.append(1))
+        m._teardown_watchers()
+        assert compx._callbacks == []
+        assert stopped == [1]                   # listener threads are stopped on shutdown
+
+    asyncio.run(run())
