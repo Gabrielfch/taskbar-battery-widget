@@ -325,10 +325,19 @@ def test_reader_never_writes_the_cache():
     assert not compx.LAST_KNOWN_PATH.exists()
 
 
-def test_old_saved_level_is_shown_live_at_start_up():
-    _write_last_known(70, time.time() - 6 * 3600)
+def test_saved_level_is_a_last_value_until_the_keyboard_pushes():
+    # idle keeps the saved timestamp in last_known.json, so REMEMBER_S can still expire
+    saved = time.time() - 6 * 3600
+    _write_last_known(70, saved)
     out = scan_until(FakeHandle(), lambda o: bool(o))
-    assert out[0].battery == 70 and out[0].connected and not out[0].idle
+    assert out[0].battery == 70 and out[0].connected and out[0].idle
+    assert out[0].updated == pytest.approx(saved)
+
+
+def test_a_push_makes_the_level_live_again():
+    _write_last_known(70, time.time() - 6 * 3600)
+    out = scan_until(FakeHandle([push(64)]), lambda o: o and o[0].battery == 64)
+    assert not out[0].idle
 
 
 def state(awake: bool) -> bytes:

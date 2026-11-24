@@ -132,6 +132,7 @@ class _Listener:
         self.pct: int | None = None
         self.awake: bool | None = None        # None until the keyboard reports sleep / wake
         self.updated: float | None = None     # epoch seconds of the last push
+        self.pushed = False                   # the keyboard pushed a level in this app run
         self.failed_at: float | None = None   # monotonic time the listener died
         self._thread = threading.Thread(target=self._run, name="compx-listener", daemon=True)
 
@@ -163,6 +164,7 @@ class _Listener:
                     if pct is not None:
                         changed = pct != self.pct or self.awake is not True
                         self.pct, self.updated, self.awake = pct, time.time(), True
+                        self.pushed = True
                         if changed:
                             _notify()
         except Exception:
@@ -235,7 +237,7 @@ def _listener_for(path: str, handle_factory, key: str = "") -> _Listener | None:
             return cur
         new = _Listener(path, handle_factory, key)
         if cur is not None:             # a restarted listener keeps the last known level
-            new.pct, new.updated = cur.pct, cur.updated
+            new.pct, new.updated, new.pushed = cur.pct, cur.updated, cur.pushed
         else:                           # first start: the level saved by an earlier run
             old = _recall(key)
             if old is not None:
@@ -293,9 +295,11 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
                 link="2.4ghz",
                 source="hid",
                 updated=lst.updated if pct is not None else None,
-                # Until the keyboard says otherwise it is taken as awake, so the saved level
-                # shows as live right after start-up instead of waiting for the next push.
-                idle=pct is not None and lst.awake is False and not ASLEEP_AS_DISCONNECTED,
+                # A level recalled from an earlier run is shown as "last value" (idle) until the
+                # keyboard pushes a fresh one: idle keeps its saved timestamp in last_known.json,
+                # so the 7-day REMEMBER_S limit can expire if the keyboard never reports again.
+                idle=pct is not None and (not lst.pushed
+                                          or (lst.awake is False and not ASLEEP_AS_DISCONNECTED)),
             )
             out.append(dev)
         return out

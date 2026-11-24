@@ -403,14 +403,14 @@ class DeviceMonitor(QObject):
 
     def _teardown_watchers(self):
         cb = getattr(self, "_compx_trigger", None)
-        if cb is not None:
-            self._compx_trigger = None
-            try:
-                from . import compx
+        self._compx_trigger = None
+        try:
+            from . import compx
+            if cb is not None:
                 compx.remove_change_callback(cb)
-                compx.stop_all()        # close the receiver listeners on shutdown
-            except Exception:
-                pass
+            compx.stop_all()            # close the receiver listeners on shutdown, always
+        except Exception:
+            pass
         for w, tokens, _a, _b in self._watchers:
             for remove, tok in zip(("remove_added", "remove_updated", "remove_removed",
                                     "remove_enumeration_completed"), tokens):
