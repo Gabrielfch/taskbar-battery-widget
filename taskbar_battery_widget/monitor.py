@@ -382,6 +382,13 @@ class DeviceMonitor(QObject):
             pass
 
         try:
+            from . import compx      # keyboards that push their level: rescan as soon as it changes
+            compx.add_change_callback(trigger)
+            self._compx_trigger = trigger
+        except Exception:
+            pass
+
+        try:
             from winrt.windows.devices.radios import Radio, RadioKind
 
             for r in await Radio.get_radios_async():
@@ -395,6 +402,15 @@ class DeviceMonitor(QObject):
         self._set_wake()
 
     def _teardown_watchers(self):
+        cb = getattr(self, "_compx_trigger", None)
+        if cb is not None:
+            self._compx_trigger = None
+            try:
+                from . import compx
+                compx.remove_change_callback(cb)
+                compx.stop_all()        # close the receiver listeners on shutdown
+            except Exception:
+                pass
         for w, tokens, _a, _b in self._watchers:
             for remove, tok in zip(("remove_added", "remove_updated", "remove_removed",
                                     "remove_enumeration_completed"), tokens):

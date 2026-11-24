@@ -282,6 +282,7 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | Cloud II Wireless Kingston (0951:1718) | 🧪 |
 | Cloud Alpha Wireless (03F0:098D) | 🧪 |
 | Cloud Alpha 2 Wireless (03F0:08BE) | 🟢 |
+| Cloud Flight 2 Wireless (03F0:0AC1) | ✅ |
 | Cloud III Wireless, Cloud Alpha S, Stinger | ❌ |
 
 ### SteelSeries (1038)
@@ -332,6 +333,8 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | --- | --- |
 | AULA F108 Pro — 2.4 GHz dongle (`05AC:024F`, `"F108Pro Dongle"`, battery %) | ✅ |
 | AULA F108 Pro — USB cable (`0C45:800A`, firmware reports no battery %) | ❌ |
+| AULA F75 — Compx "2.4G Wireless Receiver" (`3554:FA09`, battery %; the keyboard pushes it when the level changes, the cable is plugged in or out, or it returns to 2.4 GHz; shown as disconnected while it sleeps or is off 2.4 GHz; last level remembered across restarts) | ✅ |
+| Other keyboards on the same Compx receiver (`3554:FA09`, e.g. Redragon K618; same push protocol assumed) | 🟢 |
 ### 8BitDo (2DC8)
 | Device | Status |
 | --- | --- |

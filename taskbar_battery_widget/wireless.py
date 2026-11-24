@@ -22,6 +22,7 @@ EXTRA_VENDOR_IDS = (            # enumerated by their own guarded call: never de
     0x17EF, 0x3837, 0x291D,     # Lenovo, MCHOSE
     0x05AC,                     # AULA F108 Pro 2.4 GHz dongle (05AC:024F, product-filtered)
     0x2DC8,                     # 8BitDo
+    0x3554,                     # Compx 2.4 GHz keyboard receiver (3554:FA09, PID-filtered)
 )
 VENDOR_IDS = CORE_VENDOR_IDS + EXTRA_VENDOR_IDS
 # Sony PULSE 3D / INZONE Buds push reports only on change: their last value must outlive the grace
@@ -170,8 +171,9 @@ def dongle_key(device_id: str) -> str | None:
     if prefix == "razer" and len(parts) >= 2:
         return f"1532:{parts[1]}"
     fixed = {"sony": 0x054C, "steelseries": 0x1038, "corsair": 0x1B1C, "audeze": 0x3329,
-             "jabra": 0x0B0E, "aula": 0x05AC, "eightbitdo": 0x2DC8}
-    if prefix in fixed and (len(parts) == 2 or (prefix in ("sony", "aula", "eightbitdo") and len(parts) == 3)):
+             "jabra": 0x0B0E, "aula": 0x05AC, "eightbitdo": 0x2DC8, "compx": 0x3554}
+    if prefix in fixed and (len(parts) == 2 or (prefix in ("sony", "aula", "eightbitdo", "compx")
+                                                 and len(parts) == 3)):
         return f"{fixed[prefix]:04x}:{parts[1]}"
     if prefix in ("lenovo", "mchose") and len(parts) == 2:
         try:
@@ -516,6 +518,7 @@ def _scan_locked() -> list[Device]:
             add("misc", (0x17EF, 0x3837, 0x291D), lazy("misc_headsets"), exp_infos)
             add("aula", (0x05AC,), lazy("aula"), exp_infos)
             add("eightbitdo", (0x2DC8,), lazy("eightbitdo", beta=beta), exp_infos)
+            add("compx", (0x3554,), lazy("compx"), exp_infos)
         logi = [i for i in infos if i.vid == 0x046D]
         if logi and "logitech" in named:
             hs_cancel = threading.Event()       # never cancels the core Logitech readers

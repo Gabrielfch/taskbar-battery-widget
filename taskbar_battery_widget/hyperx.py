@@ -1,7 +1,10 @@
 """Direct battery reader for HyperX wireless headsets (USB dongle, HID).
 
 Cloud Flight Wireless (the original reader) plus Cloud II Wireless (HP and Kingston revisions),
-Cloud Alpha Wireless and Cloud Alpha 2 Wireless (see the "other models" section). Cloud III and
+Cloud Alpha Wireless, Cloud Alpha 2 Wireless and Cloud Flight 2 Wireless (see the "other models"
+section). The Cloud Flight 2 speaks the Alpha 2 protocol on its own collection (page 0xFF90,
+usage 0xFF00); that collection also streams unrelated `FF 01 ..` / `45 02 ..` reports, which
+`match_reply` ignores. Cloud III and
 Cloud Alpha S expose no battery query and are not handled.
 
 A model reader reports "off" only on an explicit not-connected answer; no reply yields no device
@@ -135,6 +138,8 @@ MODELS: tuple[Model, ...] = (
           0xFF00, 0x0001, 31, 31, beta=True),
     Model("alpha2", "HyperX Cloud Alpha 2 Wireless", HP_VID, frozenset({0x08BE}),
           0xFF13, 0xFF00, 64, 64),
+    Model("alpha2", "HyperX Cloud Flight 2 Wireless", HP_VID, frozenset({0x0AC1}),
+          0xFF90, 0xFF00, 64, 64),
 )
 
 _KINGSTON_HEAD = bytes.fromhex("06000200" "9a000068" "4a8e0a" "000000" "bb")
