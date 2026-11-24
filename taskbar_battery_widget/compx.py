@@ -21,9 +21,9 @@ last value; it counts as connected again on the next wake or level report.
 
 Because the reports are rare, one background thread per receiver keeps the collection open and
 remembers the last level; ``read()`` only reports it and never touches the device. The keyboard also
-pushes whenever its level changes by a percent. The last level is saved (``compx_last.json`` in the
-app data folder, keyed by a hash of the receiver path) and shown after a restart for up to 7 days
-until the keyboard pushes a fresh one; plugging the cable in or out forces a fresh push.
+pushes whenever its level changes by a percent. After a restart the last level is taken from the
+app's last-known cache (``last_known.json``, written by ``device_history``; read-only here) for up
+to 7 days until the keyboard pushes a fresh one; plugging the cable in or out forces a fresh push.
 
 Format learned from a read-only capture on a real AULA F75 receiver; independent implementation.
 """
@@ -31,8 +31,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -59,8 +57,6 @@ REMEMBER_S = 7 * 86400.0    # a level saved by an earlier run is shown for at mo
 # The keyboard sends the same report when it falls asleep and when it leaves 2.4 GHz mode, so
 # both are shown as disconnected (last value, dimmed) until it wakes or pushes a level again.
 ASLEEP_AS_DISCONNECTED = True
-STORE_NAME = "compx_last.json"
-STORE_PATH: Path | None = None  # tests override; default is the app data folder
 LISTEN_POLL_MS = 1000       # how often a listener checks its stop flag
 RETRY_DELAY_S = 5.0         # pause before a failed listener may be started again
 
@@ -168,7 +164,6 @@ class _Listener:
                         changed = pct != self.pct or self.awake is not True
                         self.pct, self.updated, self.awake = pct, time.time(), True
                         if changed:
-                            _remember(self.key, pct, self.updated)
                             _notify()
         except Exception:
             log.debug("compx listener stopped", exc_info=True)
@@ -204,59 +199,26 @@ def _notify() -> None:
             log.debug("compx change callback failed", exc_info=True)
 
 
-def _store_path() -> Path:
-    if STORE_PATH is not None:
-        return Path(STORE_PATH)
-    from .device_history import base_dir
-    return base_dir() / STORE_NAME
+LAST_KNOWN_PATH: Path | None = None  # tests override; default is device_history's last_known.json
 
 
-_store: dict | None = None
-_store_lock = threading.Lock()
-
-
-def _load_store() -> dict:
-    global _store
-    if _store is None:
-        data = {}
-        try:
-            raw = json.loads(_store_path().read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                for k, v in raw.items():
-                    if isinstance(k, str) and isinstance(v, list) and len(v) == 2 \
-                            and isinstance(v[0], int) and 1 <= v[0] <= 100 \
-                            and isinstance(v[1], (int, float)):
-                        data[k] = [int(v[0]), float(v[1])]
-        except Exception:
-            pass
-        _store = data
-    return _store
-
-
-def _remember(key: str, pct: int, ts: float) -> None:
-    """Save the last pushed level so the next start shows it before the keyboard pushes again."""
-    if not key:
-        return
+def _recall(dev_id: str) -> tuple[int, float] | None:
+    """Last level of `dev_id` saved by an earlier run in the app's last-known cache (read-only)."""
     try:
-        with _store_lock:
-            store = _load_store()
-            store[key] = [int(pct), float(ts)]
-            path = _store_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".compx", suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(store, f)
-            os.replace(tmp, path)
-    except Exception:
-        log.debug("compx: saving the last level failed", exc_info=True)
-
-
-def _recall(key: str) -> tuple[int, float] | None:
-    try:
-        with _store_lock:
-            v = _load_store().get(key)
-        if v and 0 <= time.time() - v[1] <= REMEMBER_S:
-            return v[0], v[1]
+        from .device_history import MAX_FILE_BYTES, _valid_entry, last_known_path
+        from .models import visibility_key
+        path = Path(LAST_KNOWN_PATH) if LAST_KNOWN_PATH is not None else last_known_path()
+        if path.stat().st_size > MAX_FILE_BYTES:
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        devices = raw.get("devices") if isinstance(raw, dict) else None
+        if not isinstance(devices, dict):
+            return None
+        ent = _valid_entry(devices.get(visibility_key(dev_id)))
+        if not ent or not ent["battery"] or ent["ts"] is None:
+            return None
+        if 0 <= time.time() - ent["ts"] <= REMEMBER_S:
+            return int(ent["battery"]), float(ent["ts"])
     except Exception:
         pass
     return None
@@ -313,12 +275,16 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
             if phash in done:
                 continue
             done.add(phash)
-            lst = _listener_for(i.path, handle_factory, f"{i.pid:04x}:{phash}")
+            base_id = f"compx:{i.pid:04x}"
+            nth = rank.get(base_id, 0)
+            rank[base_id] = nth + 1
+            dev_id = f"{base_id}:{phash}" if nth else base_id
+            lst = _listener_for(i.path, handle_factory, dev_id)
             if lst is None or not (lst.opened or lst.pct is not None):
                 continue                # not open yet (next scan) or the collection is unusable
             pct = lst.pct
             dev = Device(
-                id=f"compx:{i.pid:04x}",
+                id=dev_id,
                 name=_display_name(getattr(i, "product", "") or ""),
                 kind="keyboard",
                 battery=pct,
@@ -331,10 +297,6 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
                 # shows as live right after start-up instead of waiting for the next push.
                 idle=pct is not None and lst.awake is False and not ASLEEP_AS_DISCONNECTED,
             )
-            nth = rank.get(dev.id, 0)
-            rank[dev.id] = nth + 1
-            if nth:
-                dev.id = f"{dev.id}:{phash}"
             out.append(dev)
         return out
     except Exception:

@@ -1,11 +1,13 @@
 """Unit tests for the Compx 2.4 GHz keyboard receiver battery reader (fake handles only)."""
+import json
 import threading
 import time
 from types import SimpleNamespace
 
 import pytest
 
-from taskbar_battery_widget import compx, hid_win, wireless
+from taskbar_battery_widget import compx, device_history, hid_win, wireless
+from taskbar_battery_widget.models import visibility_key
 
 # Real reports captured from an AULA F75 receiver (88 %, then 95 % and 100 % on the cable).
 CAPTURED = [
@@ -62,8 +64,7 @@ class FakeHandle:
 @pytest.fixture(autouse=True)
 def _clean(tmp_path, monkeypatch):
     compx.stop_all()
-    monkeypatch.setattr(compx, "STORE_PATH", tmp_path / "compx_last.json")
-    monkeypatch.setattr(compx, "_store", None)
+    monkeypatch.setattr(compx, "LAST_KNOWN_PATH", device_history.last_known_path(tmp_path))
     yield
     compx.stop_all()
 
@@ -259,55 +260,73 @@ def test_failing_callback_does_not_kill_the_listener():
 
 
 def _restart_app():
-    """Simulate a new run: no listeners, store re-read from disk."""
+    """Simulate a new run: no listeners."""
     compx.stop_all()
-    compx._store = None
+
+
+def _save_via_history(devices):
+    """What the app does with every scan: device_history records live readings in last_known.json."""
+    hist = device_history.DeviceHistory(base=compx.LAST_KNOWN_PATH.parent)
+    hist.update(devices)
+    assert compx.LAST_KNOWN_PATH.exists()
+
+
+def _write_last_known(battery, ts, dev_id="compx:fa09"):
+    compx.LAST_KNOWN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"name": "2.4 GHz keyboard", "kind": "keyboard", "link": "2.4ghz", "battery": battery,
+             "charging": False, "ts": ts, "disc": None, "seen": ts}
+    compx.LAST_KNOWN_PATH.write_text(json.dumps({"devices": {visibility_key(dev_id): entry}}))
 
 
 def test_level_survives_an_app_restart():
-    h = FakeHandle([push(83)])
-    scan_until(h, lambda o: o and o[0].battery == 83)
-    assert wait_for(compx.STORE_PATH.exists)
+    out = scan_until(FakeHandle([push(83)]), lambda o: o and o[0].battery == 83)
+    _save_via_history(out)
     _restart_app()
     out = scan_until(FakeHandle(), lambda o: bool(o))
     assert out[0].battery == 83 and out[0].connected and out[0].updated is not None
 
 
 def test_fresh_push_replaces_the_remembered_level():
-    scan_until(FakeHandle([push(83)]), lambda o: o and o[0].battery == 83)
-    assert wait_for(compx.STORE_PATH.exists)
-    _restart_app()
+    _write_last_known(83, time.time() - 60)
     h = FakeHandle()
     scan_until(h, lambda o: o and o[0].battery == 83)
     h.queue.append(push(100))
     assert scan_until(h, lambda o: o and o[0].battery == 100)[0].battery == 100
 
 
-def test_old_or_corrupt_saved_level_is_ignored(monkeypatch):
-    key = f"fa09:{hid_win.path_hash(f75_info().path)}"
-    compx.STORE_PATH.write_text('{"%s": [70, %f]}' % (key, time.time() - compx.REMEMBER_S - 60))
-    out = scan_until(FakeHandle(), lambda o: bool(o))
-    assert out[0].battery is None
-    _restart_app()
-    compx.STORE_PATH.write_text("not json")
-    out = scan_until(FakeHandle(), lambda o: bool(o))
-    assert out[0].battery is None
-    _restart_app()
-    compx.STORE_PATH.write_text('{"%s": [300, %f]}' % (key, time.time()))
+@pytest.mark.parametrize("content", [
+    None,                                       # no file
+    "not json",
+    '{"devices": []}',
+    '{"%s": {"battery": 70}}',                  # not under "devices"
+])
+def test_missing_or_corrupt_cache_is_ignored(content):
+    if content is not None:
+        compx.LAST_KNOWN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        compx.LAST_KNOWN_PATH.write_text(content.replace("%s", visibility_key("compx:fa09"))
+                                         if "%s" in content else content)
     assert scan_until(FakeHandle(), lambda o: bool(o))[0].battery is None
 
 
-def test_unwritable_store_does_not_break_reading(monkeypatch, tmp_path):
-    blocker = tmp_path / "file"
-    blocker.write_text("x")
-    monkeypatch.setattr(compx, "STORE_PATH", blocker / "sub" / "compx_last.json")
-    out = scan_until(FakeHandle([push(61)]), lambda o: o and o[0].battery == 61)
-    assert out[0].battery == 61
+@pytest.mark.parametrize("battery,age", [(70, compx.REMEMBER_S + 60), (300, 60), (None, 60), (0, 60)])
+def test_old_or_invalid_saved_level_is_ignored(battery, age):
+    _write_last_known(battery, time.time() - age)
+    assert scan_until(FakeHandle(), lambda o: bool(o))[0].battery is None
+
+
+def test_other_devices_in_the_cache_are_not_used():
+    _write_last_known(70, time.time() - 60, dev_id="logi:c539:01")
+    assert scan_until(FakeHandle(), lambda o: bool(o))[0].battery is None
+
+
+def test_reader_never_writes_the_cache():
+    scan_until(FakeHandle([push(61)]), lambda o: o and o[0].battery == 61)
+    time.sleep(0.05)
+    assert not compx.LAST_KNOWN_PATH.exists()
 
 
 def test_old_saved_level_is_shown_live_at_start_up():
-    key = f"fa09:{hid_win.path_hash(f75_info().path)}"
-    compx.STORE_PATH.write_text('{"%s": [70, %f]}' % (key, time.time() - 6 * 3600))
+    _write_last_known(70, time.time() - 6 * 3600)
     out = scan_until(FakeHandle(), lambda o: bool(o))
     assert out[0].battery == 70 and out[0].connected and not out[0].idle
 
