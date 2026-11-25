@@ -5,6 +5,10 @@ The release workflow uses it as the GitHub release body; if it is missing, GitHu
 
 ## Releasing
 
+Shortcut on the maintainer's PC: `tools\release\publish.cmd [X.Y.Z]` runs steps 3 to 5 (after the version
+bump and notes are merged into `main`), waits for the workflow with `gh run watch`, and then deletes remote
+branches already merged into `main`.
+
 1. Bump `__version__` in `taskbar_battery_widget/__init__.py` (the only place; the build derives everything else from it).
 2. Write `docs/release-notes/vX.Y.Z.md`, then commit.
 3. `git tag vX.Y.Z` and `git push origin vX.Y.Z`.
