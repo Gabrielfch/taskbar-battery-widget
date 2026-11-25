@@ -21,6 +21,8 @@ Ordered by delivery sequence (dependencies first, small wins early, largest/risk
 | 13 | Review the machine translations of the new strings (PT, FR, RU, ZH, JA): pill styles, stacking, device order, Razer activation — **urgency: low** | — | S | — | — |
 | 14 | Logitech HID++ scan: read the short report before waiting on the long one, so empty receiver slots don't wait ~20 ms each (~150 ms per scan, discussion #6) — **urgency: low** | discussion #6 | S | — | — |
 | 15 | Replace the deprecated `QDragMoveEvent` constructor in the device-order test (warning only) — **urgency: very low** | — | S | — | — |
+| 16 | Logitech wired + receiver: once `unit_links` knows a unit, drop the stale wired-only entry (seen before the receiver link was learned) from *Known devices* automatically, carrying its alias/icon if the receiver entry has none (G915 X LS, issue #9) — **urgency: low** | issue #9 | S–M | — | — |
+| 17 | Switch for beta readers in *Settings ▸ Sources* (today only `"beta_readers": true` in `config.json`) — **urgency: medium** (testers of beta readers need it) | issue #9 | S | — | — |
 
 ---
 
