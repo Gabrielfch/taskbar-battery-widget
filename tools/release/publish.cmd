@@ -13,6 +13,7 @@ if not exist ".venv\Scripts\python.exe" (echo [x] .venv not found in %CD%. & got
 echo == Updating main
 git checkout main || goto :fail
 git pull --ff-only origin main || goto :fail
+for /f %%n in ('git rev-list --count origin/main..HEAD') do if not "%%n"=="0" (echo [x] Local main has %%n commit^(s^) not on GitHub. Run "git push origin main" first. & goto :fail)
 
 set "VER=%~1"
 if "%VER%"=="" for /f tokens^=2^ delims^=^" %%v in ('findstr /b "__version__" taskbar_battery_widget\__init__.py') do set "VER=%%v"
@@ -33,7 +34,7 @@ if errorlevel 1 (
     git tag "%TAG%" 2>nul
     git push origin "%TAG%" || goto :fail
 ) else (
-    echo == Tag %TAG% already on GitHub, skipping
+    echo == Tag %TAG% already on GitHub, skipping. If its workflow failed, run first: gh run rerun ^<run id^> --failed
 )
 
 echo == Waiting for the Release workflow to start
