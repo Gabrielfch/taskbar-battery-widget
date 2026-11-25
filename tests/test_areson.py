@@ -221,7 +221,7 @@ def test_hid_win_filters_pids():
     assert 0x25A7 in wireless.EXTRA_VENDOR_IDS
 
 
-CABLE = "hid#vid_25a7&pid_fa08&mi_{mi:02x}#a&346b0a57&0&{col:04x}"
+CABLE = "hid#vid_25a7&pid_fa08&mi_{mi:02x}#a&1b2c3d4&0&{col:04x}"
 # Real replies from issue #9: dongle FA07 "05 00" (50 %), cable FA08 "06 01" (60 %, charging).
 REAL_DONGLE = bytes.fromhex("09 04 00 00 00 02 05 00 00 00 00 00 00 00 00 00 41")
 REAL_CABLE = bytes.fromhex("09 04 00 00 00 02 06 01 00 00 00 00 00 00 00 00 3F")
