@@ -76,6 +76,7 @@ def run(infos, script, deadline_s=5.0, cancel=None):
 @pytest.fixture(autouse=True)
 def _clear_logged():
     areson._logged.clear()
+    areson._merge_logged = False
 
 
 def test_frame_and_checksum():
@@ -218,3 +219,67 @@ def test_hid_win_filters_pids():
     from taskbar_battery_widget import hid_win
     assert hid_win._USB_ONLY_PIDS[0x25A7] == (0xFA07, 0xFA08)
     assert 0x25A7 in wireless.EXTRA_VENDOR_IDS
+
+
+CABLE = "hid#vid_25a7&pid_fa08&mi_{mi:02x}#a&1b2c3d4&0&{col:04x}"
+# Real replies from issue #9: dongle FA07 "05 00" (50 %), cable FA08 "06 01" (60 %, charging).
+REAL_DONGLE = bytes.fromhex("09 04 00 00 00 02 05 00 00 00 00 00 00 00 00 00 41")
+REAL_CABLE = bytes.fromhex("09 04 00 00 00 02 06 01 00 00 00 00 00 00 00 00 3F")
+
+
+def cable_infos(path=CABLE, product="2.4G Dual Mode Mouse"):
+    return [SimpleNamespace(**{**vars(i), "path": path.format(mi=1, col=c), "pid": 0xFA08,
+                               "product": product})
+            for i, c in ((send_info(), 1), (recv_info(), 2))]
+
+
+class PerPath(Factory):
+    """Answers each receiver with its own reply (keyed by a substring of the path)."""
+
+    def __init__(self, replies):
+        super().__init__()
+        self.replies = replies
+
+    def __call__(self, path, in_len=64, feature_only=False):
+        h = super().__call__(path, in_len, feature_only)
+        if not feature_only:
+            self.script = [r for k, r in self.replies.items() if k in path]
+        return h
+
+
+def run_per_path(infos, replies, deadline_s=5.0):
+    f = PerPath(replies)
+    return areson.read(infos, time.monotonic() + deadline_s, None, handle_factory=f), f
+
+
+def test_real_replies_from_issue_9():
+    assert sum(REAL_DONGLE) & 0xFF == 0x55 and sum(REAL_CABLE) & 0xFF == 0x55
+    assert areson.parse_reply(REAL_DONGLE) == ("ok", 50, False)
+    assert areson.parse_reply(REAL_CABLE) == ("ok", 60, True)
+
+
+def test_dongle_and_cable_of_same_mouse_are_one_entry(caplog):
+    infos = [send_info(), recv_info()] + cable_infos()
+    with caplog.at_level(logging.INFO, logger="taskbar_battery_widget.areson"):
+        out, _ = run_per_path(infos, {"pid_fa07": REAL_DONGLE, "pid_fa08": REAL_CABLE})
+        run_per_path(infos, {"pid_fa07": REAL_DONGLE, "pid_fa08": REAL_CABLE})
+    assert len(out) == 1
+    d = out[0]
+    assert (d.id, d.name, d.battery, d.charging) == ("areson:fa07", "2.4 GHz mouse", 60, True)
+    merged = [r for r in caplog.records if "same mouse" in r.getMessage()]
+    assert len(merged) == 1
+
+
+def test_cable_only_still_shows_the_mouse():
+    out, _ = run_per_path(cable_infos(), {"pid_fa08": REAL_CABLE})
+    assert [(d.id, d.name, d.battery, d.charging) for d in out] == \
+        [("areson:fa08", "2.4G Dual Mode Mouse", 60, True)]
+
+
+def test_two_dongles_and_a_cable_are_not_merged():
+    other = [SimpleNamespace(**{**vars(i), "path": i.path.replace("7&1&0", "9&2&0")})
+             for i in (send_info(), recv_info())]
+    infos = [send_info(), recv_info()] + other + cable_infos()
+    out, _ = run_per_path(infos, {"pid_fa07": REAL_DONGLE, "pid_fa08": REAL_CABLE})
+    assert len(out) == 3
+    assert sorted(d.id.split(":")[1] for d in out) == ["fa07", "fa07", "fa08"]
