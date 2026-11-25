@@ -56,3 +56,15 @@ Rules
 - Reply: command `04`, status 0, valid checksum, data length >= 1; level = `b[6] * 10`, charging =
   `b[5] >= 2 and b[7] != 0`; level 0 without charging yields no reading. The first reply (or its absence)
   per receiver is logged once per run at INFO as hex for diagnosis.
+
+## Beta family: SteelSeries Rival 3 Wireless (`steelseries.py`, family `rival3`, `1038:1830`)
+- Experimental and off by default (`beta=True`): `steelseries.read` skips it unless beta readers are enabled.
+  Protocol facts come from public reverse-engineering notes (rivalcfg, GPL: facts only, no code copied).
+- Collection: usage page `0xFFC0`, usage `0x01` (USB interface 3), input and output length >= 1.
+- The ONLY frame that can be sent is `00 AA 01` (report id 0 + battery query), zero padded to the output
+  report length; `build_request` / `_send` raise `ValueError` for anything else.
+- Reply (report id 0 dropped): `[0]` level 0..100. Level > 100 and level 0 yield no reading (cached value
+  kept). The mouse uses replaceable batteries and cannot charge, so `[2]` (a charging flag in the reference
+  notes) is ignored and `charging` is always false. Observed on one unit: `04` with a nearly empty battery,
+  `25` after a battery swap.
+- The first reply (or its absence) per run is logged once at INFO as hex for diagnosis.
