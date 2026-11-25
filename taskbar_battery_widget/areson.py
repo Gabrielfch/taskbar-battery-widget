@@ -13,6 +13,10 @@ length, ``[6..15]`` data, ``[16]`` checksum chosen so that all 17 bytes add up t
   ``b[5] >= 1``; level = ``b[6] * 10`` (tens, 0..10); charging = ``b[5] >= 2 and b[7] != 0``.
   Level 0 without charging means "no reading" (mouse asleep / off).
 
+With the cable plugged in, a dual-mode mouse (Gamspeed V8 Pro) also shows up on its own as ``FA08``
+while its ``FA07`` dongle keeps answering: both report the same mouse (issue #9). When exactly one
+``FA07`` and one ``FA08`` answer, they are shown as one entry (see ``_merge_dongle_and_cable``).
+
 The only frame that can ever be sent is the pure query GetPower (command ``04``); no link command.
 Protocol facts come from the MIT-licensed qu1ncky/BatteryTray; this is an independent implementation.
 """
@@ -38,6 +42,9 @@ CMD_GET_POWER = 0x04
 CHECKSUM_TARGET = 0x55
 SEND_USAGE_PAGE = 0xFF02
 RECV_USAGE_PAGE = 0xFF01
+
+DONGLE_PID = 0xFA07
+CABLE_PID = 0xFA08
 
 DEFAULT_NAME = "2.4 GHz mouse"
 DEVICE_BUDGET_S = 1.2
@@ -197,6 +204,31 @@ def _pairs(mine):
     return out
 
 
+_merge_logged = False
+
+
+def _merge_dongle_and_cable(out: list[Device]) -> list[Device]:
+    """One ``FA07`` dongle + one ``FA08`` cable entry = the same mouse read twice: keep one entry.
+
+    Only when there is exactly one of each (no ``:hash`` suffix entries): with two Areson mice it is
+    impossible to tell which cable belongs to which dongle, so nothing is merged then.
+    The dongle entry keeps its id / name (alias, icon and history); the level comes from the cable
+    reading (direct from the mouse), and it is charging if either path says so.
+    """
+    global _merge_logged
+    dongle = [d for d in out if d.id.startswith(f"areson:{DONGLE_PID:04x}")]
+    cable = [d for d in out if d.id.startswith(f"areson:{CABLE_PID:04x}")]
+    if len(dongle) != 1 or len(cable) != 1:
+        return out
+    d, c = dongle[0], cable[0]
+    d.battery = c.battery if c.battery is not None else d.battery
+    d.charging = bool(d.charging or c.charging)
+    if not _merge_logged:
+        _merge_logged = True
+        log.info("areson: dongle and cable report the same mouse, shown as one entry")
+    return [x for x in out if x is not c]
+
+
 def read(infos, deadline: float, cancel: threading.Event | None = None,
          handle_factory=None) -> list[Device]:
     """Read every Areson receiver in ``infos`` (beta). Never raises."""
@@ -242,7 +274,7 @@ def read(infos, deadline: float, cancel: threading.Event | None = None,
             if nth:
                 dev.id = f"{dev.id}:{phash}"
             out.append(dev)
-        return out
+        return _merge_dongle_and_cable(out)
     except Exception:
         log.debug("areson scan failed", exc_info=True)
         return []
