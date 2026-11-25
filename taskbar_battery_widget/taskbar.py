@@ -340,12 +340,24 @@ def is_fullscreen_foreground(monitor_rect: Rect) -> bool:
     if sys.platform != "win32":
         return False
     verdict = state_is_fullscreen(query_user_notification_state())
-    if verdict is not None:
-        return verdict
-    return _covers_fallback(monitor_rect)
+    if verdict:
+        return True
+    # The shell state misses some fullscreen windows (e.g. browser video / F11 fullscreen, which hides
+    # the taskbar through ITaskbarList2::MarkFullscreenWindow): when it says "no", only a borderless,
+    # non-maximized window covering the monitor still counts (#9).
+    return _covers_fallback(monitor_rect, strict=verdict is False)
 
 
-def _covers_fallback(monitor_rect: Rect) -> bool:
+_WS_CAPTION = 0x00C00000
+
+
+def _borderless_unmaximized(hwnd) -> bool:
+    """No title bar and not maximized: the shape of a true fullscreen window (Chromium/Electron restore
+    a maximized window and drop WS_CAPTION before going fullscreen; games do the same)."""
+    return not _user32.IsZoomed(hwnd) and not (_user32.GetWindowLongW(hwnd, -16) & _WS_CAPTION)
+
+
+def _covers_fallback(monitor_rect: Rect, strict: bool = False) -> bool:
     try:
         hwnd = _user32.GetForegroundWindow()
         if not hwnd or not _user32.IsWindowVisible(hwnd) or _user32.IsIconic(hwnd):
@@ -353,7 +365,9 @@ def _covers_fallback(monitor_rect: Rect) -> bool:
         if _class_name(hwnd) in _IGNORED_FG_CLASSES:
             return False
         # A maximized window with a title bar is just maximized (e.g. autohide taskbar).
-        if _user32.IsZoomed(hwnd) and (_user32.GetWindowLongW(hwnd, -16) & 0x00C00000):
+        if _user32.IsZoomed(hwnd) and (_user32.GetWindowLongW(hwnd, -16) & _WS_CAPTION):
+            return False
+        if strict and not _borderless_unmaximized(hwnd):
             return False
         rect = _win_rect(hwnd)
         if not rect:
@@ -369,15 +383,14 @@ def _covers_fallback(monitor_rect: Rect) -> bool:
 def is_fullscreen_on_monitor(device_name: str) -> bool:
     """Fullscreen verdict for one monitor (``MONITORINFOEXW.szDevice``).
 
-    False when the global check (SHQueryUserNotificationState) says no. Otherwise the foreground
-    window must live on that monitor and cover its rect. Never raises.
+    The foreground window must live on that monitor and cover its rect. When the global check
+    (SHQueryUserNotificationState) says no, it must also be borderless and not maximized: the shell
+    state misses browser fullscreen (video / F11), which still hides the taskbar (#9). Never raises.
     """
     if sys.platform != "win32" or not device_name:
         return False
     try:
         verdict = state_is_fullscreen(query_user_notification_state())
-        if verdict is False:
-            return False
         hwnd = _user32.GetForegroundWindow()
         if not hwnd or not _user32.IsWindowVisible(hwnd) or _user32.IsIconic(hwnd):
             return False
@@ -389,8 +402,10 @@ def is_fullscreen_on_monitor(device_name: str) -> bool:
         rect = _win_rect(hwnd)
         if not rect or not covers_monitor(rect, details[1]):
             return False
-        if verdict is None and _user32.IsZoomed(hwnd) and (_user32.GetWindowLongW(hwnd, -16) & 0x00C00000):
+        if verdict is None and _user32.IsZoomed(hwnd) and (_user32.GetWindowLongW(hwnd, -16) & _WS_CAPTION):
             return False  # fallback path only: a titled maximized window is not fullscreen
+        if verdict is False and not _borderless_unmaximized(hwnd):
+            return False  # shell says no: a maximized or titled window is not fullscreen (autohide taskbar)
         return True
     except Exception:
         return False
