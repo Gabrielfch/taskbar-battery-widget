@@ -387,6 +387,10 @@ class SettingsView(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(2)
         for node in page.children:
+            if not _safe(node.visible, True):
+                if self._open == node.id:
+                    self._open = None
+                continue
             if isinstance(node, Separator):
                 sep = QFrame()
                 sep.setFixedHeight(1)

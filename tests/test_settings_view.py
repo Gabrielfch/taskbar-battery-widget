@@ -399,3 +399,19 @@ def test_tray_integration_palette_custom_cancel_and_close(qapp, tmp_path, monkey
     p._toolbar["settings"].click()                                       # gear: back to the devices
     assert not p.in_settings and p.isVisible()
     p.close()
+
+
+def test_position_rows_follow_the_choices(panel, env):
+    v = open_settings(panel)
+    click(v.row("personalization"))
+    click(v.row("position"))
+    assert v.row("float_anchor") is None and v.row("fullscreen_placement") is None
+    click(v.row("show_in_fullscreen"))                      # turning it on reveals where to show it
+    assert env.cfg.d["show_in_fullscreen"] is True
+    assert v.row("fullscreen_placement") is not None
+    env.cfg.d["placement_mode"] = "floating"
+    v.refresh()
+    assert v.row("float_anchor") is not None
+    click(v.row("fullscreen_placement"))                    # open its list, then hide it: list folds
+    click(v.row("show_in_fullscreen"))
+    assert v.row("fullscreen_placement") is None and v.open_choice is None

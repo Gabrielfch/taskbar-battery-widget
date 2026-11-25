@@ -51,6 +51,8 @@ class SettingsCallbacks:
 @dataclass(eq=False, kw_only=True)
 class Node:
     id: str = ""
+    # Re-evaluated on every rebuild: a hidden node gets no row (e.g. options that only apply to a choice).
+    visible: Callable[[], bool] = lambda: True
 
 
 @dataclass(eq=False, kw_only=True)
@@ -261,26 +263,30 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
                 or _safe(lambda: cfg.get("fullscreen_placement"), "same") == "floating")
 
     def fs_options() -> list:
-        # Needs "Visible in fullscreen": without it every option is disabled and says why.
-        on = bool(_safe(lambda: cfg.get("show_in_fullscreen"), False))
-        tip = "" if on else tr("fs_pos_needs_visible")
         values = [("same", tr("fs_pos_same")), ("floating", tr("pos_floating"))]
         values += [(a, tr(f"anchor_{a}")) for a in FLOATING_ANCHORS]
-        return [Option(v, lbl, enabled=on, tip=tip) for v, lbl in values]
+        return [Option(v, lbl) for v, lbl in values]
+
+    # Rows that only apply to one choice are shown only while that choice is made.
+    def is_floating() -> bool:
+        return placement_choice(cfg) == "floating"
+
+    def fs_visible() -> bool:
+        return bool(_safe(lambda: cfg.get("show_in_fullscreen"), False))
 
     position = Page(id="position", title_key="menu_position", icon="position", children=[
         Choice(id="placement", label_key="menu_position", options=placement_options,
                get=lambda: placement_choice(cfg), set=lambda v: cb.set_placement(str(v))),
         Choice(id="float_anchor", label_key="menu_float_anchor",
                options=static_options(FLOATING_ANCHORS, lambda a: tr(f"anchor_{a}")),
-               get=current_anchor, set=lambda v: cb.set_floating_anchor(str(v))),
+               get=current_anchor, set=lambda v: cb.set_floating_anchor(str(v)), visible=is_floating),
         Choice(id="monitor", label_key="menu_monitor", options=monitor_options,
                get=lambda: str(cfg.get("placement_monitor")), set=lambda v: cb.set_monitor(str(v))),
         cfg_toggle("stack_devices", "stack_devices"),
         cfg_toggle("show_in_fullscreen", "show_in_fullscreen"),
         Choice(id="fullscreen_placement", label_key="menu_fs_position", options=fs_options,
                get=lambda: _safe(lambda: cfg.get("fullscreen_placement"), "same"),
-               set=lambda v: cb.set_fullscreen_placement(str(v))),
+               set=lambda v: cb.set_fullscreen_placement(str(v)), visible=fs_visible),
         Separator(id="position_sep"),
         Action(id="reset_position", label_key="reset_position", run=lambda: cb.reset_position(),
                enabled=reset_enabled),

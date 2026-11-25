@@ -223,18 +223,26 @@ def _model(**kw):
     return cfg, calls, build_settings_model(cfg, cb)
 
 
-def test_settings_option_present_disabled_without_show_in_fullscreen():
+def test_settings_option_shown_only_with_show_in_fullscreen():
     cfg, calls, m = _model()
     ch = m.find("fullscreen_placement")
+    assert not ch.visible()
+    cfg.d["show_in_fullscreen"] = True
+    assert ch.visible()
     opts = ch.options()
     assert [o.value for o in opts] == ["same", "floating", *FLOATING_ANCHORS]
-    assert not any(o.enabled for o in opts) and all(o.tip for o in opts)
-    cfg.d["show_in_fullscreen"] = True
-    opts = ch.options()
     assert all(o.enabled and not o.tip for o in opts)
     assert ch.current_label() == "Same as usual"
     ch.set("top-right")
     assert calls == ["top-right"]
+
+
+def test_floating_anchor_shown_only_when_floating():
+    cfg, _calls, m = _model()
+    ch = m.find("float_anchor")
+    assert not ch.visible()
+    cfg.d["placement_mode"] = "floating"
+    assert ch.visible()
 
 
 def test_reset_enabled_with_fullscreen_floating():
