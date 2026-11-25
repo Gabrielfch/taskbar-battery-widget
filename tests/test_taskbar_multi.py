@@ -262,3 +262,78 @@ def test_taskbar_icons_centered_missing_value_is_centred(monkeypatch, win11):
 def test_taskbar_icons_centered_failure_is_none(monkeypatch):
     _fake_winreg(monkeypatch, open_fails=True)
     assert tb.taskbar_icons_centered() is None
+
+
+# ------------------------------------------------------------------ fullscreen behind a click on another monitor
+@pytest.fixture
+def zorder(monkeypatch):
+    """Foreground on DISPLAY1 (the user clicked there); z-order top-first in state["z"]."""
+    FS, TOOL, MAXED, OTHER, CHROME_FS, FRAMELESS_MAX = 11, 12, 13, 14, 15, 16
+    m = MON[SEC1][1]
+    wins = {  # hwnd -> (monitor hwnd in MON, rect, style, exstyle, zoomed, cloaked)
+        PRIMARY: (PRIMARY, (100, 100, 900, 700), 0x00C00000, 0, False, False),
+        FS: (SEC1, MON[SEC1][1], 0x14000000, 0, False, False),                 # F11 browser on DISPLAY2
+        TOOL: (SEC1, (3600, 1000, 3800, 1030), 0, 0x80, False, False),         # a tool window on top
+        MAXED: (SEC1, MON[SEC1][1], 0x00C00000, 0, True, False),               # maximized titled window
+        OTHER: (SEC1, (2000, 100, 2500, 500), 0x00C00000, 0, False, False),
+        CHROME_FS: (SEC1, m, 0x16000000, 0, True, False),                       # maximized, exact rect
+        FRAMELESS_MAX: (SEC1, (m[0] - 8, m[1] - 8, m[2] + 8, m[3] + 8), 0, 0, True, False),
+    }
+    state = {"z": [PRIMARY, TOOL, FS], "own": set(), "cloaked": set()}
+
+    def nxt(h, _cmd):
+        z = state["z"]
+        return z[z.index(h) + 1] if h in z and z.index(h) + 1 < len(z) else None
+
+    def pid_of(h, out):
+        out._obj.value = 4242 if h in state["own"] else 1
+        return 1
+
+    user32 = types.SimpleNamespace(
+        GetForegroundWindow=lambda: PRIMARY,
+        IsWindowVisible=lambda h: True,
+        IsIconic=lambda h: False,
+        IsZoomed=lambda h: wins[h][4],
+        GetWindowLongW=lambda h, i: wins[h][3] if i == -20 else wins[h][2],
+        GetTopWindow=lambda _p: state["z"][0] if state["z"] else None,
+        GetWindow=nxt,
+        GetWindowThreadProcessId=pid_of,
+    )
+    monkeypatch.setattr(tb, "_user32", user32, raising=False)
+    monkeypatch.setattr(tb.sys, "platform", "win32")
+    monkeypatch.setattr(tb.os, "getpid", lambda: 4242)
+    monkeypatch.setattr(tb, "query_user_notification_state", lambda: 5)
+    monkeypatch.setattr(tb, "_class_name", lambda h: "Chrome_WidgetWin_1")
+    monkeypatch.setattr(tb, "_monitor_details", lambda h: MON.get(wins[h][0]))
+    monkeypatch.setattr(tb, "_win_rect", lambda h: wins[h][1])
+    monkeypatch.setattr(tb, "_is_cloaked", lambda h: h in state["cloaked"])
+    state.update(FS=FS, TOOL=TOOL, MAXED=MAXED, OTHER=OTHER, CHROME_FS=CHROME_FS,
+                 FRAMELESS_MAX=FRAMELESS_MAX)
+    return state
+
+
+def test_fullscreen_stays_hidden_after_clicking_another_monitor(zorder):
+    assert tb.is_fullscreen_on_monitor(MON[SEC1][0]) is True     # tool window on top is skipped
+    assert tb.is_fullscreen_on_monitor(MON[SEC2][0]) is False    # nothing there
+
+
+def test_window_on_top_of_that_monitor_decides(zorder):
+    zorder["z"] = [PRIMARY, zorder["OTHER"], zorder["FS"]]            # a normal window covers part of it
+    assert tb.is_fullscreen_on_monitor(MON[SEC1][0]) is False
+    zorder["z"] = [PRIMARY, zorder["MAXED"]]                           # maximized titled: not fullscreen
+    assert tb.is_fullscreen_on_monitor(MON[SEC1][0]) is False
+
+
+def test_own_and_cloaked_windows_are_skipped(zorder):
+    zorder["z"] = [PRIMARY, zorder["OTHER"], zorder["FS"]]
+    zorder["own"] = {zorder["OTHER"]}                                  # e.g. the widget's own panel
+    assert tb.is_fullscreen_on_monitor(MON[SEC1][0]) is True
+    zorder["own"], zorder["cloaked"] = set(), {zorder["OTHER"]}
+    assert tb.is_fullscreen_on_monitor(MON[SEC1][0]) is True
+
+
+def test_chrome_fullscreen_stays_maximized_at_the_exact_monitor_rect(zorder):
+    zorder["z"] = [PRIMARY, zorder["CHROME_FS"]]       # Prime Video in F11, seen on real hardware
+    assert tb.is_fullscreen_on_monitor(MON[SEC1][0]) is True
+    zorder["z"] = [PRIMARY, zorder["FRAMELESS_MAX"]]   # a plain maximized frameless window overhangs
+    assert tb.is_fullscreen_on_monitor(MON[SEC1][0]) is False

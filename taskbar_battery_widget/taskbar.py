@@ -6,6 +6,7 @@ function name says otherwise. The geometry helpers are pure so they can be unit 
 from __future__ import annotations
 
 import ctypes
+import os
 import sys
 from ctypes import wintypes as wt
 from dataclasses import dataclass
@@ -146,6 +147,15 @@ if sys.platform == "win32":
     _user32.IsZoomed.argtypes = [wt.HWND]
     _user32.GetWindowLongW.argtypes = [wt.HWND, ctypes.c_int]
     _user32.GetWindowLongW.restype = ctypes.c_long
+    _user32.GetTopWindow.argtypes = [wt.HWND]
+    _user32.GetTopWindow.restype = wt.HWND
+    _user32.GetWindow.argtypes = [wt.HWND, wt.UINT]
+    _user32.GetWindow.restype = wt.HWND
+    _user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+    _user32.GetWindowThreadProcessId.restype = wt.DWORD
+    _dwmapi = ctypes.WinDLL("dwmapi")
+    _dwmapi.DwmGetWindowAttribute.argtypes = [wt.HWND, wt.DWORD, ctypes.c_void_p, wt.DWORD]
+    _dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
     _user32.MonitorFromWindow.argtypes = [wt.HWND, wt.DWORD]
     _user32.MonitorFromWindow.restype = wt.HANDLE
     _user32.MonitorFromRect.argtypes = [ctypes.POINTER(wt.RECT), wt.DWORD]
@@ -380,6 +390,51 @@ def _covers_fallback(monitor_rect: Rect, strict: bool = False) -> bool:
         return False
 
 
+_GW_HWNDNEXT = 2
+_WS_EX_TOOLWINDOW = 0x00000080
+_DWMWA_CLOAKED = 14
+_MAX_ZORDER_WALK = 512
+
+
+def _is_cloaked(hwnd) -> bool:
+    """Hidden by DWM though "visible" (suspended UWP apps, windows on other virtual desktops)."""
+    try:
+        val = ctypes.c_int(0)
+        hr = _dwmapi.DwmGetWindowAttribute(hwnd, _DWMWA_CLOAKED, ctypes.byref(val), ctypes.sizeof(val))
+        return hr == 0 and val.value != 0
+    except Exception:
+        return False
+
+
+def _top_window_is_fullscreen(device_name: str) -> bool:
+    """Is the top-most ordinary window on monitor ``device_name`` a fullscreen one?
+
+    Walks the z-order from the top (bounded) and judges the first visible, uncloaked, non-tool window
+    of another process that lives on that monitor: it counts only when it covers the monitor and has no
+    title bar. A maximized one must match the monitor exactly: Chrome's video / F11 fullscreen window
+    stays maximized at exactly the monitor rect, while a normal maximized window overhangs it by its
+    resize borders (e.g. -8 px) or has a title bar (#9).
+    """
+    pid = os.getpid()
+    hwnd = _user32.GetTopWindow(None)
+    for _ in range(_MAX_ZORDER_WALK):
+        if not hwnd:
+            return False
+        if (_user32.IsWindowVisible(hwnd) and not _user32.IsIconic(hwnd)
+                and not (_user32.GetWindowLongW(hwnd, -20) & _WS_EX_TOOLWINDOW)
+                and _class_name(hwnd) not in _IGNORED_FG_CLASSES and not _is_cloaked(hwnd)):
+            owner = wt.DWORD(0)
+            _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            details = _monitor_details(hwnd) if owner.value != pid else None
+            rect = _win_rect(hwnd) if details and details[0] == device_name else None
+            if rect and rect[2] > rect[0] and rect[3] > rect[1]:
+                if not covers_monitor(rect, details[1]) or _user32.GetWindowLongW(hwnd, -16) & _WS_CAPTION:
+                    return False
+                return not _user32.IsZoomed(hwnd) or tuple(rect) == tuple(details[1])
+        hwnd = _user32.GetWindow(hwnd, _GW_HWNDNEXT)
+    return False
+
+
 def is_fullscreen_on_monitor(device_name: str) -> bool:
     """Fullscreen verdict for one monitor (``MONITORINFOEXW.szDevice``).
 
@@ -397,8 +452,12 @@ def is_fullscreen_on_monitor(device_name: str) -> bool:
         if _class_name(hwnd) in _IGNORED_FG_CLASSES:
             return False
         details = _monitor_details(hwnd)
-        if not details or details[0] != device_name:
+        if not details:
             return False
+        if details[0] != device_name:
+            # The user clicked on another monitor: a fullscreen window here is no longer the active one,
+            # so look at the window on top of this monitor instead (#9).
+            return _top_window_is_fullscreen(device_name)
         rect = _win_rect(hwnd)
         if not rect or not covers_monitor(rect, details[1]):
             return False
