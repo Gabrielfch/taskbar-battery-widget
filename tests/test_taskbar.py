@@ -76,9 +76,14 @@ def test_fullscreen_state_mapping():
 def test_fullscreen_uses_shell_state_over_heuristic(monkeypatch):
     mon = (0, 0, 1920, 1080)
     monkeypatch.setattr(tb, "query_user_notification_state", lambda: 5)
-    monkeypatch.setattr(tb, "_covers_fallback", lambda m: True)   # maximized + autohide look
+    # maximized + autohide look: covers the monitor, but only the lenient check accepts it
+    monkeypatch.setattr(tb, "_covers_fallback", lambda m, strict=False: not strict)
     assert tb.is_fullscreen_foreground(mon) is False
     monkeypatch.setattr(tb, "query_user_notification_state", lambda: 3)
     assert tb.is_fullscreen_foreground(mon) is True
     monkeypatch.setattr(tb, "query_user_notification_state", lambda: None)
     assert tb.is_fullscreen_foreground(mon) is True   # fallback
+    # browser video / F11 fullscreen: shell says no, but a borderless window covers the monitor (#9)
+    monkeypatch.setattr(tb, "query_user_notification_state", lambda: 5)
+    monkeypatch.setattr(tb, "_covers_fallback", lambda m, strict=False: True)
+    assert tb.is_fullscreen_foreground(mon) is True

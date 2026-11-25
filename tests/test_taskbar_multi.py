@@ -160,8 +160,14 @@ def test_fullscreen_false_on_other_monitor(fs):
     assert tb.is_fullscreen_on_monitor("\\\\.\\DISPLAY1") is False
 
 
-def test_fullscreen_false_when_global_check_says_no(fs):
-    fs["qun"] = 5  # QUNS_ACCEPTS_NOTIFICATIONS
+def test_fullscreen_when_global_check_says_no_needs_borderless_window(fs):
+    fs["qun"] = 5  # QUNS_ACCEPTS_NOTIFICATIONS: browser video / F11 fullscreen reports this (#9)
+    assert tb.is_fullscreen_on_monitor("\\\\.\\DISPLAY2") is True
+    fs["zoomed"] = True  # maximized borderless window over an autohide taskbar: not fullscreen
+    assert tb.is_fullscreen_on_monitor("\\\\.\\DISPLAY2") is False
+    fs["zoomed"], fs["style"] = False, 0x00C00000  # titled window covering the monitor
+    assert tb.is_fullscreen_on_monitor("\\\\.\\DISPLAY2") is False
+    fs["style"], fs["rect"] = 0, (1920, 0, 3000, 900)  # borderless but not covering
     assert tb.is_fullscreen_on_monitor("\\\\.\\DISPLAY2") is False
 
 
