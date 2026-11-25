@@ -218,7 +218,7 @@ advanced configuration (see [Configuration](#configuration)) · ❌ not supporte
 > configuration. They are: Logitech PRO X 2 / PRO X 3 / G522 LIGHTSPEED headsets; Corsair Void Wireless V2,
 > Virtuoso Max Wireless and HS80 Max Wireless; HyperX Cloud Alpha Wireless (03F0:098D) and Cloud II Wireless
 > Kingston (0951:1718); SteelSeries Arctis 1, 7 and 9 families, Arctis Pro Wireless and Arctis Nova Pro Wireless;
-> DualShock 4 over Bluetooth (USB stays on by default); 8BitDo Pro 2, Pro 3, SN30 Pro and SF30 Pro over USB.
+> DualShock 4 over Bluetooth (USB stays on by default); 8BitDo Pro 2, Pro 3, SN30 Pro and SF30 Pro over USB; Areson 2.4 GHz mice (25A7:FA07, 25A7:FA08).
 >
 > **Tell us which devices work and which don't.** Open a
 > [Device report](https://github.com/Gabrielfch/taskbar-battery-widget/issues/new?template=device_report.yml)
@@ -335,6 +335,11 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | AULA F108 Pro — USB cable (`0C45:800A`, firmware reports no battery %) | ❌ |
 | AULA F75 — Compx "2.4G Wireless Receiver" (`3554:FA09`, battery %; the keyboard pushes it when the level changes, the cable is plugged in or out, or it returns to 2.4 GHz; shown as disconnected while it sleeps or is off 2.4 GHz; last level remembered across restarts) | ✅ |
 | Other keyboards on the same Compx receiver (`3554:FA09`, e.g. Redragon K618; same push protocol assumed) | 🟢 |
+### Areson mice (25A7)
+| Device | Status |
+| --- | --- |
+| Redragon M913 / M915RGB-WL, Rytaki Gamspeed V8 Pro — 2.4 GHz receiver (`25A7:FA07`, `25A7:FA08`; battery %, in steps of 10 %, charging; protocol taken from public documentation, untested on real hardware) | 🧪 |
+
 ### 8BitDo (2DC8)
 | Device | Status |
 | --- | --- |

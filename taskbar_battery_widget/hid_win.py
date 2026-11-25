@@ -186,6 +186,7 @@ def _interface_paths() -> list[str]:
 _USB_ONLY_PIDS: dict[int, tuple[int, ...]] = {
     0x05AC: (0x024F,),          # AULA F108 Pro 2.4 GHz dongle ("F108Pro Dongle")
     0x3554: (0xFA09,),          # Compx keyboard receiver (AULA F75); Compx mice use other PIDs
+    0x25A7: (0xFA07, 0xFA08),   # Areson 2.4 GHz mouse receivers (beta reader)
 }
 
 

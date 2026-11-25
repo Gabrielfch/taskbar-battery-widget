@@ -19,7 +19,7 @@ def test_unrelated_hid_runs_no_vendor_reader(rig):
 @pytest.mark.parametrize("vid,reader", [
     (0x1038, "steelseries"), (0x1B1C, "corsair"), (0x3329, "audeze"), (0x0B0E, "jabra"),
     (0x054C, "sony"), (0x17EF, "misc"), (0x3837, "misc"), (0x291D, "misc"), (0x05AC, "aula"),
-    (0x2DC8, "eightbitdo"), (0x3554, "compx"),
+    (0x2DC8, "eightbitdo"), (0x3554, "compx"), (0x25A7, "areson"),
     (0x0951, "hyperx"), (0x03F0, "hyperx"),
 ])
 def test_reader_called_only_when_vid_enumerated(rig, vid, reader):
@@ -125,6 +125,7 @@ def test_xinput_never_idle_cached(monkeypatch):
     ("razer:0555", "1532:0555"), ("razer:0565", "1532:0565"), ("razer:1390", "1532:0565"),
     ("aula:024f", "05ac:024f"), ("aula:024f:a1b2c3", "05ac:024f"),
     ("compx:fa09", "3554:fa09"), ("compx:fa09:a1b2c3", "3554:fa09"),
+    ("areson:fa07", "25a7:fa07"), ("areson:fa08:a1b2c3", "25a7:fa08"),
     ("eightbitdo:6013", "2dc8:6013"), ("eightbitdo:6012:a1b2c3", "2dc8:6012"),
     ("eightbitdo:6003", "2dc8:6003"),
 ])
@@ -322,7 +323,8 @@ def test_is_beta_device_per_model():
     for beta_id in ("logi:0af7", "logi:0b45", "logi:0b18", "corsair:2a08", "corsair:2a02",
                     "corsair:0a97", "hyperx:098d", "hyperx:1718", "steelseries:12b3",
                     "steelseries:1260", "steelseries:12c2", "steelseries:12e0", "steelseries:1290",
-                    "eightbitdo:6000", "eightbitdo:6003", "eightbitdo:6003:abc123", "eightbitdo:6009"):
+                    "eightbitdo:6000", "eightbitdo:6003", "eightbitdo:6003:abc123", "eightbitdo:6009",
+                    "areson:fa07", "areson:fa08", "areson:fa07:abc123"):
         assert wireless.is_beta_device(d(beta_id)), beta_id
     assert wireless.is_beta_device(d("sony:05c4", "bluetooth"))
     assert wireless.is_beta_device(d("sony:05c4:abc123", "bluetooth"))
@@ -330,7 +332,7 @@ def test_is_beta_device_per_model():
                       "corsair:0a64", "hyperx:16c4", "hyperx:0696", "hyperx:08be",
                       "steelseries:220e", "steelseries:230a", "steelseries:2269", "xinput:0",
                       "sony:0d5e", "jabra:2e56", "razer:0555", "razer:0565",
-                      "aula:024f", "compx:fa09", "eightbitdo:6013", "eightbitdo:6012", "eightbitdo:202f"):
+                      "aula:024f", "compx:fa09", "areson:fa09", "eightbitdo:6013", "eightbitdo:6012", "eightbitdo:202f"):
         assert not wireless.is_beta_device(d(stable_id)), stable_id
     assert not wireless.is_beta_device(d("sony:05c4", "usb"))
     assert not wireless.is_beta_device(d("sony:0ce6", "bluetooth"))
@@ -381,3 +383,14 @@ def test_headset_reader_skips_pids_the_generic_scanner_returned(rig, monkeypatch
                         lambda infos, d, cancel=None, **k: got.__setitem__("n", len(infos)) or [])
     real_scan()
     assert "n" not in got
+
+
+def test_areson_reader_runs_only_with_beta(rig):
+    state, calls = rig
+    state["infos"] = [info(0x25A7, 0xFA07)]
+    wireless.set_beta_readers(False)
+    real_scan()
+    assert "areson" not in names(calls)
+    wireless.set_beta_readers(True)
+    real_scan()
+    assert "areson" in names(calls)

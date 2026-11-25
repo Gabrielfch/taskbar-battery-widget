@@ -23,6 +23,7 @@ EXTRA_VENDOR_IDS = (            # enumerated by their own guarded call: never de
     0x05AC,                     # AULA F108 Pro 2.4 GHz dongle (05AC:024F, product-filtered)
     0x2DC8,                     # 8BitDo
     0x3554,                     # Compx 2.4 GHz keyboard receiver (3554:FA09, PID-filtered)
+    0x25A7,                     # Areson 2.4 GHz mouse receivers (25A7:FA07/FA08, beta, PID-filtered)
 )
 VENDOR_IDS = CORE_VENDOR_IDS + EXTRA_VENDOR_IDS
 # Sony PULSE 3D / INZONE Buds push reports only on change: their last value must outlive the grace
@@ -75,7 +76,7 @@ def set_beta_readers(enabled: bool) -> None:
             _purge_beta()
 
 
-_BETA_PREFIXES = frozenset({"logi", "corsair", "steelseries", "hyperx", "sony", "eightbitdo"})
+_BETA_PREFIXES = frozenset({"logi", "corsair", "steelseries", "hyperx", "sony", "eightbitdo", "areson"})
 
 
 def is_beta_device(dev: Device) -> bool:
@@ -112,6 +113,9 @@ def is_beta_device(dev: Device) -> bool:
     if vid == 0x2DC8:
         from . import eightbitdo
         return pid in eightbitdo.BETA_PIDS
+    if vid == 0x25A7:
+        from . import areson
+        return pid in areson.PIDS
     return False
 
 
@@ -171,8 +175,9 @@ def dongle_key(device_id: str) -> str | None:
     if prefix == "razer" and len(parts) >= 2:
         return f"1532:{parts[1]}"
     fixed = {"sony": 0x054C, "steelseries": 0x1038, "corsair": 0x1B1C, "audeze": 0x3329,
-             "jabra": 0x0B0E, "aula": 0x05AC, "eightbitdo": 0x2DC8, "compx": 0x3554}
-    if prefix in fixed and (len(parts) == 2 or (prefix in ("sony", "aula", "eightbitdo", "compx")
+             "jabra": 0x0B0E, "aula": 0x05AC, "eightbitdo": 0x2DC8, "compx": 0x3554,
+             "areson": 0x25A7}
+    if prefix in fixed and (len(parts) == 2 or (prefix in ("sony", "aula", "eightbitdo", "compx", "areson")
                                                  and len(parts) == 3)):
         return f"{fixed[prefix]:04x}:{parts[1]}"
     if prefix in ("lenovo", "mchose") and len(parts) == 2:
@@ -519,6 +524,8 @@ def _scan_locked() -> list[Device]:
             add("aula", (0x05AC,), lazy("aula"), exp_infos)
             add("eightbitdo", (0x2DC8,), lazy("eightbitdo", beta=beta), exp_infos)
             add("compx", (0x3554,), lazy("compx"), exp_infos)
+            if beta:
+                add("areson", (0x25A7,), lazy("areson"), exp_infos)
         logi = [i for i in infos if i.vid == 0x046D]
         if logi and "logitech" in named:
             hs_cancel = threading.Event()       # never cancels the core Logitech readers

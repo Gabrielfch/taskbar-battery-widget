@@ -43,3 +43,16 @@ Rules
 - Tests in `tests/test_<module>.py` with fake handles only (no real HID): request bytes per model,
   reply parsing (valid, short, unrelated, error), whitelist refusal, deadline/cancel before write,
   device-off path, collection selection.
+
+## Beta reader: Areson mice (`areson.py`, `25A7:FA07` / `25A7:FA08`)
+- Experimental and off by default: registered by `wireless.py` only when beta readers are enabled; without
+  the flag it does no I/O. Issue #9 (Redragon M913 / M915RGB-WL, Rytaki Gamspeed V8 Pro).
+- Transport: `HidD_SetFeature` on the `0xFF02` collection (feature length >= 17, opened feature-only) and
+  input reports from the `0xFF01` collection of the same USB interface (`mi_XX`); other interfaces are never
+  paired.
+- The ONLY frame that can ever be sent is GetPower, `08 04 00 ... 00 49` (17 bytes, checksum makes the sum
+  `0x55`), zero-padded to the collection's feature length. Any other feature write, any output report and any
+  feature read raises `ValueError`. The link command (`03`) is never sent for FA07/FA08.
+- Reply: command `04`, status 0, valid checksum, data length >= 1; level = `b[6] * 10`, charging =
+  `b[5] >= 2 and b[7] != 0`; level 0 without charging yields no reading. The first reply (or its absence)
+  per receiver is logged once per run at INFO as hex for diagnosis.
