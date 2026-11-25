@@ -255,7 +255,7 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | Old HID++ 1.0-only devices (pre-2013 Unifying) — battery registers 0x07 / 0x0D (read only) | 🟢 |
 | Headsets G533, G535, G633 / G635 / G733 / G933 / G935, G PRO / PRO X (older) | 🟢 |
 | Headsets PRO X 2 LIGHTSPEED, PRO X 3 LIGHTSPEED, G522 LIGHTSPEED (Centurion protocol) | 🧪 |
-| Astro A50 Gen 5 | 🟢 |
+| Astro A50 Gen 5 | ✅ |
 | G930, Astro A50 Gen 4 and older Astro | ❌ |
 
 ### Razer
