@@ -59,6 +59,9 @@ REMEMBER_S = 7 * 86400.0    # a level saved by an earlier run is shown for at mo
 ASLEEP_AS_DISCONNECTED = True
 LISTEN_POLL_MS = 1000       # how often a listener checks its stop flag
 RETRY_DELAY_S = 5.0         # pause before a failed listener may be started again
+# Reports this reader doesn't understand are written to app.log (at INFO, so no debug switch is
+# needed) to learn other keyboards' formats; only distinct ones, at most this many per listener.
+MAX_LOGGED_UNKNOWN = 30
 
 
 def _frame(buf: bytes | None, header: bytes) -> bytes | None:
@@ -134,6 +137,7 @@ class _Listener:
         self.updated: float | None = None     # epoch seconds of the last push
         self.pushed = False                   # the keyboard pushed a level in this app run
         self.failed_at: float | None = None   # monotonic time the listener died
+        self._unknown: set[bytes] = set()     # distinct unrecognized reports already logged
         self._thread = threading.Thread(target=self._run, name="compx-listener", daemon=True)
 
     def start(self) -> None:
@@ -145,11 +149,20 @@ class _Listener:
     def alive(self) -> bool:
         return self._thread.is_alive()
 
+    def _log_unknown(self, r: bytes) -> None:
+        b = bytes(r[:64])
+        if b in self._unknown or len(self._unknown) >= MAX_LOGGED_UNKNOWN:
+            return
+        self._unknown.add(b)
+        log.info("compx: unrecognized report (%d/%d): %s",
+                 len(self._unknown), MAX_LOGGED_UNKNOWN, b.hex(" ").upper())
+
     def _run(self) -> None:
         try:
             with self._factory(self.path, in_len=REPORT_LEN) as raw:
                 h = _ListenOnly(raw)
                 self.opened = True
+                log.info("compx: listening on receiver %s", self.key or "?")
                 while not self._stop.is_set():
                     r = h.read(timeout_ms=LISTEN_POLL_MS)
                     if r is None:
@@ -167,6 +180,8 @@ class _Listener:
                         self.pushed = True
                         if changed:
                             _notify()
+                        continue
+                    self._log_unknown(r)
         except Exception:
             log.debug("compx listener stopped", exc_info=True)
         finally:

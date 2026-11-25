@@ -401,3 +401,22 @@ def test_asleep_as_moon_when_configured(monkeypatch):
     h = FakeHandle([push(86), state(False)])
     out = scan_until(h, lambda o: o and o[0].idle)
     assert out[0].connected and out[0].idle and out[0].battery == 86
+
+
+def _unknown(n: int) -> bytes:
+    b = bytearray(20)
+    b[0], b[1], b[2] = 0x13, 0x0B, n & 0xFF
+    return bytes(b)
+
+
+def test_unrecognized_reports_are_logged_once_and_capped(caplog, monkeypatch):
+    monkeypatch.setattr(compx, "MAX_LOGGED_UNKNOWN", 3)
+    caplog.set_level("INFO", logger=compx.__name__)
+    h = FakeHandle([_unknown(1), _unknown(1), _unknown(2), push(88), _unknown(3), _unknown(4)])
+    scan_until(h, lambda o: o and o[0].battery == 88)
+    assert wait_for(lambda: not h.queue)
+    lines = [r.getMessage() for r in caplog.records if "unrecognized report" in r.getMessage()]
+    assert len(lines) == 3
+    assert lines[0].endswith("13 0B 01" + " 00" * 17)
+    assert not any("0A 01 00 04 05" in ln for ln in lines)      # recognized pushes are not logged
+    assert h.sent == []
