@@ -379,16 +379,15 @@ def test_rival3_reading_and_device_fields():
         "steelseries:1830", "SteelSeries Rival 3 Wireless", "mouse", 73, False, True, "2.4ghz", "hid")
 
 
-def test_rival3_charging_and_bounds():
+def test_rival3_never_charging_and_bounds():
     inf = [info(0x1830)]
-    out, _ = run([rival(100, 0, 1)], inf)
-    assert out[0].battery == 100 and out[0].charging
+    out, _ = run([rival(100, 0, 1)], inf)                    # the mouse cannot charge: byte 2 ignored
+    assert out[0].battery == 100 and not out[0].charging
     out, _ = run([rival(5, 9, 0)], inf)                      # byte 1 is ignored
     assert out[0].battery == 5 and not out[0].charging
-    out, _ = run([rival(0, 0, 1)], inf)                      # 0 % while charging is a real reading
-    assert out[0].battery == 0 and out[0].charging
-    assert run([rival(0, 0, 0)], inf)[0] == []               # 0 % idle: no reading
-    assert run([rival(101, 0, 0)], inf)[0] == []            # out of range: rejected
+    assert run([rival(0, 0, 0)], inf)[0] == []               # 0 %: no reading
+    assert run([rival(0, 0, 1)], inf)[0] == []
+    assert run([rival(101, 0, 0)], inf)[0] == []             # out of range: rejected
     assert run([rival(200, 0, 1)], inf)[0] == []
 
 

@@ -293,7 +293,7 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | Arctis Nova 3P / 3X, Nova 5 / 5X, Nova 7 / 7X / 7P (and Diablo / WoW editions) | 🟢 |
 | Arctis Nova Pro Wireless, Arctis Pro Wireless | 🧪 |
 | Arctis GameBuds | 🟢 |
-| Rival 3 Wireless mouse (2.4 GHz dongle 1038:1830; battery + charging) | 🧪 |
+| Rival 3 Wireless mouse (2.4 GHz dongle 1038:1830; battery level, verified on one unit) | 🧪 |
 
 ### Corsair (1B1C)
 | Device | Status |

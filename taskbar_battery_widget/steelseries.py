@@ -137,17 +137,15 @@ def _pro_wireless_stop(replies) -> bool:
 
 
 def _parse_rival3(r, pid):
-    """Rival 3 Wireless (mouse): ``[0]`` level 0..100, ``[2]`` non-zero while charging.
+    """Rival 3 Wireless (mouse): ``[0]`` level 0..100. The mouse runs on replaceable batteries and
+    cannot charge, so byte 2 (a charging flag in the reference notes) is ignored.
 
-    Level 0 while not charging is treated as "no reading" (asleep / unknown), so a sleeping mouse
-    never raises a false 0 % alert; the cached value is kept instead."""
+    Level 0 is treated as "no reading" (asleep / unknown), so a sleeping mouse never raises a false
+    0 % alert; the cached value is kept instead."""
     d = r[0]
-    if d[0] > 100:
+    if d[0] > 100 or d[0] == 0:
         return None
-    charging = d[2] != 0
-    if d[0] == 0 and not charging:
-        return None
-    return Reading(d[0], charging=charging)
+    return Reading(d[0])
 
 
 @dataclass(frozen=True)
