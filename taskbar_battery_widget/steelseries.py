@@ -41,8 +41,12 @@ REQ_ARCTIS9 = bytes([0x00, 0x20])
 REQ_NOVA_PRO = bytes([0x06, 0xB0])
 REQ_PRO_CONNECTION = bytes([0x41, 0xAA])
 REQ_PRO_BATTERY = bytes([0x40, 0xAA])
+REQ_RIVAL3_BATTERY = bytes([0x00, 0xAA, 0x01])
 ALLOWED_REQUESTS = frozenset({REQ_LEGACY_ARCTIS1, REQ_LEGACY_ARCTIS7, REQ_NOVA_STATUS,
-                              REQ_ARCTIS9, REQ_NOVA_PRO, REQ_PRO_CONNECTION, REQ_PRO_BATTERY})
+                              REQ_ARCTIS9, REQ_NOVA_PRO, REQ_PRO_CONNECTION, REQ_PRO_BATTERY,
+                              REQ_RIVAL3_BATTERY})
+
+_logged: set[int] = set()
 
 _MI_RE = re.compile(r"[&#]mi_([0-9a-f]{2})", re.IGNORECASE)
 
@@ -132,6 +136,20 @@ def _pro_wireless_stop(replies) -> bool:
     return bool(replies) and replies[0][0] == 0x02
 
 
+def _parse_rival3(r, pid):
+    """Rival 3 Wireless (mouse): ``[0]`` level 0..100, ``[2]`` non-zero while charging.
+
+    Level 0 while not charging is treated as "no reading" (asleep / unknown), so a sleeping mouse
+    never raises a false 0 % alert; the cached value is kept instead."""
+    d = r[0]
+    if d[0] > 100:
+        return None
+    charging = d[2] != 0
+    if d[0] == 0 and not charging:
+        return None
+    return Reading(d[0], charging=charging)
+
+
 @dataclass(frozen=True)
 class Family:
     key: str
@@ -145,6 +163,7 @@ class Family:
     expect0: int | None = None                      # required first payload byte (status reports)
     stop_early: Callable | None = None
     beta: bool = False                              # least certain protocol: beta readers only
+    kind: str = "headset"                           # Device.kind
 
 
 FAMILIES: tuple[Family, ...] = (
@@ -181,10 +200,13 @@ FAMILIES: tuple[Family, ...] = (
     Family("pro_wireless", {0x1290: "SteelSeries Arctis Pro Wireless"},
            (REQ_PRO_CONNECTION, REQ_PRO_BATTERY), (1, 1), _parse_pro_wireless, interface=0,
            stop_early=_pro_wireless_stop, beta=True),
+    Family("rival3", {0x1830: "SteelSeries Rival 3 Wireless"},
+           (REQ_RIVAL3_BATTERY,), (3,), _parse_rival3, usage_page=0xFFC0, usage=0x1, beta=True,
+           kind="mouse"),
 )
 
 # name, kind, pids table for callers/docs
-MODELS: dict[int, tuple[str, str]] = {pid: (name, "headset") for f in FAMILIES
+MODELS: dict[int, tuple[str, str]] = {pid: (name, f.kind) for f in FAMILIES
                                       for pid, name in f.pids.items()}
 _BY_PID: dict[int, Family] = {pid: f for f in FAMILIES for pid in f.pids}
 
@@ -241,9 +263,9 @@ def _device(info, family: Family, reading: Reading) -> Device:
     name = sanitize_name(getattr(info, "product", "") or "") or family.pids[info.pid]
     dev_id = f"steelseries:{info.pid:04x}"
     if not reading.connected:                       # explicit "headset off" report
-        return Device(id=dev_id, name=name, kind="headset", battery=None, connected=False,
+        return Device(id=dev_id, name=name, kind=family.kind, battery=None, connected=False,
                       link="2.4ghz", source="hid")
-    return Device(id=dev_id, name=name, kind="headset", battery=reading.battery, connected=True,
+    return Device(id=dev_id, name=name, kind=family.kind, battery=reading.battery, connected=True,
                   charging=reading.charging, link="2.4ghz", source="hid")
 
 
@@ -257,6 +279,10 @@ def _read_one(info, family: Family, deadline: float, cancel, handle_factory) -> 
             replies.append(data)
             if family.stop_early is not None and family.stop_early(replies):
                 break
+    if family.kind == "mouse" and info.pid not in _logged:      # once per run: layout diagnosis
+        _logged.add(info.pid)
+        log.info("steelseries: first %s reply: %s", family.key,
+                 replies[0].hex(" ").upper() if replies else "none")
     reading = None
     if len(replies) == len(family.requests) or (family.stop_early and replies
                                                  and family.stop_early(replies)):

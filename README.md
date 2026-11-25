@@ -217,7 +217,7 @@ advanced configuration (see [Configuration](#configuration)) · ❌ not supporte
 > **Beta readers** (🧪) are off by default. They run only when `"beta_readers": true` is set in the advanced
 > configuration. They are: Logitech PRO X 2 / PRO X 3 / G522 LIGHTSPEED headsets; Corsair Void Wireless V2,
 > Virtuoso Max Wireless and HS80 Max Wireless; HyperX Cloud Alpha Wireless (03F0:098D) and Cloud II Wireless
-> Kingston (0951:1718); SteelSeries Arctis 1, 7 and 9 families, Arctis Pro Wireless and Arctis Nova Pro Wireless;
+> Kingston (0951:1718); SteelSeries Arctis 1, 7 and 9 families, Arctis Pro Wireless, Arctis Nova Pro Wireless and Rival 3 Wireless mouse (1038:1830);
 > DualShock 4 over Bluetooth (USB stays on by default); 8BitDo Pro 2, Pro 3, SN30 Pro and SF30 Pro over USB; Areson 2.4 GHz mice (25A7:FA07, 25A7:FA08).
 >
 > **Tell us which devices work and which don't.** Open a
@@ -293,6 +293,7 @@ features *Unified Battery* (0x1004), *Battery Status* (0x1000), *Battery Voltage
 | Arctis Nova 3P / 3X, Nova 5 / 5X, Nova 7 / 7X / 7P (and Diablo / WoW editions) | 🟢 |
 | Arctis Nova Pro Wireless, Arctis Pro Wireless | 🧪 |
 | Arctis GameBuds | 🟢 |
+| Rival 3 Wireless mouse (2.4 GHz dongle 1038:1830; battery + charging) | 🧪 |
 
 ### Corsair (1B1C)
 | Device | Status |

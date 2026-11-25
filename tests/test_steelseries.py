@@ -63,7 +63,8 @@ def run(replies, infos, budget=1.0, cancel=None):
 
 def test_contract_constants():
     assert ss.VENDOR_IDS == (0x1038,)
-    assert all(kind == "headset" for _, kind in ss.MODELS.values())
+    assert all(kind == "headset" for pid, (_, kind) in ss.MODELS.items() if pid != 0x1830)
+    assert ss.MODELS[0x1830] == ("SteelSeries Rival 3 Wireless", "mouse")
     assert 0x2202 in ss.MODELS and 0x12E0 in ss.MODELS and 0x1290 in ss.MODELS
 
 
@@ -333,7 +334,7 @@ def test_never_raises():
 
 def test_beta_families_skipped_without_beta_and_stable_always_read():
     assert {f.key for f in ss.FAMILIES if f.beta} == {"arctis1", "arctis7", "arctis9", "nova_pro",
-                                                       "pro_wireless"}
+                                                       "pro_wireless", "rival3"}
     opened = []
 
     def rec(path, in_len=64):
@@ -346,3 +347,79 @@ def test_beta_families_skipped_without_beta_and_stable_always_read():
     assert len(opened) == 1
     ss.read([info(0x220E)], time.monotonic() + 1, None, handle_factory=rec)   # arctis7plus: stable
     assert len(opened) == 2
+
+
+# ---- Rival 3 Wireless (mouse, beta) -----------------------------------------------------------
+
+def rival(*vals):
+    """Windows-style unnumbered input report: report id 0 + [level, ?, charging]."""
+    return rep(*vals)
+
+
+def test_rival3_request_and_whitelist():
+    assert ss.REQ_RIVAL3_BATTERY.hex() == "00aa01"
+    r = ss.build_request(ss.REQ_RIVAL3_BATTERY, 65)
+    assert len(r) == 65 and r[:3] == ss.REQ_RIVAL3_BATTERY and r[3:] == bytes(62)
+    h = FakeHandle([])
+    for bad in (b"\x00\xaa\x00", b"\x00\xaa\x02", b"\x00\xaa", b"\x00\x09", b"\x00\x90\x00",
+                b"\x01\xaa\x01"):
+        with pytest.raises(ValueError):
+            ss.build_request(bad, 65)
+        with pytest.raises(ValueError):
+            ss._send(h, bad + bytes(62), 100)
+    assert h.sent == []
+
+
+def test_rival3_reading_and_device_fields():
+    ss._logged.clear()
+    out, h = run([rival(73, 0, 0)], [info(0x1830, product="SteelSeries Rival 3 Wireless")])
+    assert h.sent == [ss.build_request(ss.REQ_RIVAL3_BATTERY, 65)]
+    d, = out
+    assert (d.id, d.name, d.kind, d.battery, d.charging, d.connected, d.link, d.source) == (
+        "steelseries:1830", "SteelSeries Rival 3 Wireless", "mouse", 73, False, True, "2.4ghz", "hid")
+
+
+def test_rival3_charging_and_bounds():
+    inf = [info(0x1830)]
+    out, _ = run([rival(100, 0, 1)], inf)
+    assert out[0].battery == 100 and out[0].charging
+    out, _ = run([rival(5, 9, 0)], inf)                      # byte 1 is ignored
+    assert out[0].battery == 5 and not out[0].charging
+    out, _ = run([rival(0, 0, 1)], inf)                      # 0 % while charging is a real reading
+    assert out[0].battery == 0 and out[0].charging
+    assert run([rival(0, 0, 0)], inf)[0] == []               # 0 % idle: no reading
+    assert run([rival(101, 0, 0)], inf)[0] == []            # out of range: rejected
+    assert run([rival(200, 0, 1)], inf)[0] == []
+
+
+def test_rival3_silent_or_short_reply_gives_nothing():
+    inf = [info(0x1830)]
+    assert run([], inf)[0] == []
+    assert run([bytes([0, 50, 0])], inf)[0] == []            # payload shorter than 3 bytes
+
+
+def test_rival3_beta_gated_and_collection_selection():
+    opened = []
+
+    def rec(path, in_len=64):
+        opened.append(path)
+        raise OSError("x")
+    assert ss.read([info(0x1830)], time.monotonic() + 1, None, handle_factory=rec) == []
+    assert opened == []                                      # off without beta readers
+    wrong = [info(0x1830, 0xFF00, 1, path="a"), info(0x1830, 0x0001, 2, path="b"),
+             info(0x1830, 0x000C, 1, path="c"), info(0x1830, path="d", in_len=0),
+             info(0x1830, path="e", out_len=0)]
+    out, h = run([rival(50, 0, 0)], wrong)
+    assert out == [] and h.sent == []                        # only the 0xFFC0 / usage 1 collection
+    out, h = run([rival(50, 0, 0)], wrong + [info(0x1830, path="ok")])
+    assert len(out) == 1 and len(h.sent) == 1
+
+
+def test_rival3_first_reply_logged_once_per_run(caplog):
+    import logging
+    ss._logged.clear()
+    with caplog.at_level(logging.INFO, logger="taskbar_battery_widget.steelseries"):
+        run([rival(64, 0, 0)], [info(0x1830)])
+        run([rival(65, 0, 0)], [info(0x1830)])
+    msgs = [r.getMessage() for r in caplog.records if "first rival3 reply" in r.getMessage()]
+    assert len(msgs) == 1 and "40 00 00" in msgs[0]          # payload hex, report id 0 dropped

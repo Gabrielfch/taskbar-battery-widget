@@ -56,3 +56,13 @@ Rules
 - Reply: command `04`, status 0, valid checksum, data length >= 1; level = `b[6] * 10`, charging =
   `b[5] >= 2 and b[7] != 0`; level 0 without charging yields no reading. The first reply (or its absence)
   per receiver is logged once per run at INFO as hex for diagnosis.
+
+## Beta family: SteelSeries Rival 3 Wireless (`steelseries.py`, family `rival3`, `1038:1830`)
+- Experimental and off by default (`beta=True`): `steelseries.read` skips it unless beta readers are enabled.
+  Protocol facts come from public reverse-engineering notes (rivalcfg, GPL: facts only, no code copied).
+- Collection: usage page `0xFFC0`, usage `0x01` (USB interface 3), input and output length >= 1.
+- The ONLY frame that can be sent is `00 AA 01` (report id 0 + battery query), zero padded to the output
+  report length; `build_request` / `_send` raise `ValueError` for anything else.
+- Reply (report id 0 dropped): `[0]` level 0..100, `[2]` non-zero while charging. Level > 100 is rejected;
+  level 0 while not charging yields no reading (cached value kept). Not yet verified on real hardware.
+- The first reply (or its absence) per run is logged once at INFO as hex for diagnosis.
