@@ -19,7 +19,7 @@ def test_search_finds_by_label_keyword_and_option():
     _cfg, _calls, m = make(pill_style="transparent")
     assert [h.node.id for h in m.search("theme")][:1] == ["app_theme"]
     assert "app_theme" in [h.node.id for h in m.search("dark mode")]          # keyword
-    assert "start_with_windows" in [h.node.id for h in m.search("autostart")]
+    assert "attach_to_taskbar" in [h.node.id for h in m.search("autohide")]
     assert "palette" in [h.node.id for h in m.search("pastel")]               # an option label
     assert m.search("") == [] and m.search("   ") == []
     assert m.search("zzzz-nothing") == []

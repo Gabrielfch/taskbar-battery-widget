@@ -67,6 +67,21 @@ def is_tucked(rect: Rect, monitor_rect: Rect, edge: str, autohide: bool) -> bool
     return autohide and visible_thickness(rect, monitor_rect, edge) <= TUCKED_MAX_THICKNESS
 
 
+def untuck_offset(rect: Rect, monitor_rect: Rect, edge: str) -> tuple:
+    """(dx, dy) that moves a tucked auto-hide taskbar back to where it sits when shown (flush with its edge)."""
+    if edge == EDGE_BOTTOM:
+        return (0, monitor_rect[3] - rect[3])
+    if edge == EDGE_TOP:
+        return (0, monitor_rect[1] - rect[1])
+    if edge == EDGE_LEFT:
+        return (monitor_rect[0] - rect[0], 0)
+    return (monitor_rect[2] - rect[2], 0)
+
+
+def shift_rect(rect: Rect, dx: int, dy: int) -> Rect:
+    return (rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy)
+
+
 def derive_edge(rect: Rect, monitor_rect: Rect) -> str:
     if rect_w(rect) >= rect_h(rect):
         mid = (rect[1] + rect[3]) / 2

@@ -56,6 +56,7 @@ DEFAULTS = {
     "placement_monitor": "primary", # "primary" or a monitor key (models-style key, see MONITOR_KEY_RE)
     "floating_positions": {},       # monitor key ("primary" or key) -> {"anchor", "dx", "dy"}
     "show_in_fullscreen": False,    # keep the widget visible over fullscreen windows
+    "attach_to_taskbar": False,     # experimental: draw the pills inside the taskbar (slides with auto-hide)
     "fullscreen_placement": "same", # "same" | "floating" | one of FLOATING_ANCHORS: spot used over a fullscreen app
     "fullscreen_floating_positions": {},    # like floating_positions, used when fullscreen_placement is "floating"
     "panel_size": "normal",         # one of PANEL_SIZES: height of the device panel (share of the screen)
