@@ -22,6 +22,12 @@ if sys.platform == "win32":
     _u32.PostMessageW.restype = wt.BOOL
     _u32.GetAsyncKeyState.argtypes = [ctypes.c_int]
     _u32.GetAsyncKeyState.restype = ctypes.c_short
+    _u32.FindWindowW.argtypes = [wt.LPCWSTR, wt.LPCWSTR]
+    _u32.FindWindowW.restype = wt.HWND
+    _u32.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
+    _u32.GetClassNameW.restype = ctypes.c_int
+    _u32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+    _u32.GetWindowThreadProcessId.restype = wt.DWORD
 
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x80, 0x08000000
@@ -132,6 +138,23 @@ WINEVENT_OUTOFCONTEXT = 0x0000
 _ZGUARD_MIN_INTERVAL = 0.015  # seconds; avoids a raise storm if something else keeps reordering
 
 
+_WINEVENTPROC = None
+
+
+def _win_event_proto():
+    """The WINEVENTPROC type, created once so every hook shares SetWinEventHook's argtypes."""
+    global _WINEVENTPROC
+    if _WINEVENTPROC is None:
+        _WINEVENTPROC = ctypes.WINFUNCTYPE(None, wt.HANDLE, wt.DWORD, wt.HWND, wt.LONG, wt.LONG,
+                                           wt.DWORD, wt.DWORD)
+        _u32.UnhookWinEvent.argtypes = [wt.HANDLE]
+        _u32.UnhookWinEvent.restype = wt.BOOL
+        _u32.SetWinEventHook.restype = wt.HANDLE
+        _u32.SetWinEventHook.argtypes = [wt.DWORD, wt.DWORD, wt.HMODULE, _WINEVENTPROC, wt.DWORD,
+                                         wt.DWORD, wt.DWORD]
+    return _WINEVENTPROC
+
+
 class _ZGuard:
     """Re-raises our window the instant the shell reorders windows.
 
@@ -150,14 +173,8 @@ class _ZGuard:
     def start(self) -> None:
         if sys.platform != "win32" or self._hook:
             return
-        proto = ctypes.WINFUNCTYPE(None, wt.HANDLE, wt.DWORD, wt.HWND, wt.LONG, wt.LONG,
-                                   wt.DWORD, wt.DWORD)
+        proto = _win_event_proto()
         self._proc = proto(self._on_event)
-        _u32.UnhookWinEvent.argtypes = [wt.HANDLE]
-        _u32.UnhookWinEvent.restype = wt.BOOL
-        _u32.SetWinEventHook.restype = wt.HANDLE
-        _u32.SetWinEventHook.argtypes = [wt.DWORD, wt.DWORD, wt.HMODULE, proto, wt.DWORD,
-                                         wt.DWORD, wt.DWORD]
         self._hook = _u32.SetWinEventHook(EVENT_OBJECT_REORDER, EVENT_OBJECT_REORDER, None,
                                           self._proc, 0, 0, WINEVENT_OUTOFCONTEXT)
 
@@ -184,3 +201,86 @@ class _ZGuard:
                 _assert_topmost(extra)
         except Exception:
             pass
+
+
+EVENT_OBJECT_LOCATIONCHANGE = 0x800B
+OBJID_WINDOW = 0
+_TASKBAR_CLASSES = ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")
+
+
+class _TaskbarMoveWatch:
+    """Calls `on_move` the moment a taskbar window moves or resizes (auto-hide slide, edge change).
+
+    Without it the widget only noticed an auto-hide taskbar on its periodic tick, so it appeared
+    and vanished up to a tick late and did not follow the slide. The hook is limited to explorer's
+    process (location changes are frequent system-wide); `refresh()` re-hooks after explorer restarts.
+    """
+
+    def __init__(self, on_move):
+        self._on_move = on_move
+        self._hook = None
+        self._proc = None
+        self._pid = 0
+        self._hwnds: set[int] = set()         # hwnds known to be taskbars (only hits are cached)
+
+    def refresh(self) -> None:
+        """(Re)hook explorer's process; cheap, meant to run on the periodic tick."""
+        if sys.platform != "win32":
+            return
+        pid = _taskbar_pid()
+        if pid == self._pid and (self._hook or not pid):
+            return
+        self.stop()
+        if not pid:
+            return
+        proto = _win_event_proto()
+        self._proc = proto(self._on_event)
+        self._hook = _u32.SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, None,
+                                          self._proc, pid, 0, WINEVENT_OUTOFCONTEXT)
+        self._pid = pid if self._hook else 0
+        if not self._hook:
+            self._proc = None
+
+    def stop(self) -> None:
+        if self._hook:
+            try:
+                _u32.UnhookWinEvent(self._hook)
+            except Exception:
+                pass
+        self._hook = None
+        self._proc = None
+        self._pid = 0
+        self._hwnds.clear()
+
+    def _is_taskbar(self, hwnd: int) -> bool:
+        """Misses are never cached: a handle explorer reuses for a new taskbar (a monitor plugged
+        in later) must not stay ignored. The few taskbar hits are cached."""
+        if hwnd in self._hwnds:
+            return True
+        buf = ctypes.create_unicode_buffer(64)
+        n = _u32.GetClassNameW(wt.HWND(hwnd), buf, 64)
+        if n > 0 and buf.value in _TASKBAR_CLASSES:
+            self._hwnds.add(hwnd)
+            return True
+        return False
+
+    def _on_event(self, _hook, _event, hwnd, idobj, _idchild, _thread, _time) -> None:
+        try:
+            if idobj != OBJID_WINDOW or not hwnd or not self._is_taskbar(int(hwnd)):
+                return
+            self._on_move()
+        except Exception:
+            pass
+
+
+def _taskbar_pid() -> int:
+    """Process id of the window owning the primary taskbar (explorer), 0 if there is none."""
+    try:
+        hwnd = _u32.FindWindowW("Shell_TrayWnd", None)
+        if not hwnd:
+            return 0
+        pid = wt.DWORD(0)
+        _u32.GetWindowThreadProcessId(wt.HWND(hwnd), ctypes.byref(pid))
+        return int(pid.value)
+    except Exception:
+        return 0

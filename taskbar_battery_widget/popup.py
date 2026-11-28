@@ -13,7 +13,7 @@ from .i18n import kind_name as _kind_name, tr
 from .models import Device
 from .naming import sanitize_name
 
-HOVER_DELAY_MS = 300
+HOVER_DELAY_MS = 100   # short enough to feel instant, long enough not to flash when the mouse just crosses the taskbar
 GAP = 8
 PAD_X, PAD_Y = 12, 9
 MAX_W = 320

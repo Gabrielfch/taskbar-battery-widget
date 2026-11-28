@@ -11,12 +11,13 @@ from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QAccessible, QAccessibleEvent, QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QPainter,
-                           QPainterPath, QPen)
+                           QImage, QPainterPath, QPen)
 from PySide6.QtWidgets import QMenu, QWidget
 
 from . import animation
 from . import custom_icons
 from . import taskbar
+from . import taskbar_child
 from .colors import (TASKBAR_BASE, band_color, battery_color, ensure_contrast, pill_tint, row_style, separator_color,
                      taskbar_base)
 from .config import FLOATING_ANCHORS, PILL_STYLES, UI_SCALES
@@ -31,7 +32,7 @@ from .placement import (FLOATING_SPACE_SHARE, FREE_SPACE_SHARE, MAX_PILL_H, MIN_
                         REASON_NO_TASKBAR_FLOATING, Env,
                         Placement, ScreenInfo, center_rect_y, choose_placement, compute_placement, lookup_floating,
                         pill_height_for, resolve_screen, snap_anchor, taskbar_for_screen)
-from .win_window import (_ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
+from .win_window import (_TaskbarMoveWatch, _ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
                          popup_menu_foreground, set_click_through, shift_down)
 
 MARGIN = 2           # outer margin around the pills (logical px)
@@ -46,9 +47,12 @@ SOFT_ALPHA_SHARE = 0.55  # the "soft" background is this share as strong as the 
 SEPARATOR_SHARE = 0.5    # height of the divider between transparent pills / pill height
 MIN_FONT_PX = 12
 BAR_MIN_PILL_H = 24   # below this height the level bar is dropped
+PILL_NAME_MAX = 12    # "Show device names": longer names are cut with an ellipsis
+_FONT_WEIGHTS = {"regular": QFont.Weight.Normal, "semibold": QFont.Weight.DemiBold, "bold": QFont.Weight.Bold}
 BAR_H = 3.0
 MOON_W = 7
 TICK_MS = 500
+CHILD_EXIT_WAIT_S = 0.5   # on stop / close: how long the taskbar child's thread may take to go away
 SHIFT_POLL_MS = 100     # Shift polling while shown over a fullscreen app
 DRAG_THRESHOLD = 4        # px of movement before a press in floating mode becomes a drag
 FLOATING_BG_ALPHA = 245   # backdrop of the floating bar (slightly translucent)
@@ -201,9 +205,20 @@ class _Pill:
     alert: bool = False         # at/below the low threshold (not charging): border + red tint
     a11y: str = ""              # spoken summary of the pill
     members: list | None = None # for the "+N" overflow pill: the pills it stands for
+    name: str = ""              # "Show device names": 'Name ' drawn before the level (and before the "!")
+
+    def shown(self) -> str:
+        """The text drawn on the pill: name, warning mark, level."""
+        return self.name + ("!" if self.warn else "") + self.text
+
+
+def _attach_supported() -> bool:
+    """Attaching needs the real Windows platform plugin (offscreen test runs never attach)."""
+    return sys.platform == "win32" and QGuiApplication.platformName() == "windows"
 
 
 class TaskbarWidget(QWidget):
+    _child_ready = Signal()      # the taskbar child can take frames (emitted from its thread)
     context_menu_requested = Signal(QPoint)
     panel_requested = Signal(QRect)         # the "+N" pill was activated (global pill rect)
     placement_warning = Signal(str)         # e.g. "left_needs_centered_icons": the left anchor fell back
@@ -275,7 +290,21 @@ class TaskbarWidget(QWidget):
         self.destroyed.connect(self._zguard.stop)
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
-        self._timer.timeout.connect(self.update_position)
+        self._timer.timeout.connect(self._on_tick)
+        # Auto-hide taskbar: re-place the moment the taskbar moves instead of on the next tick, so the
+        # pills appear/vanish with it and follow its slide. Events are coalesced into one update per loop.
+        self._move_timer = QTimer(self)
+        self._move_timer.setSingleShot(True)
+        self._move_timer.setInterval(0)
+        self._move_timer.timeout.connect(self.update_position)
+        self._tb_watch = _TaskbarMoveWatch(self._on_taskbar_moved)
+        self.destroyed.connect(self._tb_watch.stop)
+        # Experimental "attach to taskbar": the pills are drawn by a child window of the taskbar (moves with
+        # it, frame-perfect) and this window stays on top, invisible, for the mouse. 0 = not attached.
+        self._child = taskbar_child.TaskbarChild(on_ready=self._child_ready.emit)
+        self._child_ready.connect(self.update_position, Qt.ConnectionType.QueuedConnection)
+        self._attach_parent = 0
+        self.destroyed.connect(self._child.destroy)
         self._clock = animation.clock()     # shared; runs only while something visible is animated
         self._clock.register(self, self._anim_demand)
         self._clock.tick.connect(self._on_anim_tick)
@@ -333,15 +362,28 @@ class TaskbarWidget(QWidget):
     def start(self) -> None:
         self._timer.start()
         self._zguard.start()
+        self._tb_watch.refresh()
         self.update_position()
 
     def stop(self) -> None:
         self._timer.stop()
+        self._move_timer.stop()
         self._zguard.stop()
+        self._tb_watch.stop()
+        self._release_child(wait=CHILD_EXIT_WAIT_S)
         self.hide()
 
+    def _on_tick(self) -> None:
+        self._tb_watch.refresh()        # re-hooks if explorer restarted
+        self._child.reap()              # retries a child close request that could not be delivered
+        self.update_position()
+
+    def _on_taskbar_moved(self) -> None:
+        if self._timer.isActive() and not self._move_timer.isActive():
+            self._move_timer.start()
+
     def pill_texts(self) -> list[str]:
-        return [p.text for p in self._pills]
+        return [p.name + p.text for p in self._pills]
 
     # ------------------------------------------------------------------ model -> pills
     def _cfg_get(self, key, default):
@@ -349,6 +391,16 @@ class TaskbarWidget(QWidget):
             return self._cfg.get(key) if self._cfg is not None else default
         except Exception:
             return default
+
+    def _level_text(self, level: int) -> str:
+        return f"{level}%" if self._cfg_get("pill_percent_sign", True) is not False else str(level)
+
+    def _name_prefix(self, name: str) -> str:
+        """'Name ' before the level when "Show device names" is on (cut to PILL_NAME_MAX characters)."""
+        if not self._cfg_get("pill_show_names", False):
+            return ""
+        short = name if len(name) <= PILL_NAME_MAX else name[:PILL_NAME_MAX - 1].rstrip() + "…"
+        return short + " "
 
     def _rebuild(self) -> None:
         threshold = int(self._cfg_get("low_threshold", 20))
@@ -366,21 +418,22 @@ class TaskbarWidget(QWidget):
             if not d.connected and not show_disc:
                 continue
             name = sanitize_name(d.name) or "?"
+            label = self._name_prefix(name)
             kind_name = _kind_name(d.kind) if d.kind else ""
             link = getattr(d, "link", "bluetooth")
             link_key = {"2.4ghz": "link_24ghz", "usb": "link_usb"}.get(link, "link_bluetooth")
             kind_name = f"{kind_name} - {tr(link_key)}" if kind_name else tr(link_key)
             if getattr(d, "stale", False) and d.battery is not None:
                 last = stale_text(d)
-                pills.append(_Pill(d.kind, f"{d.battery}%", f"{name}\n{last}\n{kind_name}", dim=True,
-                                   device=d, a11y=f"{name} {last}"))
+                pills.append(_Pill(d.kind, self._level_text(d.battery), f"{name}\n{last}\n{kind_name}", dim=True,
+                                   device=d, name=label, a11y=f"{name} {last}"))
             elif not d.connected:
                 text, tip = tr("pill_none"), f"{name}\n{tr('disconnected')}\n{kind_name}"
-                pills.append(_Pill(d.kind, text, tip, dim=True, device=d,
+                pills.append(_Pill(d.kind, text, tip, dim=True, device=d, name=label,
                                    a11y=f"{name} {tr('disconnected')}"))
             elif d.battery is None:
                 pills.append(_Pill(d.kind, "?", f"{name}\n{tr('battery_unknown')}\n{kind_name}", device=d,
-                                   a11y=f"{name} {tr('battery_unknown')}"))
+                                   name=label, a11y=f"{name} {tr('battery_unknown')}"))
             else:
                 tip = f"{name}\n{d.battery}%"
                 spoken = f"{name} {d.battery} %"
@@ -399,7 +452,7 @@ class TaskbarWidget(QWidget):
                 alert = st.alert
                 if alert:
                     spoken += f" {tr('low_warning')}"
-                pills.append(_Pill(d.kind, f"{d.battery}%", tip,
+                pills.append(_Pill(d.kind, self._level_text(d.battery), tip, name=label,
                                    low=d.battery <= threshold, charging=bool(d.charging),
                                    level=d.battery, device=d, idle=idle,
                                    warn="warn" in st.cues, alert=alert, a11y=spoken))
@@ -506,7 +559,7 @@ class TaskbarWidget(QWidget):
     def _font(self) -> QFont:
         f = QFont("Segoe UI")
         f.setPixelSize(max(MIN_FONT_PX, round(self._pill_h * 0.45)))
-        f.setWeight(QFont.Weight.DemiBold)
+        f.setWeight(_FONT_WEIGHTS.get(self._cfg_get("pill_font_weight", "semibold"), QFont.Weight.DemiBold))
         return f
 
     def _icon_size(self) -> int:
@@ -535,7 +588,7 @@ class TaskbarWidget(QWidget):
         return name
 
     def _pill_width(self, p: _Pill, fm: QFontMetrics, icon: int, bolt: int) -> int:
-        tw = fm.horizontalAdvance(("!" if p.warn else "") + p.text)
+        tw = fm.horizontalAdvance(p.shown())
         if p.kind == "overflow":
             return 2 * self._pad + tw
         style = get_icon_style()
@@ -767,11 +820,36 @@ class TaskbarWidget(QWidget):
             placement, floating, tinfo = fs_placement, True, None
             env = replace(env, info=None, floating_fallback=False)
         res = compute_placement(env, placement)
+        # Attached but not yet in this taskbar while it is tucked away (e.g. right after start): lay out for
+        # the shown taskbar now, so the child is already inside it and slides in with it on the first reveal.
+        wanted = self._attach_wanted()
+        if not wanted:
+            self._release_child()       # option off (or unsupported): no child window left in the taskbar
+        preattach = None
+        if (res.reason == "tucked" and not floating and tinfo is not None and tinfo.hwnd and not self._fs_override
+                and not env.fullscreen and self._attach_parent != tinfo.hwnd and wanted
+                and self._child_ready_for(tinfo.hwnd)):
+            dx, dy = taskbar.untuck_offset(tinfo.rect, tinfo.monitor_rect, tinfo.edge)
+            shown = replace(tinfo, rect=taskbar.shift_rect(tinfo.rect, dx, dy),
+                            tray_rect=taskbar.shift_rect(tinfo.tray_rect, dx, dy), autohide=False)
+            env2 = replace(env, info=shown)
+            res2 = compute_placement(env2, placement)
+            if res2.visible and not res2.fullscreen_passive:
+                preattach, tinfo, env, res = shown, shown, env2, res2
         self._note_reason(res.reason)
         floating = floating or res.reason == REASON_NO_TASKBAR_FLOATING
+        attach = (not floating and tinfo is not None and tinfo.hwnd and not res.fullscreen_passive and wanted)
         if not res.visible:
             self._set_floating(floating)
             self._set_visible(False)
+            # Tucked away with the taskbar: keep the child, it slides back in with it. Not over a fullscreen
+            # app though: the tucked check comes first, but the pills must not show there ("Visible in
+            # fullscreen" off) and are not attached when it is on.
+            if (attach and res.reason == "tucked" and not env.fullscreen and self._attach_parent == tinfo.hwnd
+                    and self._push_child_frame(move=False)):
+                pass
+            else:
+                self._detach()
             return
         self._apply_screen(qscreen)
         self._edge = (tinfo.edge if tinfo is not None
@@ -800,8 +878,26 @@ class TaskbarWidget(QWidget):
         if self._last_geom != key:
             self._last_geom = key
             self.move(x, y)
+        if preattach is not None:
+            # This window stays hidden (the taskbar is tucked); only the child is placed, in taskbar client px.
+            self._set_visible(False)
+            dpr = env.dpr or 1.0
+            px = round(preattach.monitor_rect[0] + (x - env.screen_origin[0]) * dpr)
+            py = round(preattach.monitor_rect[1] + (y - env.screen_origin[1]) * dpr)
+            self._attach_parent = preattach.hwnd
+            if not self._push_child_frame(move=False, client_pos=(px - preattach.rect[0], py - preattach.rect[1])):
+                self._child_failed()
+            return
         self._set_visible(True)
         self._set_passive(res.fullscreen_passive and self.isVisible())
+        if attach and self.isVisible() and self._child_ready_for(tinfo.hwnd):
+            if self._attach_parent != tinfo.hwnd:
+                self._attach_parent = tinfo.hwnd
+                self.update()       # repaint this window as the invisible hit area
+            if not self._push_child_frame(move=True):
+                self._child_failed()    # could not attach: draw the pills ourselves, retry later
+        else:
+            self._detach()          # not attached (yet): this window draws the pills
         if self.isVisible():
             _assert_topmost(int(self.winId()))
             if self._popup is not None and self._popup.isVisible():
@@ -908,8 +1004,11 @@ class TaskbarWidget(QWidget):
     def closeEvent(self, e) -> None:
         self._hide_popup()
         self._timer.stop()
+        self._move_timer.stop()
         self._flash_timer.stop()
         self._zguard.stop()
+        self._tb_watch.stop()
+        self._release_child(wait=CHILD_EXIT_WAIT_S)
         self._clock.unregister(self)
         self._clock.refresh()
         super().closeEvent(e)
@@ -977,8 +1076,73 @@ class TaskbarWidget(QWidget):
         p.setBrush(color)
         p.drawPath(outer.subtracted(cut))
 
+    # ------------------------------------------------------------------ attach to taskbar (experimental)
+    def _attach_wanted(self) -> bool:
+        return bool(self._cfg_get("attach_to_taskbar", False)) and _attach_supported()
+
+    def _child_ready_for(self, parent: int) -> bool:
+        """The child can take frames in `parent`; otherwise ask for it (created in the background, then
+        `_child_ready` re-runs the placement; after a failure the child waits before trying again)."""
+        if self._child.ready_for(parent):
+            return True
+        self._child.request(parent)
+        return False
+
+    def _detach(self) -> None:
+        """Draw the pills in this window again; the child stays (hidden) for a quick re-attach."""
+        if self._attach_parent:
+            self._attach_parent = 0
+            self._child.hide()
+            self.update()           # draw the pills in this window again
+
+    def _child_failed(self) -> None:
+        self._detach()
+        self._child.note_failure()  # drops the child and backs off before the next attempt
+
+    def _release_child(self, wait: float = 0.0) -> None:
+        """Detach and destroy the child window (option turned off, widget stopped or closed)."""
+        self._detach()
+        self._child.destroy(wait=wait)
+
+    def _render_image(self) -> QImage:
+        dpr = self.devicePixelRatioF() or 1.0
+        img = QImage(max(1, round(self.width() * dpr)), max(1, round(self.height() * dpr)),
+                     QImage.Format.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(dpr)
+        img.fill(Qt.GlobalColor.transparent)
+        self._paint_content(QPainter(img))      # ends the painter itself
+        return img
+
+    def _push_child_frame(self, move: bool, client_pos: tuple | None = None) -> bool:
+        """Send the current look to the taskbar child; `move` re-reads this window's spot (physical px),
+        `client_pos` places it directly in taskbar client px (used while the taskbar is tucked)."""
+        if not self._attach_parent:
+            return False
+        pos = None
+        if move:
+            r = taskbar._win_rect(int(self.winId()))
+            if r is None:
+                return False
+            pos = (r[0], r[1])
+        ok = self._child.show_frame(self._attach_parent, pos, self._render_image(), client_pos=client_pos)
+        if ok and (move or client_pos is not None):
+            self._child.raise_top()
+        return ok
+
     def paintEvent(self, _e) -> None:
+        if self._attach_parent:
+            # The taskbar child shows the pills; this window only catches the mouse. Alpha 1/255 keeps it
+            # hit-testable (fully transparent pixels of a layered window are click-through) yet invisible.
+            p = QPainter(self)
+            p.fillRect(self.rect(), QColor(0, 0, 0, 1))
+            p.end()
+            if not self._push_child_frame(move=False):
+                QTimer.singleShot(0, self._child_failed)
+            return
         p = QPainter(self)
+        self._paint_content(p)
+
+    def _paint_content(self, p: QPainter) -> None:
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         dark = self._pill_dark()
         fg = self._colors()
@@ -999,8 +1163,10 @@ class TaskbarWidget(QWidget):
         now = self._clock.now_ms() if self._anim_live() else None      # None: paused, draw the still look
         pstyle = self.pill_style()
         backless = pstyle in ("transparent", "compact")
-        if pstyle == "transparent":
+        if pstyle == "transparent" and self._cfg_get("pill_separators", True) is not False:
             self._draw_separators(p, dark)
+        color_text = self._cfg_get("pill_color_text", True) is not False
+        show_bar = self._cfg_get("pill_show_bar", True) is not False
         for i, (pill, (x, y, w, h)) in enumerate(zip(self._pills, self._rects)):
             r = QRectF(x, y, w, h)
             level_color = self.pill_color(pill)
@@ -1086,11 +1252,14 @@ class TaskbarWidget(QWidget):
                 text_x += MOON_W + 3
             own_bolt = pill.charging and style != "battery"
             bolt = max(6, icon // 2) if own_bolt else 0
-            p.setPen(color)
+            text_pen = color
+            if not color_text and level_color is not None:      # neutral text; the bar / icon keep the colour
+                text_pen = ensure_contrast(fg, taskbar_base(dark), 4.5) if backless else fg
+            p.setPen(text_pen)
             p.drawText(QRectF(text_x, y, w - (text_x - x) - self._pad - bolt, h),
                        int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
-                       ("!" if pill.warn else "") + pill.text)
-            if level_color is not None and pill.level is not None and h >= BAR_MIN_PILL_H:
+                       pill.shown())
+            if show_bar and level_color is not None and pill.level is not None and h >= BAR_MIN_PILL_H:
                 bw = w - 2 * self._pad
                 by = y + h - 5.0
                 bar = QColor(color)

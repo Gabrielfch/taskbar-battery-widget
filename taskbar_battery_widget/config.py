@@ -41,6 +41,12 @@ DEFAULTS = {
     "app_theme": "auto",            # "auto" (follow Windows) | "light" | "dark": look of the panel and the app windows
     "stack_devices": False,         # floating at a corner: one device per row, in a column
     "pill_style": "transparent",   # "classic" | "soft" | "transparent" | "compact": look of the taskbar pills
+    "pill_font_weight": "semibold", # one of PILL_FONT_WEIGHTS: weight of the pill text
+    "pill_percent_sign": True,      # "80%" (True) or "80" (False)
+    "pill_show_names": False,       # put the (short) device name before the level
+    "pill_show_bar": True,          # thin charge bar under the level
+    "pill_color_text": True,        # level colour on the text (False: neutral text, colour stays on bar / icon)
+    "pill_separators": True,        # dividers between the pills of the "transparent" style
     "hidden_devices": [],           # visibility keys (models.visibility_key) hidden from the UI
     "device_order": [],             # visibility keys in the order chosen by the user ([] = monitor order)
     "update_check_auto": False,     # opt-in: look for a new release at most once a day
@@ -50,6 +56,7 @@ DEFAULTS = {
     "placement_monitor": "primary", # "primary" or a monitor key (models-style key, see MONITOR_KEY_RE)
     "floating_positions": {},       # monitor key ("primary" or key) -> {"anchor", "dx", "dy"}
     "show_in_fullscreen": False,    # keep the widget visible over fullscreen windows
+    "attach_to_taskbar": False,     # experimental: draw the pills inside the taskbar (slides with auto-hide)
     "fullscreen_placement": "same", # "same" | "floating" | one of FLOATING_ANCHORS: spot used over a fullscreen app
     "fullscreen_floating_positions": {},    # like floating_positions, used when fullscreen_placement is "floating"
     "panel_size": "normal",         # one of PANEL_SIZES: height of the device panel (share of the screen)
@@ -75,6 +82,7 @@ PANEL_SIZES = ("compact", "normal", "large")
 ANIMATION_MODES = ("always", "system", "off")
 APP_THEMES = ("auto", "light", "dark")
 PILL_STYLES = ("classic", "soft", "transparent", "compact")
+PILL_FONT_WEIGHTS = ("regular", "semibold", "bold")
 PANEL_SIZE_FRACTION = {"compact": 0.40, "normal": 0.50, "large": 0.65}   # of the screen's available height
 UI_SCALES = (90, 100, 115, 130)
 LANGUAGES = ("auto",) + tuple(_i18n_languages)   # "auto" + every language registered in i18n.LANGUAGES
@@ -168,6 +176,8 @@ def _valid(key, value) -> bool:
         return isinstance(value, str) and value in APP_THEMES
     if key == "pill_style":
         return isinstance(value, str) and value in PILL_STYLES
+    if key == "pill_font_weight":
+        return isinstance(value, str) and value in PILL_FONT_WEIGHTS
     if key == "language":
         return isinstance(value, str) and value in LANGUAGES
     if key == "last_seen_version":

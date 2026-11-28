@@ -254,7 +254,9 @@ def test_keyboard_navigation(panel, env):
     assert panel.focusWidget() is v.row("alerts")
     key(v.row("alerts"), Qt.Key.Key_Up)
     assert panel.focusWidget() is first
-    key(first, Qt.Key.Key_Up)
+    key(first, Qt.Key.Key_Up)                             # the search field sits above the rows
+    assert panel.focusWidget() is v.search_field()
+    key(v.search_field(), Qt.Key.Key_Up)
     assert panel.focusWidget() is v.back_button()
     key(first, Qt.Key.Key_Right)                          # Right enters the page
     assert v.path_ids == ["root", "sources"]

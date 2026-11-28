@@ -5,10 +5,13 @@ settings view (settings_view.py) only renders it, so every rule lives here.
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .config import ANIMATION_MODES, APP_THEMES, COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES, LANGUAGES, PANEL_SIZES, PILL_STYLES, UI_SCALES
+from .config import (ANIMATION_MODES, APP_THEMES, COLOR_PALETTES, FLOATING_ANCHORS, ICON_STYLES, LANGUAGES, PANEL_SIZES,
+                     PILL_FONT_WEIGHTS, PILL_STYLES, UI_SCALES)
+from .colors import palette_swatch
 from .i18n import LANGUAGES as I18N_LANGUAGES, tr
 
 DEFAULT_FLOATING_ANCHOR = "bottom-right"
@@ -45,6 +48,7 @@ class SettingsCallbacks:
     set_language: Callable[[str], None] = lambda lang: None         # one of config.LANGUAGES
     open_tutorial: Callable[[], None] = lambda: None                # the six-step tour
     open_whats_new: Callable[[], None] = lambda: None               # notes of the running version
+    set_pill_option: Callable[[str, object], None] = lambda key, value: None    # pill look (no device rescan)
 
 
 # ------------------------------------------------------------------ nodes
@@ -53,6 +57,17 @@ class Node:
     id: str = ""
     # Re-evaluated on every rebuild: a hidden node gets no row (e.g. options that only apply to a choice).
     visible: Callable[[], bool] = lambda: True
+    # Extra words the settings search matches (English synonyms; the translated label always matches).
+    keywords: tuple = ()
+
+
+@dataclass(eq=False, kw_only=True)
+class Header(Node):
+    """A small section title that groups the rows below it (not focusable, no action)."""
+    label_key: str
+
+    def label(self) -> str:
+        return tr(self.label_key)
 
 
 @dataclass(eq=False, kw_only=True)
@@ -67,6 +82,9 @@ class Option:
     label: str
     enabled: bool = True
     tip: str = ""
+    # Optional sample drawn at the end of the option row: ("swatch", [QColor, ...]) colour dots or
+    # ("icon", icon_style) a sample device icon in that style. Plain data: the view does the drawing.
+    preview: tuple | None = None
 
 
 @dataclass(eq=False, kw_only=True)
@@ -150,6 +168,47 @@ class SettingsModel:
                     stack.append(child)
         return None
 
+    def search(self, query: str, limit: int = 30) -> list["SearchHit"]:
+        """Rows matching every word of `query` (label, hint, option labels, keywords; case-insensitive).
+
+        Matching ignores accents ("posicion" finds "Posición"). A match on the row's own label ranks
+        first, then one on an option or hint. Rows that are hidden right now (their own `visible()` or
+        that of a page above them is False) are left out: the hit would open a page without them.
+        """
+        words = [w for w in _fold(query).split() if w]
+        if not words:
+            return []
+        hits: list[SearchHit] = []
+        for node in self.walk():
+            if isinstance(node, (Separator, Header)) or not self._shown(node):
+                continue
+            label = _label_of(node)
+            own = _fold(label)
+            extra = [_safe_text(lambda: node.tip())] if isinstance(node, Toggle) else []
+            if isinstance(node, Choice):
+                extra += [o.label for o in _safe(node.options, [])]
+            extra += list(node.keywords)
+            hay = " ".join([own] + [_fold(e) for e in extra])
+            if not all(w in hay for w in words):
+                continue
+            rank = 0 if all(w in own for w in words) else 1
+            page = self.parent_of(node.id)
+            trail = [pg.title() for pg in self.path_to(page.id)[1:]] if page is not None else []
+            hits.append(SearchHit(node, label, trail, rank))
+        hits.sort(key=lambda h: h.rank)     # stable: tree order inside a rank
+        return hits[:limit]
+
+    def _shown(self, node) -> bool:
+        """The node and every page above it are visible right now."""
+        if not _safe(node.visible, True):
+            return False
+        page = self.parent_of(node.id)
+        while page is not None and page is not self.root:
+            if not _safe(page.visible, True):
+                return False
+            page = self.parent_of(page.id)
+        return True
+
     def path_to(self, page_id: str) -> list[Page]:
         """Pages from the root down to `page_id` (inclusive); [root] when unknown."""
         chain = [self.find(page_id)]
@@ -161,6 +220,33 @@ class SettingsModel:
                 return [self.root]
             chain.insert(0, parent)
         return chain
+
+
+@dataclass
+class SearchHit:
+    node: Node
+    label: str              # translated label of the row
+    trail: list             # titles of the pages that hold it, below the root ([] = on the root page)
+    rank: int = 0           # 0: the label matched, 1: an option / hint / keyword matched
+
+
+def _fold(text: str) -> str:
+    """Case- and accent-insensitive form of `text` (NFD, combining marks stripped, casefolded)."""
+    decomposed = unicodedata.normalize("NFD", str(text))
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).casefold()
+
+
+def _label_of(node) -> str:
+    if isinstance(node, Page):
+        return node.title()
+    return _safe_text(node.label)
+
+
+def _safe_text(fn) -> str:
+    try:
+        return str(fn() or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 # ------------------------------------------------------------------ helpers shared with the tray
@@ -189,9 +275,21 @@ def _safe(fn, default):
 def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
     """The whole Settings tree. Every value is read lazily, so the view only has to call the getters again."""
 
-    def cfg_toggle(key: str, label_key: str, tip_key: str = "") -> Toggle:
+    def cfg_toggle(key: str, label_key: str, tip_key: str = "", keywords: tuple = (), **kw) -> Toggle:
         return Toggle(id=key, label_key=label_key, get=lambda: bool(cfg.get(key)),
-                      set=lambda v: cb.set_bool(key, bool(v)), tip_key=tip_key)
+                      set=lambda v: cb.set_bool(key, bool(v)), tip_key=tip_key, keywords=keywords, **kw)
+
+    def pill_toggle(key: str, label_key: str, keywords: tuple = (), **kw) -> Toggle:
+        return Toggle(id=key, label_key=label_key, get=lambda: cfg.get(key) is not False,
+                      set=lambda v: cb.set_pill_option(key, bool(v)), keywords=keywords, **kw)
+
+    def palette_options() -> list:
+        custom = _safe(lambda: cfg.get("custom_colors"), None)
+        return [Option(n, tr("palette_" + n), preview=("swatch", _safe(lambda n=n: palette_swatch(n, custom), [])))
+                for n in COLOR_PALETTES]
+
+    def icon_style_options() -> list:
+        return [Option(n, tr("icon_" + n), preview=("icon", n)) for n in ICON_STYLES]
 
     def static_options(values, label_of) -> Callable[[], list]:
         return lambda: [Option(v, label_of(v)) for v in values]
@@ -200,16 +298,18 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
         return [Option(m, tr("animations_" + m), tip=tr("animations_tip") if m == "system" else "")
                 for m in ANIMATION_MODES]
 
-    sources = Page(id="sources", title_key="menu_sources", icon="sources", children=[
+    sources = Page(id="sources", title_key="menu_sources", icon="sources",
+                   keywords=("devices", "bluetooth", "wireless", "dongle", "razer", "logitech"), children=[
         cfg_toggle("wireless_enabled", "wireless_devices"),
         cfg_toggle("bluetooth_enabled", "bluetooth_source"),
         cfg_toggle("razer_dongle_wake", "razer_dongle_wake", "razer_dongle_wake_tip"),
     ])
 
-    alerts = Page(id="alerts", title_key="menu_alerts", icon="alerts", children=[
-        cfg_toggle("notifications_enabled", "notifications"),
-        cfg_toggle("full_charge_alert", "full_charge_alert"),
-        Choice(id="low_threshold", label_key="low_threshold",
+    alerts = Page(id="alerts", title_key="menu_alerts", icon="alerts",
+                  keywords=("notifications", "warning", "low battery"), children=[
+        cfg_toggle("notifications_enabled", "notifications", keywords=("toast", "popup", "warning")),
+        cfg_toggle("full_charge_alert", "full_charge_alert", keywords=("charged", "100", "notification")),
+        Choice(id="low_threshold", label_key="low_threshold", keywords=("warning", "percent", "low battery"),
                options=static_options(THRESHOLDS, lambda v: f"{v} %"),
                get=lambda: int(cfg.get("low_threshold")),
                set=lambda v: cb.set_threshold(int(v))),
@@ -274,7 +374,8 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
     def fs_visible() -> bool:
         return bool(_safe(lambda: cfg.get("show_in_fullscreen"), False))
 
-    position = Page(id="position", title_key="menu_position", icon="position", children=[
+    position = Page(id="position", title_key="menu_position", icon="position",
+                    keywords=("place", "location", "corner", "left", "right", "monitor", "screen", "move"), children=[
         Choice(id="placement", label_key="menu_position", options=placement_options,
                get=lambda: placement_choice(cfg), set=lambda v: cb.set_placement(str(v))),
         Choice(id="float_anchor", label_key="menu_float_anchor",
@@ -282,8 +383,11 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
                get=current_anchor, set=lambda v: cb.set_floating_anchor(str(v)), visible=is_floating),
         Choice(id="monitor", label_key="menu_monitor", options=monitor_options,
                get=lambda: str(cfg.get("placement_monitor")), set=lambda v: cb.set_monitor(str(v))),
-        cfg_toggle("stack_devices", "stack_devices"),
-        cfg_toggle("show_in_fullscreen", "show_in_fullscreen"),
+        cfg_toggle("stack_devices", "stack_devices", keywords=("column", "vertical", "rows")),
+        Toggle(id="attach_to_taskbar", keywords=("autohide", "auto-hide", "auto hide", "smooth", "embed", "slide"), label_key="attach_to_taskbar", tip_key="attach_to_taskbar_tip",
+               get=lambda: bool(_safe(lambda: cfg.get("attach_to_taskbar"), False)),
+               set=lambda v: cb.set_bool("attach_to_taskbar", bool(v)), visible=lambda: not is_floating()),
+        cfg_toggle("show_in_fullscreen", "show_in_fullscreen", keywords=("games", "video", "overlay")),
         Choice(id="fullscreen_placement", label_key="menu_fs_position", options=fs_options,
                get=lambda: _safe(lambda: cfg.get("fullscreen_placement"), "same"),
                set=lambda v: cb.set_fullscreen_placement(str(v)), visible=fs_visible),
@@ -296,31 +400,55 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
     def language_options() -> list:
         return [Option(v, tr("lang_auto") if v == "auto" else I18N_LANGUAGES[v]) for v in LANGUAGES]
 
+    def is_transparent() -> bool:
+        return _safe(lambda: cfg.get("pill_style"), "transparent") == "transparent"
+
     personalization = Page(id="personalization", title_key="menu_personalization", icon="personalization",
-                           children=[
-        Choice(id="app_theme", label_key="menu_theme",
-               options=static_options(APP_THEMES, lambda n: tr("theme_" + n)),
-               get=lambda: cfg.get("app_theme"), set=lambda v: cb.set_app_theme(str(v))),
+                           keywords=("customize", "customise", "look", "appearance", "style"), children=[
+        Header(id="hdr_pills", label_key="section_pills"),
         Choice(id="pill_style", label_key="menu_pill_style",
                options=static_options(PILL_STYLES, lambda n: tr("pill_style_" + n)),
-               get=lambda: cfg.get("pill_style"), set=lambda v: cb.set_pill_style(str(v))),
-        Choice(id="palette", label_key="menu_colors",
-               options=static_options(COLOR_PALETTES, lambda n: tr("palette_" + n)),
-               get=lambda: effective_palette(cfg), set=lambda v: cb.set_palette(str(v))),
-        Choice(id="icon_style", label_key="menu_icon_style",
-               options=static_options(ICON_STYLES, lambda n: tr("icon_" + n)),
-               get=lambda: cfg.get("icon_style"), set=lambda v: cb.set_icon_style(str(v))),
-        Action(id="custom_icons", label_key="custom_icons_menu", run=lambda: cb.open_custom_icons()),
-        Choice(id="animations", label_key="animations", options=animation_options,
-               get=lambda: cfg.get("animations"), set=lambda v: cb.set_animations(str(v))),
+               get=lambda: cfg.get("pill_style"), set=lambda v: cb.set_pill_style(str(v)),
+               keywords=("background", "transparent", "compact", "classic", "soft", "shape")),
+        Choice(id="palette", label_key="menu_colors", options=palette_options,
+               get=lambda: effective_palette(cfg), set=lambda v: cb.set_palette(str(v)),
+               keywords=("colour", "colors", "palette", "colorblind", "contrast")),
+        Choice(id="icon_style", label_key="menu_icon_style", options=icon_style_options,
+               get=lambda: cfg.get("icon_style"), set=lambda v: cb.set_icon_style(str(v)),
+               keywords=("symbol", "glyph", "outline", "filled", "retro")),
+        Action(id="custom_icons", label_key="custom_icons_menu", run=lambda: cb.open_custom_icons(),
+               keywords=("image", "picture", "png", "svg", "gif")),
+        Choice(id="pill_font_weight", label_key="pill_font_weight",
+               options=static_options(PILL_FONT_WEIGHTS, lambda n: tr("font_weight_" + n)),
+               get=lambda: _safe(lambda: cfg.get("pill_font_weight"), "semibold"),
+               set=lambda v: cb.set_pill_option("pill_font_weight", str(v)),
+               keywords=("font", "text", "bold", "thin", "weight")),
+        pill_toggle("pill_percent_sign", "pill_percent_sign", keywords=("%", "percent", "number", "text")),
+        pill_toggle("pill_show_names", "pill_show_names", keywords=("name", "label", "text", "device")),
+        pill_toggle("pill_show_bar", "pill_show_bar", keywords=("bar", "line", "progress", "gauge")),
+        pill_toggle("pill_color_text", "pill_color_text", keywords=("colour", "color", "text", "white", "neutral")),
+        pill_toggle("pill_separators", "pill_separators", keywords=("divider", "line", "separator"),
+                    visible=is_transparent),
+        Header(id="hdr_app", label_key="section_app"),
+        Choice(id="app_theme", label_key="menu_theme",
+               options=static_options(APP_THEMES, lambda n: tr("theme_" + n)),
+               get=lambda: cfg.get("app_theme"), set=lambda v: cb.set_app_theme(str(v)),
+               keywords=("dark", "light", "mode", "night")),
         Choice(id="panel_size", label_key="menu_panel_size",
                options=static_options(PANEL_SIZES, lambda n: tr("panel_size_" + n)),
-               get=lambda: cfg.get("panel_size"), set=lambda v: cb.set_panel_size(str(v))),
+               get=lambda: cfg.get("panel_size"), set=lambda v: cb.set_panel_size(str(v)),
+               keywords=("height", "big", "small", "window")),
         Choice(id="ui_scale", label_key="menu_ui_scale",
                options=static_options(UI_SCALES, lambda n: f"{n} %"),
-               get=lambda: int(cfg.get("ui_scale")), set=lambda v: cb.set_ui_scale(int(v))),
+               get=lambda: int(cfg.get("ui_scale")), set=lambda v: cb.set_ui_scale(int(v)),
+               keywords=("size", "zoom", "bigger", "smaller", "font", "text")),
+        Choice(id="animations", label_key="animations", options=animation_options,
+               get=lambda: cfg.get("animations"), set=lambda v: cb.set_animations(str(v)),
+               keywords=("motion", "pulse", "blink", "gif", "animated")),
         Choice(id="language", label_key="menu_language", options=language_options,
-               get=lambda: cfg.get("language"), set=lambda v: cb.set_language(str(v))),
+               get=lambda: cfg.get("language"), set=lambda v: cb.set_language(str(v)),
+               keywords=("translation", "english", "deutsch", "espanol", "francais")),
+        Separator(id="personalization_sep"),
         position,
     ])
 
@@ -329,7 +457,7 @@ def build_settings_model(cfg, cb: SettingsCallbacks) -> SettingsModel:
         alerts,
         logs,
         Toggle(id="start_with_windows", label_key="start_with_windows", get=startup_state,
-               set=lambda v: cb.set_startup(bool(v))),
+               set=lambda v: cb.set_startup(bool(v)), keywords=("autostart", "startup", "boot", "login")),
         personalization,
         Action(id="tutorial", label_key="tutorial_menu", run=lambda: cb.open_tutorial()),
         Action(id="whats_new", label_key="whatsnew_menu", run=lambda: cb.open_whats_new()),
