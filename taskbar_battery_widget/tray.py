@@ -172,6 +172,7 @@ class TrayController(QObject):
             set_palette=self._set_palette, set_icon_style=self._set_icon_style,
             set_panel_size=self._set_panel_size, set_animations=self._set_animations,
             set_app_theme=self._set_app_theme, set_pill_style=self._set_pill_style,
+            set_pill_option=self._set_pill_option,
             set_ui_scale=self._set_ui_scale,
             set_language=self._set_language, set_startup=self._set_startup,
             open_device_log=self.open_device_log, open_logs_folder=self.open_logs_folder,
@@ -591,6 +592,11 @@ class TrayController(QObject):
             self._panel.set_dark(self._ui_dark())
             self._refresh_panel()
         self.ui_settings_changed.emit()     # redraw the pills only: no device rescan
+
+    def _set_pill_option(self, key: str, value) -> None:
+        """Text / bar / divider options of the pills, applied live (pills only, no device rescan)."""
+        self._cfg.set(key, value)
+        self.ui_settings_changed.emit()
 
     def _set_pill_style(self, style: str) -> None:
         """Classic / soft / transparent / compact pills, applied live (pills only, no device rescan)."""

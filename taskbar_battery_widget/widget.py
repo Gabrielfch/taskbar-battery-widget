@@ -46,6 +46,8 @@ SOFT_ALPHA_SHARE = 0.55  # the "soft" background is this share as strong as the 
 SEPARATOR_SHARE = 0.5    # height of the divider between transparent pills / pill height
 MIN_FONT_PX = 12
 BAR_MIN_PILL_H = 24   # below this height the level bar is dropped
+PILL_NAME_MAX = 12    # "Show device names": longer names are cut with an ellipsis
+_FONT_WEIGHTS = {"regular": QFont.Weight.Normal, "semibold": QFont.Weight.DemiBold, "bold": QFont.Weight.Bold}
 BAR_H = 3.0
 MOON_W = 7
 TICK_MS = 500
@@ -201,6 +203,11 @@ class _Pill:
     alert: bool = False         # at/below the low threshold (not charging): border + red tint
     a11y: str = ""              # spoken summary of the pill
     members: list | None = None # for the "+N" overflow pill: the pills it stands for
+    name: str = ""              # "Show device names": 'Name ' drawn before the level (and before the "!")
+
+    def shown(self) -> str:
+        """The text drawn on the pill: name, warning mark, level."""
+        return self.name + ("!" if self.warn else "") + self.text
 
 
 class TaskbarWidget(QWidget):
@@ -360,7 +367,7 @@ class TaskbarWidget(QWidget):
             self._move_timer.start()
 
     def pill_texts(self) -> list[str]:
-        return [p.text for p in self._pills]
+        return [p.name + p.text for p in self._pills]
 
     # ------------------------------------------------------------------ model -> pills
     def _cfg_get(self, key, default):
@@ -368,6 +375,16 @@ class TaskbarWidget(QWidget):
             return self._cfg.get(key) if self._cfg is not None else default
         except Exception:
             return default
+
+    def _level_text(self, level: int) -> str:
+        return f"{level}%" if self._cfg_get("pill_percent_sign", True) is not False else str(level)
+
+    def _name_prefix(self, name: str) -> str:
+        """'Name ' before the level when "Show device names" is on (cut to PILL_NAME_MAX characters)."""
+        if not self._cfg_get("pill_show_names", False):
+            return ""
+        short = name if len(name) <= PILL_NAME_MAX else name[:PILL_NAME_MAX - 1].rstrip() + "…"
+        return short + " "
 
     def _rebuild(self) -> None:
         threshold = int(self._cfg_get("low_threshold", 20))
@@ -385,21 +402,22 @@ class TaskbarWidget(QWidget):
             if not d.connected and not show_disc:
                 continue
             name = sanitize_name(d.name) or "?"
+            label = self._name_prefix(name)
             kind_name = _kind_name(d.kind) if d.kind else ""
             link = getattr(d, "link", "bluetooth")
             link_key = {"2.4ghz": "link_24ghz", "usb": "link_usb"}.get(link, "link_bluetooth")
             kind_name = f"{kind_name} - {tr(link_key)}" if kind_name else tr(link_key)
             if getattr(d, "stale", False) and d.battery is not None:
                 last = stale_text(d)
-                pills.append(_Pill(d.kind, f"{d.battery}%", f"{name}\n{last}\n{kind_name}", dim=True,
-                                   device=d, a11y=f"{name} {last}"))
+                pills.append(_Pill(d.kind, self._level_text(d.battery), f"{name}\n{last}\n{kind_name}", dim=True,
+                                   device=d, name=label, a11y=f"{name} {last}"))
             elif not d.connected:
                 text, tip = tr("pill_none"), f"{name}\n{tr('disconnected')}\n{kind_name}"
-                pills.append(_Pill(d.kind, text, tip, dim=True, device=d,
+                pills.append(_Pill(d.kind, text, tip, dim=True, device=d, name=label,
                                    a11y=f"{name} {tr('disconnected')}"))
             elif d.battery is None:
                 pills.append(_Pill(d.kind, "?", f"{name}\n{tr('battery_unknown')}\n{kind_name}", device=d,
-                                   a11y=f"{name} {tr('battery_unknown')}"))
+                                   name=label, a11y=f"{name} {tr('battery_unknown')}"))
             else:
                 tip = f"{name}\n{d.battery}%"
                 spoken = f"{name} {d.battery} %"
@@ -418,7 +436,7 @@ class TaskbarWidget(QWidget):
                 alert = st.alert
                 if alert:
                     spoken += f" {tr('low_warning')}"
-                pills.append(_Pill(d.kind, f"{d.battery}%", tip,
+                pills.append(_Pill(d.kind, self._level_text(d.battery), tip, name=label,
                                    low=d.battery <= threshold, charging=bool(d.charging),
                                    level=d.battery, device=d, idle=idle,
                                    warn="warn" in st.cues, alert=alert, a11y=spoken))
@@ -525,7 +543,7 @@ class TaskbarWidget(QWidget):
     def _font(self) -> QFont:
         f = QFont("Segoe UI")
         f.setPixelSize(max(MIN_FONT_PX, round(self._pill_h * 0.45)))
-        f.setWeight(QFont.Weight.DemiBold)
+        f.setWeight(_FONT_WEIGHTS.get(self._cfg_get("pill_font_weight", "semibold"), QFont.Weight.DemiBold))
         return f
 
     def _icon_size(self) -> int:
@@ -554,7 +572,7 @@ class TaskbarWidget(QWidget):
         return name
 
     def _pill_width(self, p: _Pill, fm: QFontMetrics, icon: int, bolt: int) -> int:
-        tw = fm.horizontalAdvance(("!" if p.warn else "") + p.text)
+        tw = fm.horizontalAdvance(p.shown())
         if p.kind == "overflow":
             return 2 * self._pad + tw
         style = get_icon_style()
@@ -1020,8 +1038,10 @@ class TaskbarWidget(QWidget):
         now = self._clock.now_ms() if self._anim_live() else None      # None: paused, draw the still look
         pstyle = self.pill_style()
         backless = pstyle in ("transparent", "compact")
-        if pstyle == "transparent":
+        if pstyle == "transparent" and self._cfg_get("pill_separators", True) is not False:
             self._draw_separators(p, dark)
+        color_text = self._cfg_get("pill_color_text", True) is not False
+        show_bar = self._cfg_get("pill_show_bar", True) is not False
         for i, (pill, (x, y, w, h)) in enumerate(zip(self._pills, self._rects)):
             r = QRectF(x, y, w, h)
             level_color = self.pill_color(pill)
@@ -1107,11 +1127,14 @@ class TaskbarWidget(QWidget):
                 text_x += MOON_W + 3
             own_bolt = pill.charging and style != "battery"
             bolt = max(6, icon // 2) if own_bolt else 0
-            p.setPen(color)
+            text_pen = color
+            if not color_text and level_color is not None:      # neutral text; the bar / icon keep the colour
+                text_pen = ensure_contrast(fg, taskbar_base(dark), 4.5) if backless else fg
+            p.setPen(text_pen)
             p.drawText(QRectF(text_x, y, w - (text_x - x) - self._pad - bolt, h),
                        int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
-                       ("!" if pill.warn else "") + pill.text)
-            if level_color is not None and pill.level is not None and h >= BAR_MIN_PILL_H:
+                       pill.shown())
+            if show_bar and level_color is not None and pill.level is not None and h >= BAR_MIN_PILL_H:
                 bw = w - 2 * self._pad
                 by = y + h - 5.0
                 bar = QColor(color)

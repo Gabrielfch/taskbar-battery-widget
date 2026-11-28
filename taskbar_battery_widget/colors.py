@@ -143,6 +143,12 @@ def custom_palette(custom) -> dict:
     return out
 
 
+def palette_swatch(name: str, custom=None) -> list:
+    """[(dark rgb, light rgb)] of the high, medium and low colours of a palette (for a preview)."""
+    pal = custom_palette(custom) if name == "custom" else _BUILTIN.get(name, _CLASSIC)
+    return [pal["green"], pal["amber"], pal["red"]]
+
+
 def set_palette(name: str, custom=None) -> None:
     """Select the active colour palette (unknown names fall back to classic)."""
     global _PALETTE, _active

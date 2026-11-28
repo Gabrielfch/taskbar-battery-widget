@@ -266,9 +266,13 @@ def test_tray_menu_structure(qapp, tmp_path):
     assert [c.label() for c in pages["logs"].children] == [
         "Abrir registro de dispositivos", "Abrir carpeta de registros",
         "Registro detallado (cada minuto)", "Abrir carpeta de registros detallados"]
-    pers = [c.title() if hasattr(c, "title") else c.label() for c in pages["personalization"].children]
-    assert pers == ["Tema", "Estilo de las píldoras", "Colores", "Estilo de iconos", "Iconos personalizados…", "Animaciones", "Tamaño del panel",
-                    "Escala de la interfaz", "Idioma", "Posición"]
+    pers = [c.title() if hasattr(c, "title") else c.label() for c in pages["personalization"].children
+            if hasattr(c, "title") or hasattr(c, "label")]
+    assert pers == ["Píldoras de la barra de tareas", "Estilo de las píldoras", "Colores", "Estilo de iconos",
+                    "Iconos personalizados…", "Grosor del texto", "Mostrar el signo %", "Mostrar nombres de dispositivos",
+                    "Mostrar la barra de carga", "Colorear el texto según el nivel", "Separadores entre dispositivos",
+                    "Aplicación", "Tema", "Tamaño del panel", "Escala de la interfaz", "Animaciones", "Idioma",
+                    "Posición"]
 
 
 def test_tray_hidden_device_not_in_icon(qapp, tmp_path):
