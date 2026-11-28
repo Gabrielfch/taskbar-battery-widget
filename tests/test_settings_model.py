@@ -43,8 +43,10 @@ SETTINGS_TREE = {
     "alerts": {"notifications_enabled", "full_charge_alert", "low_threshold"},
     "logs": {"open_device_log", "open_logs_folder", "detail_log_enabled", "open_detail_folder"},
     "personalization": {"app_theme", "pill_style", "palette", "icon_style", "custom_icons", "animations", "position",
-                        "panel_size", "ui_scale", "language"},
-    "position": {"placement", "float_anchor", "monitor", "stack_devices", "show_in_fullscreen", "fullscreen_placement",
+                        "panel_size", "ui_scale", "language", "hdr_pills", "hdr_app", "pill_font_weight",
+                        "pill_percent_sign", "pill_show_names", "pill_show_bar", "pill_color_text", "pill_separators"},
+    "position": {"placement", "float_anchor", "monitor", "stack_devices", "show_in_fullscreen",
+                 "fullscreen_placement",
                  "reset_position"},
     "root": {"sources", "alerts", "logs", "start_with_windows", "personalization", "tutorial", "whats_new"},
 }
@@ -57,9 +59,11 @@ def test_settings_tree_structure():
         assert isinstance(page, Page)
         assert {c.id for c in page.children if not isinstance(c, Separator)} == expected, page_id
     kinds = {Toggle: {"wireless_enabled", "bluetooth_enabled", "razer_dongle_wake", "notifications_enabled", "full_charge_alert",
-                      "detail_log_enabled", "start_with_windows", "show_in_fullscreen", "stack_devices"},
+                      "detail_log_enabled", "start_with_windows", "show_in_fullscreen", "stack_devices",
+                      "pill_percent_sign", "pill_show_names", "pill_show_bar",
+                      "pill_color_text", "pill_separators"},
              Choice: {"low_threshold", "app_theme", "pill_style", "palette", "icon_style", "animations", "placement", "float_anchor", "monitor", "fullscreen_placement",
-                       "panel_size", "ui_scale", "language"},
+                       "panel_size", "ui_scale", "language", "pill_font_weight"},
              Action: {"open_device_log", "open_logs_folder", "open_detail_folder", "custom_icons",
                       "reset_position", "tutorial", "whats_new"}}
     for kind, ids in kinds.items():

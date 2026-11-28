@@ -1109,7 +1109,15 @@ def draw_pin(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True)
     painter.restore()
 
 
-_GLYPHS = {"chevron_right": draw_chevron_right, "chevron_down": draw_chevron_down,
+def draw_search(painter: QPainter, rect: QRectF, color: QColor, _flag: bool = True) -> None:
+    """Magnifying glass."""
+    _stroked(painter, rect, color)
+    painter.drawEllipse(_P(10.5, 10.5), 6.0, 6.0)
+    _poly(painter, [(15, 15), (20, 20)])
+    painter.restore()
+
+
+_GLYPHS = {"search": draw_search, "chevron_right": draw_chevron_right, "chevron_down": draw_chevron_down,
            "chevron_up": draw_chevron_up, "back": draw_back, "sources": draw_sources, "alerts": draw_bell,
            "logs": draw_doc, "personalization": draw_palette, "position": draw_pin}
 
