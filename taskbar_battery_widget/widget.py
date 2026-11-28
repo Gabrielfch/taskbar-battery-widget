@@ -31,7 +31,7 @@ from .placement import (FLOATING_SPACE_SHARE, FREE_SPACE_SHARE, MAX_PILL_H, MIN_
                         REASON_NO_TASKBAR_FLOATING, Env,
                         Placement, ScreenInfo, center_rect_y, choose_placement, compute_placement, lookup_floating,
                         pill_height_for, resolve_screen, snap_anchor, taskbar_for_screen)
-from .win_window import (_ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
+from .win_window import (_TaskbarMoveWatch, _ZGuard, _apply_ex_styles, _assert_topmost, _foreground, _post_null,  # noqa: F401
                          popup_menu_foreground, set_click_through, shift_down)
 
 MARGIN = 2           # outer margin around the pills (logical px)
@@ -275,7 +275,15 @@ class TaskbarWidget(QWidget):
         self.destroyed.connect(self._zguard.stop)
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
-        self._timer.timeout.connect(self.update_position)
+        self._timer.timeout.connect(self._on_tick)
+        # Auto-hide taskbar: re-place the moment the taskbar moves instead of on the next tick, so the
+        # pills appear/vanish with it and follow its slide. Events are coalesced into one update per loop.
+        self._move_timer = QTimer(self)
+        self._move_timer.setSingleShot(True)
+        self._move_timer.setInterval(0)
+        self._move_timer.timeout.connect(self.update_position)
+        self._tb_watch = _TaskbarMoveWatch(self._on_taskbar_moved)
+        self.destroyed.connect(self._tb_watch.stop)
         self._clock = animation.clock()     # shared; runs only while something visible is animated
         self._clock.register(self, self._anim_demand)
         self._clock.tick.connect(self._on_anim_tick)
@@ -333,12 +341,23 @@ class TaskbarWidget(QWidget):
     def start(self) -> None:
         self._timer.start()
         self._zguard.start()
+        self._tb_watch.refresh()
         self.update_position()
 
     def stop(self) -> None:
         self._timer.stop()
+        self._move_timer.stop()
         self._zguard.stop()
+        self._tb_watch.stop()
         self.hide()
+
+    def _on_tick(self) -> None:
+        self._tb_watch.refresh()        # re-hooks if explorer restarted
+        self.update_position()
+
+    def _on_taskbar_moved(self) -> None:
+        if self._timer.isActive() and not self._move_timer.isActive():
+            self._move_timer.start()
 
     def pill_texts(self) -> list[str]:
         return [p.text for p in self._pills]
@@ -908,8 +927,10 @@ class TaskbarWidget(QWidget):
     def closeEvent(self, e) -> None:
         self._hide_popup()
         self._timer.stop()
+        self._move_timer.stop()
         self._flash_timer.stop()
         self._zguard.stop()
+        self._tb_watch.stop()
         self._clock.unregister(self)
         self._clock.refresh()
         super().closeEvent(e)
